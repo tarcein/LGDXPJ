@@ -1,0 +1,298 @@
+"""Media, assistant, handoff, and plan APIs for the local backend prototype."""
+
+from __future__ import annotations
+
+import json
+import secrets
+from datetime import datetime
+from uuid import uuid4
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Form, Header, HTTPException, UploadFile
+from pydantic import BaseModel, Field
+
+from . import ai
+from .config import enabled, setting
+from .db import database
+from .family import family_id, member_id
+
+
+router = APIRouter(prefix="/api", tags=["media and assistant"])
+FEATURES = {
+    "inbox_text": "FREE", "role_match": "FREE", "handoff": "FREE",
+    "calendar_manual": "FREE", "chat_daily_10000_tokens": "FREE",
+    "ocr_daily_2": "FREE", "handoff_voice_note": "FREE",
+    "emergency_request": "PRO", "care_gap": "PRO", "family_album": "PRO",
+    "care_programs": "PRO", "device_alerts": "PRO",
+    "voice_schedule": "PRO", "voice_emergency": "PRO",
+    "ocr_unlimited": "PRO", "chat_unlimited": "PRO",
+}
+API_READY = {
+    "inbox_text", "role_match", "handoff", "calendar_manual",
+    "chat_daily_10000_tokens", "ocr_daily_2", "handoff_voice_note",
+    "emergency_request", "ocr_unlimited", "chat_unlimited",
+}
+TRANSCRIPTION_ONLY = {"voice_schedule", "voice_emergency"}
+
+
+def _backend_state(feature: str) -> str:
+    if feature in API_READY:
+        return "READY"
+    if feature in TRANSCRIPTION_ONLY:
+        return "PARTIAL"
+    return "NOT_CONNECTED"
+
+
+def _day() -> str:
+    return datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat()
+
+
+def _plan(db) -> str:
+    row = db.execute("SELECT plan FROM family_group WHERE id = ?", (family_id(),)).fetchone()
+    if row is None:
+        raise HTTPException(404, "가족방을 찾을 수 없습니다")
+    return row["plan"]
+
+
+def _require_pro(db) -> None:
+    if _plan(db) != "PRO":
+        raise HTTPException(403, detail={"code": "SUBSCRIPTION_REQUIRED", "message": "이 기능은 Pro 구독이 필요합니다"})
+
+
+def _used(db, feature: str) -> int:
+    row = db.execute("SELECT amount FROM daily_usage WHERE family_id = ? AND day = ? AND feature = ?",
+                     (family_id(), _day(), feature)).fetchone()
+    return row["amount"] if row else 0
+
+
+def _add_usage(db, feature: str, amount: int) -> None:
+    db.execute("""INSERT INTO daily_usage(family_id, day, feature, amount) VALUES (?, ?, ?, ?)
+       ON CONFLICT(family_id, day, feature) DO UPDATE SET amount = amount + excluded.amount""",
+       (family_id(), _day(), feature, amount))
+
+
+def _read_file(file: UploadFile, maximum: int) -> bytes:
+    content = file.file.read(maximum + 1)
+    if not content or len(content) > maximum:
+        raise HTTPException(413, "파일이 비어 있거나 크기 제한을 넘었습니다")
+    return content
+
+
+def _image_mime(data: bytes) -> str:
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "image/webp"
+    raise HTTPException(415, "JPEG, PNG, WebP 사진만 지원합니다")
+
+
+@router.get("/plans")
+def plans():
+    return {"plans": [
+        {"id": "FREE", "status": "AVAILABLE", "features": [key for key, tier in FEATURES.items() if tier == "FREE"]},
+        {"id": "PRO", "status": "AVAILABLE", "features": [key for key, tier in FEATURES.items() if tier == "PRO"]},
+    ]}
+
+
+@router.get("/subscription")
+def subscription():
+    with database() as db:
+        plan = _plan(db)
+        row = db.execute("SELECT enabled FROM plan_preview WHERE family_id = ?", (family_id(),)).fetchone()
+    preview = bool(row and row["enabled"])
+    return {"plan": plan, "status": "DEV_PREVIEW" if preview else ("ACTIVE" if plan == "PRO" else "NOT_SUBSCRIBED"),
+            "developer_preview": preview}
+
+
+@router.get("/features")
+def features():
+    with database() as db:
+        plan = _plan(db)
+        return {"plan": plan, "features": [
+            {"id": key, "tier": tier, "available": tier == "FREE" or plan == "PRO",
+             "backend_state": _backend_state(key)}
+            for key, tier in FEATURES.items()
+        ], "usage": {"ocr_today": _used(db, "OCR"), "chat_tokens_today": _used(db, "CHAT_TOKENS")}}
+
+
+class PreviewPlan(BaseModel):
+    plan: str = Field(pattern="^(FREE|PRO)$")
+
+
+@router.post("/dev/preview-plan")
+def preview_plan(payload: PreviewPlan, x_developer_token: str | None = Header(default=None)):
+    expected = setting("LGDX_DEV_TOKEN")
+    if not enabled("LGDX_DEV_MODE") or not expected or not x_developer_token or not secrets.compare_digest(expected, x_developer_token):
+        raise HTTPException(404, "개발자 플랜 미리보기를 사용할 수 없습니다")
+    with database() as db:
+        db.execute("UPDATE family_group SET plan = ? WHERE id = ?", (payload.plan, family_id()))
+        db.execute("""INSERT INTO plan_preview(family_id, enabled) VALUES (?, ?)
+           ON CONFLICT(family_id) DO UPDATE SET enabled = excluded.enabled""",
+           (family_id(), int(payload.plan == "PRO")))
+    return subscription()
+
+
+@router.post("/intakes/photo", status_code=201)
+def photo_intake(file: UploadFile, child_id: str | None = Form(default=None), source: str = Form(default="ALBUM")):
+    if source not in {"ALBUM", "CAMERA"}:
+        raise HTTPException(422, "source는 ALBUM 또는 CAMERA여야 합니다")
+    image = _read_file(file, 10 * 1024 * 1024)
+    mime = _image_mime(image)
+    with database() as db:
+        db.execute("BEGIN IMMEDIATE")
+        if child_id and not db.execute("SELECT 1 FROM child WHERE id = ? AND family_id = ?", (child_id, family_id())).fetchone():
+            raise HTTPException(404, "아이를 찾을 수 없습니다")
+        if _plan(db) == "FREE" and _used(db, "OCR") >= 2:
+            raise HTTPException(403, detail={"code": "OCR_DAILY_LIMIT", "message": "무료 OCR은 하루 2회입니다. 텍스트 입력 또는 Pro를 이용해주세요"})
+        _add_usage(db, "OCR", 1)
+    try:
+        extracted = ai.extract_image_text(image, mime)
+        from .main import IntakeCreate, create_intake
+        result = create_intake(IntakeCreate(raw_content=extracted, child_id=child_id, input_type="PHOTO_TRANSCRIPT"))
+    except Exception:
+        with database() as db:
+            _add_usage(db, "OCR", -1)
+        raise
+    with database() as db:
+        used = _used(db, "OCR")
+    return {**result, "transcript": extracted, "source": source, "ocr_used_today": used}
+
+
+AUDIO_TYPES = {
+    "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3", "audio/mp4",
+    "audio/x-m4a", "audio/m4a", "audio/ogg", "audio/webm", "video/webm",
+}
+
+
+def _transcribe(file: UploadFile, purpose: str) -> str:
+    if purpose not in {"CHAT", "INTAKE", "SCHEDULE", "HANDOFF_NOTE", "EMERGENCY"}:
+        raise HTTPException(422, "지원하지 않는 음성 입력 목적입니다")
+    mime = (file.content_type or "").split(";", 1)[0].strip().lower()
+    if mime not in AUDIO_TYPES:
+        raise HTTPException(415, "WAV, MP3, M4A, OGG, WebM 음성 파일만 지원합니다")
+    with database() as db:
+        if purpose in {"SCHEDULE", "EMERGENCY"}:
+            _require_pro(db)
+    audio = _read_file(file, 20 * 1024 * 1024)
+    return ai.transcribe_audio(audio, file.filename or "recording.webm", mime)
+
+
+@router.post("/audio/transcribe")
+def transcribe(file: UploadFile, purpose: str = Form(default="CHAT")):
+    return {"text": _transcribe(file, purpose), "purpose": purpose}
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+
+def _chat(message: str) -> dict:
+    with database() as db:
+        plan = _plan(db)
+        used = _used(db, "CHAT_TOKENS")
+        remaining = 10_000 - used
+        if plan == "FREE" and remaining < 16:
+            raise HTTPException(403, detail={"code": "CHAT_DAILY_LIMIT", "message": "오늘의 무료 AI 채팅 토큰을 다 썼습니다"})
+        schedules = [dict(row) for row in db.execute(
+            """SELECT m.name AS member,
+                 CASE WHEN s.member_id = ? THEN s.title ELSE '바쁨' END AS title,
+                 s.starts_at, s.ends_at FROM personal_schedule s
+               JOIN family_member m ON m.id = s.member_id
+               WHERE s.family_id = ? ORDER BY s.starts_at LIMIT 20""", (member_id(), family_id()))]
+        items = [dict(row) for row in db.execute(
+            "SELECT title, detail, starts_at, status FROM care_item WHERE family_id = ? ORDER BY created_at DESC LIMIT 20", (family_id(),))]
+        assignments = [dict(row) for row in db.execute(
+            """SELECT i.title, m.name AS assignee, a.status FROM care_assignment a
+               JOIN care_item i ON i.id = a.item_id JOIN family_member m ON m.id = a.assignee_id
+               WHERE a.family_id = ? ORDER BY a.created_at DESC LIMIT 20""", (family_id(),))]
+        history = [{"role": row["role"], "content": row["content"]} for row in reversed(db.execute(
+            """SELECT role, content FROM assistant_message WHERE family_id = ? AND member_id = ?
+               ORDER BY created_at DESC, rowid DESC LIMIT 6""", (family_id(), member_id())).fetchall())]
+    context = json.dumps({"personal_schedules": schedules, "care_items": items,
+                          "assignments": assignments}, ensure_ascii=False)
+    response, tokens = ai.answer(message, context, history, min(900, remaining) if plan == "FREE" else 900)
+    if tokens <= 0:
+        raise HTTPException(502, detail={"code": "AI_USAGE_MISSING", "message": "AI 서비스 사용량을 확인하지 못했습니다"})
+    with database() as db:
+        for role, content in [("user", message), ("assistant", response)]:
+            db.execute("INSERT INTO assistant_message VALUES (?, ?, ?, ?, ?, ?)",
+                       (str(uuid4()), family_id(), member_id(), role, content, datetime.now(ZoneInfo("Asia/Seoul")).isoformat()))
+        _add_usage(db, "CHAT_TOKENS", tokens)
+        used = _used(db, "CHAT_TOKENS")
+    return {"message": message, "answer": response, "usage": {"total_tokens": tokens, "used_today": used},
+            "plan": plan, "requires_confirmation_for_actions": True}
+
+
+@router.get("/assistant/history")
+def assistant_history():
+    with database() as db:
+        messages = [dict(row) for row in reversed(db.execute(
+            """SELECT id, role, content, created_at FROM assistant_message
+               WHERE family_id = ? AND member_id = ?
+               ORDER BY created_at DESC, rowid DESC LIMIT 50""", (family_id(), member_id()),
+        ).fetchall())]
+    return {"messages": messages}
+
+
+@router.post("/assistant/chat")
+def assistant_chat(payload: ChatRequest):
+    return _chat(payload.message)
+
+
+@router.post("/assistant/voice")
+def assistant_voice(file: UploadFile):
+    transcript = _transcribe(file, "CHAT")
+    return {"transcript": transcript, **_chat(transcript)}
+
+
+class HandoffUpdate(BaseModel):
+    briefing: str | None = Field(default=None, min_length=1, max_length=2000)
+    special_note: str | None = Field(default=None, max_length=2000)
+
+
+@router.patch("/handoffs/{handoff_id}")
+def update_handoff(handoff_id: str, payload: HandoffUpdate):
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(422, "변경할 인수인계 내용을 입력해주세요")
+    with database() as db:
+        row = db.execute("SELECT * FROM care_handoff WHERE id = ? AND family_id = ?", (handoff_id, family_id())).fetchone()
+        if row is None:
+            raise HTTPException(404, "인수인계를 찾을 수 없습니다")
+        if member_id() not in {row["from_member_id"], row["to_member_id"]}:
+            raise HTTPException(403, "인수인계 당사자만 내용을 수정할 수 있습니다")
+        if row["status"] != "PENDING":
+            raise HTTPException(409, "확인 전 인수인계만 수정할 수 있습니다")
+        db.execute("UPDATE care_handoff SET " + ", ".join(f"{key} = ?" for key in updates) + " WHERE id = ?",
+                   (*updates.values(), handoff_id))
+        return dict(db.execute("SELECT * FROM care_handoff WHERE id = ?", (handoff_id,)).fetchone())
+
+
+class NewHandoff(BaseModel):
+    to_member_id: str
+    briefing: str | None = Field(default=None, max_length=2000)
+    special_note: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/assignments/{assignment_id}/handoff", status_code=201)
+def create_next_handoff(assignment_id: str, payload: NewHandoff):
+    with database() as db:
+        assignment = db.execute("SELECT * FROM care_assignment WHERE id = ? AND family_id = ?", (assignment_id, family_id())).fetchone()
+        if assignment is None:
+            raise HTTPException(404, "배정을 찾을 수 없습니다")
+        if assignment["assignee_id"] != member_id():
+            raise HTTPException(403, "현재 담당자만 다음 인수인계를 작성할 수 있습니다")
+        target = db.execute("SELECT id FROM family_member WHERE id = ? AND family_id = ? AND status = 'ACTIVE'",
+                            (payload.to_member_id, family_id())).fetchone()
+        if target is None or target["id"] == member_id():
+            raise HTTPException(422, "다른 활성 가족 구성원을 선택해주세요")
+        item = db.execute("SELECT title, detail FROM care_item WHERE id = ?", (assignment["item_id"],)).fetchone()
+        note = payload.special_note if payload.special_note is not None else assignment["note"]
+        briefing = payload.briefing or f"{item['title']} · {item['detail']}".strip(" ·")
+        handoff_id = str(uuid4())
+        db.execute("""INSERT INTO care_handoff(id, family_id, assignment_id, from_member_id,
+                   to_member_id, briefing, status, special_note) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?)""",
+                   (handoff_id, family_id(), assignment_id, member_id(), target["id"], briefing, note))
+        return dict(db.execute("SELECT * FROM care_handoff WHERE id = ?", (handoff_id,)).fetchone())

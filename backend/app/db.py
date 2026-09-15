@@ -100,17 +100,50 @@ CREATE TABLE IF NOT EXISTS notification_preference (
   app_enabled INTEGER NOT NULL DEFAULT 1,
   daily_digest_enabled INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS family_invite_code (
+  family_id TEXT PRIMARY KEY REFERENCES family_group(id),
+  code_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS family_session (
+  token_hash TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
+  member_id TEXT NOT NULL REFERENCES family_member(id), expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS daily_usage (
+  family_id TEXT NOT NULL REFERENCES family_group(id), day TEXT NOT NULL,
+  feature TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (family_id, day, feature)
+);
+CREATE TABLE IF NOT EXISTS assistant_message (
+  id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
+  member_id TEXT REFERENCES family_member(id), role TEXT NOT NULL,
+  content TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS plan_preview (
+  family_id TEXT PRIMARY KEY REFERENCES family_group(id), enabled INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS emergency_request (
+  id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
+  assignment_id TEXT NOT NULL REFERENCES care_assignment(id),
+  requested_by_member_id TEXT NOT NULL REFERENCES family_member(id),
+  reason TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'OPEN',
+  claimed_by_member_id TEXT REFERENCES family_member(id),
+  created_at TEXT NOT NULL, resolved_at TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_item_family_status ON care_item(family_id, status);
 CREATE INDEX IF NOT EXISTS idx_assignment_family ON care_assignment(family_id, status);
 CREATE INDEX IF NOT EXISTS idx_notification_member ON notification(family_id, member_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_emergency_family_status ON emergency_request(family_id, status, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_emergency_open_assignment ON emergency_request(assignment_id) WHERE status = 'OPEN';
 """
 
 
 def initialize() -> None:
     with database() as db:
         db.executescript(SCHEMA)
+        if "special_note" not in {row[1] for row in db.execute("PRAGMA table_info(care_handoff)")}:
+            db.execute("ALTER TABLE care_handoff ADD COLUMN special_note TEXT NOT NULL DEFAULT ''")
         db.execute("INSERT OR IGNORE INTO notification_preference(member_id) SELECT id FROM family_member")
-        if db.execute("SELECT 1 FROM family_group LIMIT 1").fetchone():
+        if db.execute("SELECT 1 FROM family_group WHERE id = 'demo-family'").fetchone():
             return
 
         now = datetime.now(ZoneInfo("Asia/Seoul"))
