@@ -105,8 +105,10 @@ strong { font-weight: 700; }
 .eyebrow.urgent { color: #b03a2e; }
 .hero-title { font-size: 27px; line-height: 1.35; letter-spacing: -.7px; margin: 2px 0 10px; }
 .hero-copy { color: #8a8e96; font-size: 12px; line-height: 1.65; margin-bottom: 22px; }
-.capture-frame { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; height: 167px; border: 2px dashed #d7d9e2; border-radius: 18px; background: #fff; cursor: pointer; }
-.capture-frame input { display: none; }
+.capture-frame { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; height: 167px; border: 2px dashed #d7d9e2; border-radius: 18px; background: #fff; }
+.capture-actions { display: flex; gap: 9px; margin: 0 0 12px; }
+.capture-actions button { flex: 1; }
+.photo-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .camera-glyph { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 16px; background: #fceaf0; color: #c4123f; font-size: 25px; }
 .capture-frame strong { font-size: 12px; }
 .capture-frame small { color: #9b9fa8; font-size: 10px; }
@@ -209,5 +211,86 @@ strong { font-weight: 700; }
 .bottom-sheet { width: min(360px, 100%); border-radius: 24px 24px 0 0; background: white; padding: 13px 22px 30px; }
 .sheet-handle { width: 40px; height: 4px; border-radius: 4px; background: #d8d8dd; margin: 0 auto 20px; }
 .bottom-sheet h2 { font-size: 19px; margin-bottom: 7px; }.bottom-sheet p { color: #8a8e96; font-size: 11px; line-height: 1.5; margin-bottom: 16px; }
+
+/* ThinQ 전역 셸은 가족 케어 기능과 독립된 목업이다. */
+.bell img { width: 19px; height: 19px; object-fit: contain; }
+.thinq-plus, .thinq-more { width: 30px; height: 31px; color: #282a30; font: 24px Arial, sans-serif; }
+.bottom-nav button img { width: 24px; height: 24px; object-fit: contain; opacity: .55; }
+.bottom-nav button.active img { opacity: 1; }
+.bottom-nav button:nth-child(4) img { width: 26px; height: 26px; }
+.bottom-nav button .menu-bars { font-size: 22px; line-height: 24px; }
+.thinq-page { padding-top: 3px; }
+.thinq-family-card { display: block; width: 100%; margin-bottom: 11px; padding: 15px; border: 1px solid #bad4ce; border-radius: 16px; color: #22242b; background: #fff; text-align: left; }
+.thinq-family-heading { display: flex; align-items: center; gap: 7px; margin-bottom: 11px; }
+.thinq-family-heading img { width: 28px; height: 28px; object-fit: contain; }
+.thinq-family-heading strong { font-size: 14px; }
+.thinq-family-heading span { margin-left: auto; color: #c4123f; font-size: 11px; font-weight: 700; }
+.thinq-family-row { display: flex; align-items: center; gap: 8px; min-height: 35px; margin-top: 5px; padding: 3px 10px; border-radius: 10px; background: #f5f6ff; font-size: 11px; }
+.thinq-family-row b { flex: none; padding: 2px 4px; border-radius: 5px; color: #fff; background: #c4123f; }
+.thinq-family-row:nth-of-type(3) b { background: #bd9230; }
+.thinq-family-row span:nth-child(2) { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.thinq-family-row span:last-child { color: #a0a4aa; font-size: 20px; }
+.thinq-family-card > p { padding: 8px; color: #888d98; font-size: 11px; }
+.thinq-shell-card { min-height: 145px; padding: 18px; background: #fff; }
+.thinq-shell-card strong { display: block; margin-bottom: 14px; }
+.thinq-shell-card p { line-height: 1.7; }
+.thinq-house-plan { display: grid; place-items: center; height: 255px; margin-bottom: 13px; }
+.thinq-house-plan strong { font-size: 13px; }
+.thinq-empty-products { display: grid; place-items: center; min-height: 75px; margin-bottom: 15px; border: 1px dashed #d5d8df; border-radius: 14px; color: #9298a3; text-align: center; font-size: 11px; line-height: 1.5; }
+
+.family-subnav { display: flex; gap: 4px; margin: 0 0 15px; padding: 4px; border-radius: 13px; background: #e9ecf3; }
+.family-subnav button { flex: 1; min-width: 0; padding: 8px 2px; border-radius: 10px; color: #777d87; background: transparent; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.family-subnav button.active { color: #c4123f; background: #fff; box-shadow: 0 1px 4px #1d223816; }
+.family-alert { width: 100%; display: flex; align-items: center; gap: 9px; padding: 13px; border-radius: 14px; color: #33353c; background: #fff8f5; text-align: left; }
+.family-alert strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.family-alert > span:last-child { font-size: 18px; color: #b8a6a4; }
+.family-shortcuts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.family-shortcuts button { position: relative; min-height: 79px; padding: 13px; border-radius: 14px; background: #fff; text-align: left; }
+.family-shortcuts strong, .family-shortcuts small { display: block; }
+.family-shortcuts strong { font-size: 11px; }
+.family-shortcuts small { margin-top: 7px; color: #9397a0; font-size: 9px; }
+.family-shortcuts span { position: absolute; top: 11px; right: 11px; color: #adb0b6; }
+.family-menu-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; margin-bottom: 16px; }
+.family-menu-list button { min-height: 48px; display: flex; justify-content: space-between; align-items: center; gap: 3px; padding: 10px; border-radius: 11px; background: #fff; color: #444954; text-align: left; font-size: 10px; font-weight: 700; }
+.family-menu-list span { color: #aaaeb7; font-size: 17px; }
+
+.fab-shade { position: absolute; z-index: 4; inset: 0; width: 100%; background: #1520377e; }
+.fab-menu { position: absolute; z-index: 5; right: 18px; bottom: 150px; width: min(266px, calc(100% - 36px)); padding: 6px; border-radius: 20px; background: #fff; box-shadow: 0 15px 35px #1c253b35; }
+.fab-menu button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 58px; padding: 8px 12px; border-radius: 14px; background: #fff; text-align: left; }
+.fab-menu button.featured { background: #fce7ed; }
+.fab-menu button + button { border-top: 1px solid #f5f5f7; }
+.fab-menu button > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+.fab-menu strong { color: #272b34; font-size: 11px; }
+.fab-menu small { color: #989da6; font-size: 9px; }
+.fab-menu-icon { display: grid; place-items: center; flex: none; width: 31px; height: 31px; border-radius: 10px; background: #f4f0f5; color: #c4123f; font-size: 17px; }
+.fab-menu-image { width: 31px; height: 31px; object-fit: contain; }
+.floating-capture { z-index: 6; padding: 0; background: transparent; box-shadow: none; }
+.floating-capture img { display: block; width: 54px; height: 54px; object-fit: contain; }
+.floating-capture.open { background: #fff; color: #c4123f; box-shadow: 0 5px 15px #18213b33; font-size: 30px; }
+
+.hero-title { white-space: pre-line; }
+.onboard-progress { display: flex; gap: 6px; margin: 0 0 19px; }
+.onboard-progress span { width: 26px; height: 5px; border-radius: 5px; background: #dddfe6; }
+.onboard-progress span.active { background: #c4123f; }
+.provider-icon { flex: none; width: 40px; height: 40px; object-fit: contain; }
+.capture-preview { max-width: 90%; max-height: 100px; border-radius: 8px; object-fit: contain; }
+.capture-frame small { padding: 0 12px; text-align: center; }
+.voice-mark { width: 56px; height: 56px; object-fit: contain; }
+.chat-thread { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; padding: 8px 0 20px; }
+.chat-bubble.me { align-self: flex-end; background: #c4123f; color: #fff; border-bottom-right-radius: 4px; }
+.chat-prompts { display: flex; gap: 6px; overflow-x: auto; margin: 6px 0 15px; }
+.chat-prompts button { flex: none; padding: 8px 10px; border-radius: 15px; color: #c4123f; background: #fff; font-size: 10px; }
+.chat-composer { display: flex; gap: 7px; padding: 8px; border-radius: 13px; background: #fff; }
+.chat-composer input { min-width: 0; flex: 1; border: 0; outline: 0; font-size: 11px; }
+.chat-composer button { padding: 8px; border-radius: 10px; color: #fff; background: #c4123f; font-size: 10px; }
+.album-upload { display: block; margin: 10px 0 15px; padding: 13px; border: 1px dashed #c4123f; border-radius: 13px; color: #c4123f; background: #fff; text-align: center; font-size: 11px; font-weight: 700; cursor: pointer; }
+.album-upload input { display: none; }
+.album-grid button { position: relative; height: 142px; overflow: hidden; border-radius: 15px; padding: 0; background: #eee; }
+.album-grid button img { width: 100%; height: 100%; object-fit: cover; }
+.album-grid button small { position: absolute; inset: auto 0 0; padding: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; background: #1213198c; font-size: 9px; }
+.program-choice { display: flex; align-items: center; gap: 8px; width: 100%; margin-bottom: 8px; padding: 13px; border-radius: 13px; background: #fff; text-align: left; }
+.program-choice strong { flex: none; font-size: 11px; }
+.program-choice small { flex: 1; color: #9298a1; font-size: 9px; }
+.program-choice span { color: #9ba0a8; font-size: 18px; }
 
 @media (max-width: 800px) { .app-shell { padding: 0; gap: 0; min-height: 100dvh; background: #f4f6fc; } .screen-index { display: none; } .phone-wrap { width: 100%; } .phone { width: 100%; height: 100dvh; max-height: none; border: 0; border-radius: 0; box-shadow: none; } .phone::before { display: none; } .phone-content { padding-left: max(18px, env(safe-area-inset-left)); padding-right: max(18px, env(safe-area-inset-right)); } .bottom-nav { padding-bottom: env(safe-area-inset-bottom); height: calc(71px + env(safe-area-inset-bottom)); } }

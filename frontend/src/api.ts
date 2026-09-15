@@ -1,4 +1,5 @@
 export type Screen =
+  | 'thinqHome' | 'thinqDevice' | 'thinqCare' | 'thinqMenu'
   | 'home' | 'family' | 'capture' | 'review' | 'assignments' | 'suggestion'
   | 'schedule' | 'exception' | 'handoff' | 'tasks' | 'notifications'
   | 'members' | 'permissions' | 'plan' | 'chat' | 'emergency'
