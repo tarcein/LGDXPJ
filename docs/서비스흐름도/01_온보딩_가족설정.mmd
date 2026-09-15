@@ -1,0 +1,21 @@
+%% AI 가족 운영 에이전트 - 온보딩 및 가족 설정 흐름도 (FR-001~004)
+%% 사용자 행동(파랑) / 시스템 처리(회색) / 외부 시스템(주황) / 분기(노랑) / 시작·종료(초록)
+flowchart TD
+    Start(["시작: 회원가입/로그인"]):::terminal --> A["사용자: 가족 그룹 생성"]:::user
+    A --> B["사용자: 배우자·조부모 초대"]:::user
+    B --> C{"시스템: 무료 인원 제한 이내?\n(보호자 3명·자녀 2명)"}:::decision
+    C -- "예" --> D["시스템: 구성원 등록 완료"]:::system
+    C -- "초과" --> E["시스템: 유료 전환 안내"]:::system
+    E --> F{"사용자: 유료 전환?"}:::decision
+    F -- "예" --> G[["외부 시스템: 결제/구독 플랫폼"]]:::external
+    G --> D
+    F -- "아니오" --> H(["종료: 무료 한도 내로 재구성 필요"]):::terminal
+    D --> I["사용자: 구성원별 기본 역할 설정"]:::user
+    I --> J["사용자: 정보 공개 권한 설정"]:::user
+    J --> End(["가족 그룹 설정 완료"]):::terminal
+
+    classDef user fill:#DCEEFB,stroke:#4A90D9,stroke-width:1px,color:#1a1a1a;
+    classDef system fill:#F0F0F0,stroke:#888888,stroke-width:1px,color:#1a1a1a;
+    classDef external fill:#FFE8CC,stroke:#E08A2C,stroke-width:1px,color:#1a1a1a;
+    classDef decision fill:#FFF3CD,stroke:#D4A017,stroke-width:1px,color:#1a1a1a;
+    classDef terminal fill:#E6F4EA,stroke:#34A853,stroke-width:1px,color:#1a1a1a;

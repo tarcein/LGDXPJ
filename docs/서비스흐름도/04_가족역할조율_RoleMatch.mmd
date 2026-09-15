@@ -1,0 +1,20 @@
+%% AI 가족 운영 에이전트 - 가족 역할·할일 조율(1차 조율) 흐름도 (Role Match, FR-011~013, UC-03)
+%% 사용자 행동(파랑) / 시스템 처리(회색) / 외부 시스템(주황) / 분기(노랑) / 시작·종료(초록)
+flowchart TD
+    Start(["시작: 돌봄 정보 등록 완료"]):::terminal --> A["시스템: 등록 정보와 가족 기존 역할 패턴 비교"]:::system
+    A --> B["시스템: 담당자별 역할 자동 배정"]:::system
+    B --> C{"시스템: 배정 가능한 담당자 있음?"}:::decision
+    C -- "아니오 (전원 일정 충돌)" --> D(["예외 상황 대응 흐름으로 이동\n(05_예외상황대응)"]):::terminal
+    C -- "예" --> E["시스템: 관련 구성원에게만 배정 결과 통보"]:::system
+    E --> F["사용자: 배정 결과 확인"]:::user
+    F --> G{"사용자: 직접 수정?"}:::decision
+    G -- "예" --> H["사용자: 담당자 변경"]:::user
+    H --> I["시스템: 변경 사항 관련자 재통보"]:::system
+    G -- "아니오" --> End(["가족 역할 조율 완료"]):::terminal
+    I --> End
+
+    classDef user fill:#DCEEFB,stroke:#4A90D9,stroke-width:1px,color:#1a1a1a;
+    classDef system fill:#F0F0F0,stroke:#888888,stroke-width:1px,color:#1a1a1a;
+    classDef external fill:#FFE8CC,stroke:#E08A2C,stroke-width:1px,color:#1a1a1a;
+    classDef decision fill:#FFF3CD,stroke:#D4A017,stroke-width:1px,color:#1a1a1a;
+    classDef terminal fill:#E6F4EA,stroke:#34A853,stroke-width:1px,color:#1a1a1a;

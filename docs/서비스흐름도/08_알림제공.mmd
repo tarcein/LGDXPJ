@@ -1,0 +1,19 @@
+%% AI 가족 운영 에이전트 - 일정·케어 현황 알림 제공 흐름도 (FR-029~032, UC-07/7a)
+%% 사용자 행동(파랑) / 시스템 처리(회색) / 외부 시스템(주황) / 분기(노랑) / 시작·종료(초록)
+flowchart TD
+    Start(["시작: 주요 이벤트 발생\n(등록·조율·인수인계·완료)"]):::terminal --> A[["외부 시스템: LG ThinQ 플랫폼"]]:::external
+    A --> B["시스템: ThinQ 앱 푸시 알림 발송 (무료 기본 채널)"]:::system
+    B --> C{"사용자: 유료 플랜 가입?"}:::decision
+    C -- "아니오" --> End1(["앱 알림만 수신"]):::terminal
+    C -- "예" --> D["시스템: 재실 여부·가전 사용 상태 확인"]:::system
+    D --> E{"사용 가능한 연동 가전 있음?"}:::decision
+    E -- "아니오" --> End1
+    E -- "예" --> F[["외부 시스템: 연동 가전(TV/정수기/로봇청소기 등)"]]:::external
+    F --> G["시스템: 시각(TV)·청각(음성 가전) 알림 전달"]:::system
+    G --> End2(["앱 + 가전 알림까지 수신"]):::terminal
+
+    classDef user fill:#DCEEFB,stroke:#4A90D9,stroke-width:1px,color:#1a1a1a;
+    classDef system fill:#F0F0F0,stroke:#888888,stroke-width:1px,color:#1a1a1a;
+    classDef external fill:#FFE8CC,stroke:#E08A2C,stroke-width:1px,color:#1a1a1a;
+    classDef decision fill:#FFF3CD,stroke:#D4A017,stroke-width:1px,color:#1a1a1a;
+    classDef terminal fill:#E6F4EA,stroke:#34A853,stroke-width:1px,color:#1a1a1a;

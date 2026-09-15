@@ -1,0 +1,28 @@
+%% AI 가족 운영 에이전트 - 돌봄 완료 현황 확인 흐름도 (FR-026~028, UC-06/6a)
+%% 사용자 행동(파랑) / 시스템 처리(회색) / 외부 시스템(주황) / 분기(노랑) / 시작·종료(초록)
+flowchart TD
+    Start(["시작: 배정된 할 일 수행"]):::terminal --> A["사용자: 완료 처리"]:::user
+    A --> B["시스템: 특이사항 여부 확인 팝업"]:::system
+    B --> C{"특이사항 있음?"}:::decision
+    C -- "없음" --> F["시스템: 완료 상태 기록"]:::system
+    C -- "있음" --> D["사용자: 수기 또는 음성으로 특이사항 입력"]:::user
+    D --> E["시스템: 특이사항 저장 → 돌봄 인수인계 정보로 반영"]:::system
+    E --> F
+    F --> G{"사용자: 사진 첨부?"}:::decision
+    G -- "예" --> H["사용자: 완료 사진 첨부"]:::user
+    G -- "아니오" --> I["시스템: 완료 현황 브리핑 생성"]:::system
+    H --> I
+    I --> J[["외부 시스템: LG ThinQ 플랫폼 — 앱 알림 발송"]]:::external
+    J --> End1(["완료 확인 종료"]):::terminal
+
+    Start2(["트리거: 예정 시간 경과"]):::terminal --> K["시스템: 완료 처리 여부 확인"]:::system
+    K --> L{"완료됨?"}:::decision
+    L -- "미완료" --> M["시스템: 담당자·부모에게 미완료 알림"]:::system
+    M --> J
+    L -- "완료" --> End2(["정상 종료"]):::terminal
+
+    classDef user fill:#DCEEFB,stroke:#4A90D9,stroke-width:1px,color:#1a1a1a;
+    classDef system fill:#F0F0F0,stroke:#888888,stroke-width:1px,color:#1a1a1a;
+    classDef external fill:#FFE8CC,stroke:#E08A2C,stroke-width:1px,color:#1a1a1a;
+    classDef decision fill:#FFF3CD,stroke:#D4A017,stroke-width:1px,color:#1a1a1a;
+    classDef terminal fill:#E6F4EA,stroke:#34A853,stroke-width:1px,color:#1a1a1a;

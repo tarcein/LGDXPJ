@@ -1,0 +1,17 @@
+%% AI 가족 운영 에이전트 - 개인 일정 등록 흐름도 (FR-005~007, UC-01/UC-01a)
+%% 사용자 행동(파랑) / 시스템 처리(회색) / 외부 시스템(주황) / 분기(노랑) / 시작·종료(초록)
+flowchart TD
+    Start(["시작: 개인 일정 등록"]):::terminal --> A{"사용자: 입력 방식 선택"}:::decision
+    A -- "수기 입력 (무료)" --> B["사용자: 날짜·시간·내용 입력"]:::user
+    A -- "음성 입력 (유료)" --> C["시스템: 유료 전환 안내"]:::system
+    C --> B
+    B --> D["시스템: 일정 정보 해석"]:::system
+    D --> E[["외부 시스템: 캘린더 시스템 동기화"]]:::external
+    E --> F["시스템: 등록 완료 확인"]:::system
+    F --> End(["개인 일정 등록 완료\n→ 예외 상황 대응의 충돌 감지 데이터로 활용"]):::terminal
+
+    classDef user fill:#DCEEFB,stroke:#4A90D9,stroke-width:1px,color:#1a1a1a;
+    classDef system fill:#F0F0F0,stroke:#888888,stroke-width:1px,color:#1a1a1a;
+    classDef external fill:#FFE8CC,stroke:#E08A2C,stroke-width:1px,color:#1a1a1a;
+    classDef decision fill:#FFF3CD,stroke:#D4A017,stroke-width:1px,color:#1a1a1a;
+    classDef terminal fill:#E6F4EA,stroke:#34A853,stroke-width:1px,color:#1a1a1a;

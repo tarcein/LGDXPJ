@@ -1,0 +1,12 @@
+frontend/node_modules/
+frontend/dist/
+frontend/src/assets/
+frontend/public/
+frontend/README.md
+backend/.venv/
+backend/__pycache__/
+backend/.pytest_cache/
+backend/*.db
+*.pyc
+.env
+.DS_Store

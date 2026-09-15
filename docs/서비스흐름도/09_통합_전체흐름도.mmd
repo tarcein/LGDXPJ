@@ -1,0 +1,78 @@
+%% AI 가족 운영 에이전트 - MVP 핵심 흐름 통합도 (한 화면 개요용)
+%% 홈 대시보드를 허브로 5개 핵심 흐름이 병렬로 뻗어나가고, 하단에서 알림 발송으로 합류하는 구조
+%% 세부 예외/유료 분기는 01~08 개별 파일 참고 (이 다이어그램은 가독성을 위해 핵심 흐름만 표현)
+flowchart TD
+
+Start(["AI 가족 운영 에이전트 실행"]):::header --> Login("로그인 · 가족 그룹 확인"):::process
+Login --> Dashboard("홈 대시보드"):::process
+Dashboard -.-> UsersDB[("가족 계정 DB")]:::db
+
+Dashboard --> A1("개인 일정 등록"):::process
+Dashboard --> B1("돌봄 정보 등록"):::process
+Dashboard --> C1("가족 역할 조율"):::process
+Dashboard --> D1("돌봄 인수인계"):::process
+Dashboard --> E1("돌봄 완료 확인"):::process
+
+%% ── 개인 일정 등록 ──
+A1 --> A2{"입력 방식"}:::decision
+A2 -- "수기" --> A3("일정 정보 해석"):::process
+A2 -- "음성" --> A3
+A3 -.-> CalDB[("캘린더 DB")]:::db
+A3 --> A4("일정 등록 로그"):::log
+
+%% ── 돌봄 정보 등록 (Family Inbox) ──
+B1 --> B2{"입력 방식"}:::decision
+B2 -- "텍스트" --> B3b
+B2 -- "사진" --> B3a("사진 업로드"):::process
+B3a --> B3b("AI·OCR 정보 구조화"):::ai
+B3b -.-> CareDB[("돌봄정보 DB")]:::db
+B3b --> B4("돌봄정보 등록 로그"):::log
+
+%% ── 가족 역할 조율 (Role Match → Exception Care) ──
+C1 --> C2("자동 역할 배정"):::process
+C2 --> C3{"배정 가능?"}:::decision
+C3 -- "예" --> C4("담당자 통보"):::process
+C3 -- "아니오" --> C5("AI 대안 추천"):::ai
+C5 --> C6{"승인?"}:::decision
+C6 -- "아니오" --> C5
+C6 -- "예" --> C4
+C4 -.-> RoleDB[("역할배정 DB")]:::db
+C4 --> C7("역할조율 로그"):::log
+
+%% ── 돌봄 인수인계 (Care Handoff) ──
+D1 --> D2("맥락 정보 전달"):::process
+D2 --> D3{"인수인계 확인"}:::decision
+D3 -- "아니오" --> D2
+D3 -- "예" --> D4("위치 자동 기록"):::process
+D4 -.-> LocDB[("돌봄동선 DB")]:::db
+D4 --> D5("인수인계 로그"):::log
+
+%% ── 돌봄 완료 확인 ──
+E1 --> E2("완료 처리"):::process
+E2 --> E3{"특이사항 있음?"}:::decision
+E3 -- "예" --> E4("특이사항 입력"):::process
+E3 -- "아니오" --> E5
+E4 --> E5("완료 기록"):::process
+E5 -.-> DoneDB[("완료기록 DB")]:::db
+E5 --> E6("완료확인 로그"):::log
+
+%% ── 하단 합류: 알림 발송 ──
+A4 --> Notify
+B4 --> Notify
+C7 --> Notify
+D5 --> Notify
+E6 --> Notify
+
+Notify("알림 발송"):::process
+Notify -.-> ThinQ[("LG ThinQ 플랫폼")]:::db
+Notify --> Logout{"로그아웃 하시겠습니까?"}:::decision
+Logout -- "아니오" --> Dashboard
+Logout -- "예" --> End(["종료"]):::endnode
+
+classDef header fill:#2C3E66,stroke:#2C3E66,color:#FFFFFF,stroke-width:1px;
+classDef process fill:#FFF7E0,stroke:#D8B76A,color:#2b2b2b,stroke-width:1px;
+classDef ai fill:#E7E3FB,stroke:#A79CE0,color:#2b2b2b,stroke-width:1px;
+classDef db fill:#FEF6D8,stroke:#D8C77A,color:#2b2b2b,stroke-width:1px;
+classDef decision fill:#FFFFFF,stroke:#B0B0B0,color:#2b2b2b,stroke-width:1px;
+classDef log fill:#F1EEFC,stroke:#C9C2ED,color:#2b2b2b,stroke-width:1px;
+classDef endnode fill:#34A853,stroke:#34A853,color:#FFFFFF,stroke-width:1px;

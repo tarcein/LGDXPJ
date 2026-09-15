@@ -1,0 +1,19 @@
+%% AI 가족 운영 에이전트 - 돌봄 인수인계 흐름도 (Care Handoff, FR-021~025, UC-05/5a)
+%% 사용자 행동(파랑) / 시스템 처리(회색) / 외부 시스템(주황) / 분기(노랑) / 시작·종료(초록)
+flowchart TD
+    Start(["시작: 돌봄 담당자 전환 시점 도래"]):::terminal --> A["시스템: 담당자 전환 자동 감지"]:::system
+    A --> B["시스템: 필요한 맥락 정보만 정리\n(시간·장소·준비물·특이사항)"]:::system
+    B --> C["사용자(신규 담당자): 인수인계 내용 확인"]:::user
+    C --> D{"사용자: 인수인계 받았습니까?"}:::decision
+    D -- "미확인(시간 경과)" --> E["시스템: 재알림"]:::system
+    E --> C
+    D -- "예" --> F["시스템: 확인 시점 위치 자동 기록"]:::system
+    F --> G["시스템: 인수인계 완료 처리"]:::system
+    G --> H["사용자: 돌봄 동선 확인(지도)"]:::user
+    H --> End(["돌봄 인수인계 완료"]):::terminal
+
+    classDef user fill:#DCEEFB,stroke:#4A90D9,stroke-width:1px,color:#1a1a1a;
+    classDef system fill:#F0F0F0,stroke:#888888,stroke-width:1px,color:#1a1a1a;
+    classDef external fill:#FFE8CC,stroke:#E08A2C,stroke-width:1px,color:#1a1a1a;
+    classDef decision fill:#FFF3CD,stroke:#D4A017,stroke-width:1px,color:#1a1a1a;
+    classDef terminal fill:#E6F4EA,stroke:#34A853,stroke-width:1px,color:#1a1a1a;

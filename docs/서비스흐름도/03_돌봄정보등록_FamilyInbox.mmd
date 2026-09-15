@@ -1,0 +1,24 @@
+%% AI 가족 운영 에이전트 - 돌봄 정보 등록 흐름도 (Family Inbox, FR-008~010, UC-02)
+%% 사용자 행동(파랑) / 시스템 처리(회색) / 외부 시스템(주황) / 분기(노랑) / 시작·종료(초록)
+flowchart TD
+    Start(["시작: 돌봄 정보 등록"]):::terminal --> A{"사용자: 입력 방식 선택"}:::decision
+    A -- "텍스트" --> B["사용자: 돌봄 정보 텍스트 입력"]:::user
+    A -- "사진(가정통신문 등)" --> C0{"시스템: 당일 OCR 무료 한도\n(1일 2회) 이내?"}:::decision
+    C0 -- "초과" --> C1["시스템: 유료 전환 안내"]:::system
+    C1 --> B
+    C0 -- "이내" --> C["사용자: 사진 촬영/첨부"]:::user
+    C --> D["시스템: OCR 텍스트 인식"]:::system
+    D --> D1["시스템: 당일 OCR 사용 횟수 차감"]:::system
+    D1 --> E["시스템: 정보 구조화\n(일정/준비물/할 일/변경사항)"]:::system
+    B --> E
+    E --> F{"시스템: 기존 정보와 중복?"}:::decision
+    F -- "예" --> G["시스템: 병합 여부 확인 요청"]:::system
+    F -- "아니오" --> H["시스템: 가족 공용 데이터 반영"]:::system
+    G --> H
+    H --> End(["돌봄 정보 등록 완료\n→ 가족 역할 조율(Role Match)로 전달"]):::terminal
+
+    classDef user fill:#DCEEFB,stroke:#4A90D9,stroke-width:1px,color:#1a1a1a;
+    classDef system fill:#F0F0F0,stroke:#888888,stroke-width:1px,color:#1a1a1a;
+    classDef external fill:#FFE8CC,stroke:#E08A2C,stroke-width:1px,color:#1a1a1a;
+    classDef decision fill:#FFF3CD,stroke:#D4A017,stroke-width:1px,color:#1a1a1a;
+    classDef terminal fill:#E6F4EA,stroke:#34A853,stroke-width:1px,color:#1a1a1a;

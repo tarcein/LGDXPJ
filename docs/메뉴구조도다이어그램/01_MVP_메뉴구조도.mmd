@@ -1,0 +1,76 @@
+%% LG 가족 운영 에이전트 MVP 메뉴구조도
+%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 18, "rankSpacing": 28, "curve": "basis"}}}%%
+flowchart TB
+  root["LG 가족 운영 에이전트"]
+
+  subgraph homeRow[" "]
+    direction LR
+    home(["홈"]) --> homeMenu["대시보드"] --> s3[["홈 대시보드 (오늘의 역할·할 일 요약)<br/>SCR-03<br/>FR-006, FR-008, FR-011, FR-029"]]
+  end
+  subgraph scheduleRow[" "]
+    direction LR
+    schedule(["일정"])
+    calendar["캘린더"] --> s2[["캘린더 연동 설정 화면<br/>SCR-02<br/>FR-005"]]
+    personalSchedule["개인 일정"] --> s4[["개인 일정 등록 화면<br/>SCR-04<br/>FR-006, FR-007"]]
+    schedule --> calendar
+    schedule --> personalSchedule
+  end
+  subgraph careRow[" "]
+    direction TB
+    care(["돌봄"])
+    subgraph careTop[" "]
+      direction LR
+      inbox["Family Inbox"] --> s5[["돌봄 정보 등록 화면 (Family Inbox)<br/>SCR-05<br/>FR-008, FR-009, FR-010"]]
+      roleMatch["Role Match"] --> s6[["가족 역할 배정 화면 (Role Match 결과)<br/>SCR-06<br/>FR-011, FR-012, FR-013"]]
+    end
+    complete["완료"] --> s11[["돌봄 완료 확인 화면 (특이사항 입력 팝업 포함)<br/>SCR-11<br/>FR-026, FR-027, FR-028"]]
+    care --> careTop
+    care --> complete
+  end
+  subgraph notifyRow[" "]
+    direction LR
+    notify(["알림"])
+    notificationCenter["알림 센터"] --> s12[["알림함 화면<br/>SCR-12<br/>FR-012, FR-028, FR-029"]]
+    integration["연동 설정"] --> s13[["알림·가전 연동 설정 화면<br/>SCR-13<br/>FR-030, FR-032"]]
+    notify --> notificationCenter
+    notify --> integration
+  end
+  subgraph familyRow[" "]
+    direction LR
+    family(["가족"])
+    familySettings["가족 설정"] --> s1[["온보딩·가족 설정 화면 (가족 그룹 생성/구성원 초대/역할 설정/플랜 관리)<br/>SCR-01<br/>FR-001, FR-003"]]
+    privacy["정보 공개"] --> s14[["정보 공개 권한 설정 화면<br/>SCR-14<br/>FR-002"]]
+    family --> familySettings
+    family --> privacy
+  end
+  subgraph accountRow[" "]
+    direction LR
+    account(["계정"]) --> plan["플랜·결제"] --> s19[["결제·구독 관리 화면<br/>SCR-19<br/>FR-003, FR-004"]]
+  end
+
+  root --> homeRow
+  homeRow --> scheduleRow
+  scheduleRow --> careRow
+  careRow --> notifyRow
+  notifyRow --> familyRow
+  familyRow --> accountRow
+
+  classDef rootStyle fill:#243B64,stroke:#243B64,color:#FFFFFF,stroke-width:3px
+  classDef depth1Base fill:#FFF4CC,stroke:#D6A800,color:#5C4700,stroke-width:3px
+  classDef depth2Base fill:#FFF4CC,stroke:#D6A800,color:#5C4700,stroke-width:2px
+  classDef depth2Core fill:#E8DDF8,stroke:#7E57C2,color:#2E1B4E,stroke-width:2px
+  classDef screenBase fill:#FFF4CC,stroke:#D6A800,color:#5C4700,stroke-width:2px
+  classDef screenCore fill:#E8DDF8,stroke:#7E57C2,color:#2E1B4E,stroke-width:2px
+  class root rootStyle
+  class home,schedule,care,notify,family,account depth1Base
+  class homeMenu,calendar,personalSchedule,complete,notificationCenter,integration,familySettings,privacy,plan depth2Base
+  class inbox,roleMatch depth2Core
+  class s1,s2,s3,s4,s11,s12,s13,s14,s19 screenBase
+  class s5,s6 screenCore
+  style homeRow fill:transparent,stroke:transparent
+  style scheduleRow fill:transparent,stroke:transparent
+  style careRow fill:transparent,stroke:transparent
+  style careTop fill:transparent,stroke:transparent
+  style notifyRow fill:transparent,stroke:transparent
+  style familyRow fill:transparent,stroke:transparent
+  style accountRow fill:transparent,stroke:transparent
