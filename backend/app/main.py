@@ -226,8 +226,7 @@ def create_schedule(payload: ScheduleCreate):
         return {"schedule": one(db, "SELECT * FROM personal_schedule WHERE id = ?", (schedule_id,)), "collisions": collisions}
 
 
-@app.post("/api/intakes", status_code=201)
-def create_intake(payload: IntakeCreate):
+def store_intake(payload: IntakeCreate, parsed_items: list[dict]):
     with database() as db:
         if payload.child_id:
             one(db, "SELECT id FROM child WHERE id = ? AND family_id = ?", (payload.child_id, family_id()))
@@ -237,16 +236,23 @@ def create_intake(payload: IntakeCreate):
             (intake_id, family_id(), payload.child_id, payload.raw_content, payload.input_type, now()),
         )
         created = []
-        for item in classify_lines(payload.raw_content):
+        for item in parsed_items:
             item_id = str(uuid4())
             db.execute(
                 """INSERT INTO care_item(id, family_id, intake_id, child_id, item_type, title,
-                   confidence, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'NEEDS_REVIEW', ?)""",
-                (item_id, family_id(), intake_id, payload.child_id, item["item_type"], item["title"], item["confidence"], now()),
+                   detail, confidence, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'NEEDS_REVIEW', ?)""",
+                (item_id, family_id(), intake_id, payload.child_id, item["item_type"], item["title"],
+                 item.get("detail", ""), item["confidence"], now()),
             )
             created.append(one(db, "SELECT * FROM care_item WHERE id = ?", (item_id,)))
-        notify(db, owner_id(db), "새 돌봄 정보 확인", f"{len(created)}개 항목을 확인하고 저장해주세요")
-        return {"intake_id": intake_id, "items": created, "requires_review": True}
+        if created:
+            notify(db, owner_id(db), "새 돌봄 정보 확인", f"{len(created)}개 항목을 확인하고 저장해주세요")
+        return {"intake_id": intake_id, "items": created, "requires_review": bool(created)}
+
+
+@app.post("/api/intakes", status_code=201)
+def create_intake(payload: IntakeCreate):
+    return store_intake(payload, classify_lines(payload.raw_content))
 
 
 @app.patch("/api/items/{item_id}")

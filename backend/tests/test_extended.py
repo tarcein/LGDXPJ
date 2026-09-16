@@ -66,15 +66,20 @@ class ExtendedFlowTest(unittest.TestCase):
         image = b"\x89PNG\r\n\x1a\n" + b"demo-image"
         os.environ["LGDX_DEV_MODE"] = "1"
         os.environ["LGDX_DEV_TOKEN"] = "local-test-token"
-        with patch("app.extended.ai.extract_image_text", return_value="준비물: 모자") as extract:
+        text = "9월 20일 현장학습, 모자를 챙겨주세요"
+        parsed = [{"item_type": "SCHEDULE", "title": "9월 20일 현장학습", "detail": text, "confidence": "LOW"}]
+        with patch("app.extended.ai.extract_image_text", return_value=text) as extract, patch("app.extended.ai.extract_schedule_items", return_value=parsed) as select:
             for _ in range(2):
                 response = self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")}, data={"child_id": "jiu", "source": "CAMERA"})
                 self.assertEqual(response.status_code, 201)
-                self.assertEqual(response.json()["transcript"], "준비물: 모자")
+                self.assertEqual(response.json()["transcript"], text)
+                self.assertEqual([item["title"] for item in response.json()["items"]], ["9월 20일 현장학습"])
+                self.assertEqual(response.json()["items"][0]["detail"], text)
             blocked = self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")})
             self.assertEqual(blocked.status_code, 403)
             self.assertEqual(blocked.json()["detail"]["code"], "OCR_DAILY_LIMIT")
             self.assertEqual(extract.call_count, 2)
+            self.assertEqual(select.call_count, 2)
             self.assertEqual(self.client.post("/api/dev/preview-plan", json={"plan": "PRO"}).status_code, 404)
             changed = self.client.post("/api/dev/preview-plan", json={"plan": "PRO"}, headers={"X-Developer-Token": "local-test-token"})
             self.assertEqual(changed.json()["status"], "DEV_PREVIEW")
@@ -86,11 +91,46 @@ class ExtendedFlowTest(unittest.TestCase):
             self.assertEqual(states["family_album"], "NOT_CONNECTED")
             self.assertEqual(self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")}).status_code, 201)
 
+    def test_owner_can_toggle_dev_plan_without_browser_secret(self):
+        os.environ["LGDX_DEV_MODE"] = "1"
+        room = self.client.post("/api/families", json={"name": "테스트 가족", "owner_name": "엄마"}).json()
+        owner = {"Authorization": "Bearer " + room["access_token"]}
+        joined = self.client.post("/api/families/join", json={"invite_code": room["invite_code"], "name": "할머니", "role": "GRANDPARENT"}).json()
+        guest = {"Authorization": "Bearer " + joined["access_token"]}
+        self.assertTrue(self.client.get("/api/subscription", headers=owner).json()["dev_switch_available"])
+        self.assertFalse(self.client.get("/api/subscription", headers=guest).json()["dev_switch_available"])
+        self.assertEqual(self.client.post("/api/dev/preview-plan", headers=guest, json={"plan": "PRO"}).status_code, 403)
+        self.assertEqual(self.client.post("/api/dev/preview-plan", json={"plan": "PRO"}).status_code, 404)
+        pro = self.client.post("/api/dev/preview-plan", headers=owner, json={"plan": "PRO"})
+        self.assertEqual(pro.json()["plan"], "PRO")
+        self.assertEqual(self.client.get("/api/features", headers=owner).json()["plan"], "PRO")
+        free = self.client.post("/api/dev/preview-plan", headers=owner, json={"plan": "FREE"})
+        self.assertEqual(free.json()["plan"], "FREE")
+        self.assertEqual(self.client.get("/api/bootstrap", headers=owner).json()["family"]["plan"], "FREE")
+
+    def test_photo_without_schedule_items_keeps_text_without_review_card(self):
+        image = b"\x89PNG\r\n\x1a\n" + b"demo-image"
+        with patch("app.extended.ai.extract_image_text", return_value="안녕하세요. 좋은 하루 되세요."), patch("app.extended.ai.extract_schedule_items", return_value=[]):
+            response = self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")})
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["items"], [])
+        self.assertFalse(response.json()["requires_review"])
+        self.assertEqual(response.json()["transcript"], "안녕하세요. 좋은 하루 되세요.")
+
+    def test_schedule_extraction_requires_quote_from_ocr_text(self):
+        payload = {"output": [{"content": [{"type": "output_text", "text": '{"items":[{"item_type":"SCHEDULE","title":"9월 20일 현장학습","source_quote":"9월 20일 현장학습"},{"item_type":"TODO","title":"허구의 과제","source_quote":"원문에 없는 문장"}]}'}]}]}
+        with patch("app.ai._post", return_value=payload) as post:
+            items = ai.extract_schedule_items("9월 20일 현장학습\n안녕하세요")
+        self.assertEqual([item["title"] for item in items], ["9월 20일 현장학습"])
+        self.assertTrue(post.call_args.kwargs["json"]["text"]["format"]["strict"])
+
     def test_ocr_failure_does_not_consume_daily_allowance(self):
         image = b"\x89PNG\r\n\x1a\n" + b"demo-image"
         from fastapi import HTTPException
         with patch("app.extended.ai.extract_image_text", side_effect=HTTPException(422, "인식 실패")):
             self.assertEqual(self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")}).status_code, 422)
+        with patch("app.extended.ai.extract_image_text", return_value="9월 20일 현장학습"), patch("app.extended.ai.extract_schedule_items", side_effect=HTTPException(502, "일정 분석 실패")):
+            self.assertEqual(self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")}).status_code, 502)
         self.assertEqual(self.client.get("/api/features").json()["usage"]["ocr_today"], 0)
 
     def test_openai_credit_exhaustion_is_reported_explicitly(self):

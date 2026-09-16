@@ -23,21 +23,7 @@ strong { font-weight: 700; }
 
 .phone-wrap { position: relative; align-self: flex-start; }
 .phone { width: 360px; height: 740px; position: relative; display: flex; flex-direction: column; overflow: hidden; border-radius: 36px; background: #f4f6fc; border: 7px solid #17191e; box-shadow: 0 30px 70px #1a214435, 0 4px 15px #1a214428; }
-.phone::before { content: ''; position: absolute; z-index: 4; top: 6px; left: 50%; transform: translateX(-50%); height: 16px; width: 84px; border-radius: 99px; background: #17191e; }
-.status-bar { height: 58px; flex: none; display: flex; align-items: flex-end; justify-content: space-between; padding: 0 26px 9px; font-size: 13px; font-weight: 700; background: #f4f6fc; }
-.status-icons { font-size: 11px; color: #686b72; letter-spacing: 1px; }
-.top-bar { flex: none; height: 68px; padding: 0 18px; display: flex; align-items: center; justify-content: space-between; background: #f4f6fc; }
-.top-bar h1 { font-size: 21px; line-height: 1.4; }
-.home-bar p { color: #89909b; font-size: 11px; margin-top: 1px; }
-.top-actions { display: flex; gap: 9px; align-items: center; }
-.top-actions button { background: transparent; }
-.bell { position: relative; width: 31px; height: 31px; font-size: 26px; line-height: 30px; color: #1a181c; }
-.bell-count { position: absolute; right: -1px; top: -5px; min-width: 15px; height: 15px; line-height: 15px; border-radius: 6px; color: white; background: #c4123f; font-size: 9px; font-weight: 700; }
-.avatar { width: 35px; height: 35px; border-radius: 50%; background: #deddd6 !important; color: #5b5960; font-size: 12px; font-weight: 700; }
-.detail-bar { justify-content: flex-start; gap: 20px; }
-.detail-bar h1 { font-size: 16px; flex: 1; text-align: center; margin-right: 28px; }
-.back { font-family: Arial, sans-serif; background: transparent; font-size: 31px; line-height: 1; color: #292a31; width: 28px; padding: 0; }
-.top-spacer { display: none; }
+.inline-back { min-height: 34px; margin-bottom: 9px; padding: 4px 0; color: #c4123f; background: transparent; font-size: 13px; font-weight: 700; }
 .phone-content { flex: 1; overflow-y: auto; padding: 9px 18px 104px; scrollbar-width: none; }
 .phone-content::-webkit-scrollbar { display: none; }
 .bottom-nav { position: absolute; z-index: 3; left: 0; right: 0; bottom: 0; height: 71px; display: grid; grid-template-columns: repeat(5, 1fr); background: white; border-top: 1px solid #e4e5ea; padding-bottom: 9px; }
@@ -167,6 +153,12 @@ strong { font-weight: 700; }
 .switch.on span { left: 19px; }
 .pro-badge { display: inline-flex; align-items: center; padding: 4px 7px; border-radius: 6px; color: #fff; background: #1b523f; font: 700 9px 'Courier New', monospace; }
 .plan-card { padding: 18px; }
+.dev-plan-card { padding: 16px; border-color: #e9d9dd; background: #fffafb; }
+.dev-plan-card p { margin: 5px 0 13px; }
+.dev-plan-switch { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.dev-plan-switch button { min-height: 44px; border-radius: 11px; color: #444954; background: #eceef2; font-size: 14px; font-weight: 700; }
+.dev-plan-switch button[aria-pressed="true"] { color: #fff; background: #c4123f; }
+.dev-plan-switch button[aria-pressed="true"]:disabled { opacity: 1; }
 .plan-card.current { border-color: #b8d8c1; }
 .plan-card.pro { background: #203d36; color: white; }
 .plan-card.pro p { color: #bbd4cb; }
@@ -213,10 +205,9 @@ strong { font-weight: 700; }
 .bottom-sheet h2 { font-size: 19px; margin-bottom: 7px; }.bottom-sheet p { color: #8a8e96; font-size: 11px; line-height: 1.5; margin-bottom: 16px; }
 
 /* ThinQ 전역 셸은 가족 케어 기능과 독립된 목업이다. */
-.bell img { width: 19px; height: 19px; object-fit: contain; }
-.thinq-plus, .thinq-more { width: 30px; height: 31px; color: #282a30; font: 24px Arial, sans-serif; }
-.bottom-nav button img { width: 24px; height: 24px; object-fit: contain; opacity: .55; }
-.bottom-nav button.active img { opacity: 1; }
+.bottom-nav button img { width: 24px; height: 24px; object-fit: contain; opacity: .8; filter: grayscale(1) brightness(.8); }
+.bottom-nav button.active img { opacity: 1; filter: brightness(0) saturate(100%) invert(18%) sepia(79%) saturate(3791%) hue-rotate(328deg) brightness(90%) contrast(92%); }
+.bottom-nav button.active:nth-child(4) img { filter: none; }
 .bottom-nav button:nth-child(4) img { width: 26px; height: 26px; }
 .bottom-nav button .menu-bars { font-size: 22px; line-height: 24px; }
 .thinq-page { padding-top: 3px; }
@@ -241,6 +232,9 @@ strong { font-weight: 700; }
 .family-subnav { display: flex; gap: 4px; margin: 0 0 15px; padding: 4px; border-radius: 13px; background: #e9ecf3; }
 .family-subnav button { flex: 1; min-width: 0; padding: 8px 2px; border-radius: 10px; color: #777d87; background: transparent; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .family-subnav button.active { color: #c4123f; background: #fff; box-shadow: 0 1px 4px #1d223816; }
+.family-page-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 4px 0 15px; }
+.family-page-heading h1 { font-size: 22px; }
+.family-page-heading > span { color: #777d87; font-size: 11px; white-space: nowrap; }
 .family-alert { width: 100%; display: flex; align-items: center; gap: 9px; padding: 13px; border-radius: 14px; color: #33353c; background: #fff8f5; text-align: left; }
 .family-alert strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .family-alert > span:last-child { font-size: 18px; color: #b8a6a4; }
@@ -253,6 +247,15 @@ strong { font-weight: 700; }
 .family-menu-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; margin-bottom: 16px; }
 .family-menu-list button { min-height: 48px; display: flex; justify-content: space-between; align-items: center; gap: 3px; padding: 10px; border-radius: 11px; background: #fff; color: #444954; text-align: left; font-size: 10px; font-weight: 700; }
 .family-menu-list span { color: #aaaeb7; font-size: 17px; }
+.family-categories { display: grid; gap: 9px; margin-bottom: 18px; }
+.menu-category { overflow: hidden; border: 1px solid #e8eaf0; border-radius: 14px; background: #fff; }
+.menu-category summary { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 13px 16px; cursor: pointer; list-style: none; font-size: 14px; font-weight: 700; }
+.menu-category summary::-webkit-details-marker { display: none; }
+.menu-category summary span { margin-left: auto; color: #8a8e96; font-size: 11px; font-weight: 500; }
+.menu-category summary::after { content: '⌄'; color: #8a8e96; font-size: 18px; line-height: 1; }
+.menu-category[open] summary::after { transform: rotate(180deg); }
+.menu-category .family-menu-list { grid-template-columns: 1fr; gap: 0; margin: 0; padding: 0 8px 8px; }
+.menu-category .family-menu-list button { min-height: 48px; padding: 12px 14px; border-top: 1px solid #eef0f3; border-radius: 0; font-size: 13px; }
 
 .fab-shade { position: absolute; z-index: 4; inset: 0; width: 100%; background: #1520377e; }
 .fab-menu { position: absolute; z-index: 5; right: 18px; bottom: 150px; width: min(266px, calc(100% - 36px)); padding: 6px; border-radius: 20px; background: #fff; box-shadow: 0 15px 35px #1c253b35; }
@@ -276,6 +279,16 @@ strong { font-weight: 700; }
 .capture-preview { max-width: 90%; max-height: 100px; border-radius: 8px; object-fit: contain; }
 .capture-frame small { padding: 0 12px; text-align: center; }
 .voice-mark { width: 56px; height: 56px; object-fit: contain; }
+.source-transcript { padding: 13px; }
+.source-transcript summary { cursor: pointer; font-size: 12px; font-weight: 700; }
+.source-transcript p { margin-top: 6px; white-space: pre-wrap; max-height: 115px; overflow-y: auto; }
+.invite-code { display: flex; flex-direction: column; gap: 4px; align-items: center; margin: 12px 0; padding: 12px; border-radius: 12px; background: #f5f6ff; }
+.invite-code strong { font-size: 19px; letter-spacing: 2px; }
+.invite-code small { color: #777d87; font-size: 10px; }
+.voice-actions { display: flex; gap: 8px; margin-top: 10px; }
+.voice-actions button { flex: 1; min-width: 0; padding: 12px; font-size: 14px; }
+.phone:has(.onboarding-art) .bottom-nav { display: none; }
+.phone:has(.onboarding-art) .phone-content { padding-bottom: 24px; }
 .chat-thread { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; padding: 8px 0 20px; }
 .chat-bubble.me { align-self: flex-end; background: #c4123f; color: #fff; border-bottom-right-radius: 4px; }
 .chat-prompts { display: flex; gap: 6px; overflow-x: auto; margin: 6px 0 15px; }
@@ -293,4 +306,21 @@ strong { font-weight: 700; }
 .program-choice small { flex: 1; color: #9298a1; font-size: 9px; }
 .program-choice span { color: #9ba0a8; font-size: 18px; }
 
-@media (max-width: 800px) { .app-shell { padding: 0; gap: 0; min-height: 100dvh; background: #f4f6fc; } .screen-index { display: none; } .phone-wrap { width: 100%; } .phone { width: 100%; height: 100dvh; max-height: none; border: 0; border-radius: 0; box-shadow: none; } .phone::before { display: none; } .phone-content { padding-left: max(18px, env(safe-area-inset-left)); padding-right: max(18px, env(safe-area-inset-right)); } .bottom-nav { padding-bottom: env(safe-area-inset-bottom); height: calc(71px + env(safe-area-inset-bottom)); } }
+@media (max-width: 1000px), (pointer: coarse) {
+  .app-shell { padding: 0; gap: 0; min-height: 100dvh; background: #f4f6fc; }
+  .screen-index { display: none; }
+  .phone-wrap { width: 100%; }
+  .phone { width: 100%; height: 100dvh; max-height: none; border: 0; border-radius: 0; box-shadow: none; }
+  .phone-content { padding: max(16px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) calc(104px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); font-size: 14px; }
+  .bottom-nav { padding-bottom: env(safe-area-inset-bottom); height: calc(71px + env(safe-area-inset-bottom)); }
+  .bottom-nav button, .family-subnav button { font-size: 12px; }
+  .family-page-heading > span { font-size: 12px; }
+  .card strong, .section-heading { font-size: 15px; }
+  .card p, .hero-copy, .chat-bubble { font-size: 14px; }
+  .primary-button, .outline-button { min-height: 46px; font-size: 14px; }
+  .form-label, .text-link, .family-menu-list button, .menu-category .family-menu-list button { font-size: 14px; }
+  .form-control, .text-area, .chat-composer input { font-size: 16px; }
+  .helper-text, .source-text { font-size: 12px; }
+  .family-shortcuts strong, .family-alert strong, .timeline-content strong, .thinq-family-row { font-size: 13px; }
+  .family-shortcuts small, .timeline-content small { font-size: 11px; }
+}

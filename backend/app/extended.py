@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from . import ai
 from .config import enabled, setting
 from .db import database
-from .family import family_id, member_id
+from .family import authenticated, family_id, member_id, owner_id, require_owner
 
 
 router = APIRouter(prefix="/api", tags=["media and assistant"])
@@ -101,9 +101,10 @@ def subscription():
     with database() as db:
         plan = _plan(db)
         row = db.execute("SELECT enabled FROM plan_preview WHERE family_id = ?", (family_id(),)).fetchone()
+        dev_switch_available = enabled("LGDX_DEV_MODE") and authenticated() and member_id() == owner_id(db)
     preview = bool(row and row["enabled"])
     return {"plan": plan, "status": "DEV_PREVIEW" if preview else ("ACTIVE" if plan == "PRO" else "NOT_SUBSCRIBED"),
-            "developer_preview": preview}
+            "developer_preview": preview, "dev_switch_available": dev_switch_available}
 
 
 @router.get("/features")
@@ -123,10 +124,15 @@ class PreviewPlan(BaseModel):
 
 @router.post("/dev/preview-plan")
 def preview_plan(payload: PreviewPlan, x_developer_token: str | None = Header(default=None)):
-    expected = setting("LGDX_DEV_TOKEN")
-    if not enabled("LGDX_DEV_MODE") or not expected or not x_developer_token or not secrets.compare_digest(expected, x_developer_token):
+    if not enabled("LGDX_DEV_MODE"):
         raise HTTPException(404, "개발자 플랜 미리보기를 사용할 수 없습니다")
+    expected = setting("LGDX_DEV_TOKEN")
+    token_ok = bool(expected and x_developer_token and secrets.compare_digest(expected, x_developer_token))
     with database() as db:
+        if not token_ok:
+            if not authenticated():
+                raise HTTPException(404, "개발자 플랜 미리보기를 사용할 수 없습니다")
+            require_owner(db)
         db.execute("UPDATE family_group SET plan = ? WHERE id = ?", (payload.plan, family_id()))
         db.execute("""INSERT INTO plan_preview(family_id, enabled) VALUES (?, ?)
            ON CONFLICT(family_id) DO UPDATE SET enabled = excluded.enabled""",
@@ -149,8 +155,9 @@ def photo_intake(file: UploadFile, child_id: str | None = Form(default=None), so
         _add_usage(db, "OCR", 1)
     try:
         extracted = ai.extract_image_text(image, mime)
-        from .main import IntakeCreate, create_intake
-        result = create_intake(IntakeCreate(raw_content=extracted, child_id=child_id, input_type="PHOTO_TRANSCRIPT"))
+        parsed_items = ai.extract_schedule_items(extracted)
+        from .main import IntakeCreate, store_intake
+        result = store_intake(IntakeCreate(raw_content=extracted, child_id=child_id, input_type="PHOTO_TRANSCRIPT"), parsed_items)
     except Exception:
         with database() as db:
             _add_usage(db, "OCR", -1)
