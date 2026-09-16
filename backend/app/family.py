@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-import sqlite3
 import string
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
@@ -67,21 +66,15 @@ def _now() -> datetime:
 
 
 def _new_code(db, target_family: str) -> tuple[str, str]:
-    for _ in range(5):
-        code = "".join(secrets.choice(ALPHABET) for _ in range(10))
-        expires_at = (_now() + timedelta(days=7)).isoformat()
-        try:
-            db.execute(
-                """INSERT INTO family_invite_code(family_id, code_hash, expires_at) VALUES (?, ?, ?)
-                   ON CONFLICT(family_id) DO UPDATE SET code_hash = excluded.code_hash,
-                     expires_at = excluded.expires_at""",
-                (target_family, _hash(code), expires_at),
-            )
-            return code, expires_at
-        except sqlite3.IntegrityError as exc:
-            if "UNIQUE constraint failed: family_invite_code.code_hash" not in str(exc):
-                raise
-    raise HTTPException(503, "초대코드를 생성하지 못했습니다")
+    code = "".join(secrets.choice(ALPHABET) for _ in range(10))
+    expires_at = (_now() + timedelta(days=7)).isoformat()
+    db.execute(
+        """INSERT INTO family_invite_code(family_id, code_hash, expires_at) VALUES (?, ?, ?)
+           ON CONFLICT(family_id) DO UPDATE SET code_hash = excluded.code_hash,
+             expires_at = excluded.expires_at""",
+        (target_family, _hash(code), expires_at),
+    )
+    return code, expires_at
 
 
 def _new_session(db, target_family: str, target_member: str) -> str:
@@ -128,6 +121,22 @@ class FamilyJoin(BaseModel):
     invite_code: str = Field(min_length=8, max_length=20)
     name: str = Field(min_length=1, max_length=100)
     role: str = Field(pattern="^(PARENT|GRANDPARENT|CAREGIVER)$")
+
+
+@router.get("/invitations/{invite_code}")
+def invitation_preview(invite_code: str):
+    code = "".join(ch for ch in invite_code.upper() if ch in string.ascii_uppercase + string.digits)
+    with database() as db:
+        invitation = db.execute(
+            """SELECT f.name AS family_name, m.name AS owner_name, i.expires_at
+               FROM family_invite_code i JOIN family_group f ON f.id = i.family_id
+               JOIN family_member m ON m.family_id = f.id AND m.is_owner = 1
+               WHERE i.code_hash = ?""",
+            (_hash(code),),
+        ).fetchone()
+    if invitation is None or datetime.fromisoformat(invitation["expires_at"]) <= _now():
+        raise HTTPException(404, "초대 링크가 없거나 만료됐습니다")
+    return dict(invitation)
 
 
 @router.post("", status_code=201)

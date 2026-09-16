@@ -25,9 +25,105 @@ class ExtendedFlowTest(unittest.TestCase):
 
     def tearDown(self):
         self.client_context.__exit__(None, None, None)
-        for key in ("LGDX_DB_PATH", "LGDX_DEV_MODE", "LGDX_DEV_TOKEN", "LGDX_REQUIRE_AUTH"):
+        for key in (
+            "LGDX_DB_PATH", "LGDX_DEV_MODE", "LGDX_DEV_TOKEN", "LGDX_REQUIRE_AUTH", "SUBSIDY24_SERVICE_KEY",
+            "IDOL_CARE_INSTITUTION_SERVICE_KEY", "IDOL_CARE_HOUSEHOLD_INCOME_SERVICE_KEY",
+            "IDOL_CARE_HEALTH_INSURANCE_SERVICE_KEY",
+        ):
             os.environ.pop(key, None)
         self.temp.cleanup()
+
+    def test_subsidy24_benefits_are_normalized_for_pro_family(self):
+        os.environ["LGDX_DEV_MODE"] = "1"
+        os.environ["LGDX_DEV_TOKEN"] = "local-test-token"
+        os.environ["SUBSIDY24_SERVICE_KEY"] = "test-service-key"
+        self.client.post("/api/dev/preview-plan", json={"plan": "PRO"}, headers={"X-Developer-Token": "local-test-token"})
+        saved = self.client.patch("/api/benefits/location", json={"city": "서울특별시", "district": "은평구"})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(self.client.get("/api/benefits/location").json()["district"], "은평구")
+        request = httpx.Request("GET", "https://api.odcloud.kr/api/gov24/v3/serviceList")
+        district = httpx.Response(200, request=request, json={
+            "page": 1, "perPage": 20, "matchCount": 2,
+            "data": [{
+                "서비스ID": "care-district", "서비스명": "은평형 아이돌봄", "서비스목적요약": "가정 돌봄 지원",
+                "서비스분야": "보육·교육", "소관기관명": "서울특별시 은평구", "소관기관유형": "시군구", "지원대상": "양육 가정",
+                "지원내용": "돌봄 비용 지원", "신청방법": "온라인 신청", "상세조회URL": "https://www.gov.kr/care-1",
+            }, {
+                "서비스ID": "adult-disabled-care", "서비스명": "장애인 돌봄 지원", "서비스목적요약": "성인 활동 지원",
+                "서비스분야": "보호·돌봄", "소관기관명": "서울특별시 은평구", "소관기관유형": "시군구", "지원대상": "성인 장애인",
+            }],
+        })
+        city = httpx.Response(200, request=request, json={"data": [{
+            "서비스ID": "care-city", "서비스명": "서울 아동 돌봄 이동 지원", "소관기관명": "서울특별시",
+            "소관기관유형": "광역시도", "서비스분야": "보육·교육",
+        }]})
+        national = httpx.Response(200, request=request, json={"data": [{
+            "서비스ID": "care-national", "서비스명": "아이돌봄 지원", "소관기관명": "여성가족부",
+            "소관기관유형": "중앙행정기관", "서비스분야": "보육·교육",
+        }, {
+            "서비스ID": "adult-national", "서비스명": "노인맞춤돌봄서비스", "소관기관명": "보건복지부",
+            "소관기관유형": "중앙행정기관", "서비스분야": "보호·돌봄", "지원대상": "65세 이상 노인",
+        }]})
+        with patch("app.benefits.httpx.get", side_effect=[district, city, national]) as get:
+            response = self.client.get("/api/benefits", params={"keyword": "돌봄"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["location"]["label"], "서울특별시 은평구")
+        self.assertEqual([program["scope"] for program in response.json()["programs"]], ["DISTRICT", "CITY", "NATIONAL"])
+        self.assertNotIn("adult-disabled-care", [program["id"] for program in response.json()["programs"]])
+        self.assertNotIn("adult-national", [program["id"] for program in response.json()["programs"]])
+        self.assertEqual(response.json()["audience"], "CHILD_CARE_ONLY")
+        self.assertEqual(get.call_args_list[0].kwargs["params"]["cond[소관기관명::EQ]"], "서울특별시 은평구")
+        self.assertEqual(get.call_args_list[1].kwargs["params"]["cond[소관기관명::EQ]"], "서울특별시")
+        self.assertEqual(get.call_args_list[2].kwargs["params"]["cond[서비스명::LIKE]"], "돌봄")
+
+    def test_idol_care_public_data_is_called_and_normalized(self):
+        os.environ["LGDX_DEV_MODE"] = "1"
+        os.environ["LGDX_DEV_TOKEN"] = "local-test-token"
+        os.environ["IDOL_CARE_INSTITUTION_SERVICE_KEY"] = "encoded%2Fkey%3D"
+        os.environ["IDOL_CARE_HOUSEHOLD_INCOME_SERVICE_KEY"] = "income-key"
+        os.environ["IDOL_CARE_HEALTH_INSURANCE_SERVICE_KEY"] = "insurance-key"
+        self.client.post("/api/dev/preview-plan", json={"plan": "PRO"}, headers={"X-Developer-Token": "local-test-token"})
+
+        institution_request = httpx.Request("GET", "https://apis.data.go.kr/institutions")
+        institution_response = httpx.Response(200, request=institution_request, json={"response": {
+            "header": {"resultCode": "0", "resultMsg": "NORMAL SERVICE"},
+            "body": {"items": {"item": [{
+                "ctpvNm": "서울", "sggNm": "은평구", "childCareInstNo": "C0308",
+                "childCareInstNm": "서울 은평구 가족센터", "rprsTelno": "02-376-3752",
+                "addr": "서울 은평구 은평로21가길 15-17", "lot": 126.9, "lat": 37.6,
+                "dataCrtrYmd": "20260413",
+            }]}}
+        }})
+        with patch("app.benefits.httpx.get", return_value=institution_response) as get:
+            response = self.client.get("/api/benefits/institutions", params={"city": "서울특별시", "district": "은평구"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["institutions"][0]["name"], "서울 은평구 가족센터")
+        self.assertEqual(get.call_args.kwargs["params"]["ctpvNm"], "서울")
+        self.assertEqual(get.call_args.kwargs["params"]["sggNm"], "은평구")
+        self.assertEqual(get.call_args.kwargs["params"]["ServiceKey"], "encoded/key=")
+
+        criteria_request = httpx.Request("GET", "https://apis.data.go.kr/criteria")
+        income_response = httpx.Response(200, request=criteria_request, json={"response": {
+            "header": {"resultCode": "0", "resultMsg": "NORMAL SERVICE"},
+            "body": {"items": {"item": [{
+                "crtrYr": "2020", "jgmtGrdeNm": "0001", "mdincmCrtrAmt": 75,
+                "mohshdCnt": 3, "mmAvgErngCrtrAmt": 2902933, "dataCrtrYmd": "20260413",
+            }]}}
+        }})
+        insurance_response = httpx.Response(200, request=criteria_request, json={"response": {
+            "header": {"resultCode": "0", "resultMsg": "NORMAL SERVICE"},
+            "body": {"items": {"item": [{
+                "crtrYr": "2020", "erngAmt": 1837681, "wrcHlthIsrprmOselfBrdnAmt": 61287,
+                "areaHlthIsrprmOselfBrdnAmt": 14007, "mixHlthIsrprmAmt": 61683,
+                "dataCrtrYmd": "20260413",
+            }]}}
+        }})
+        with patch("app.benefits.httpx.get", side_effect=[income_response, insurance_response]):
+            response = self.client.get("/api/benefits/eligibility-criteria")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["year"], "2020")
+        self.assertEqual(response.json()["household_income"][0]["monthly_income"], 2902933)
+        self.assertEqual(response.json()["health_insurance"][0]["employee_premium"], 61287)
 
     def test_invite_code_joins_only_one_family_and_respects_member_limit(self):
         room_a = self.client.post("/api/families", json={"name": "가족 A", "owner_name": "엄마"})
@@ -75,7 +171,7 @@ class ExtendedFlowTest(unittest.TestCase):
                 self.assertEqual(response.json()["transcript"], text)
                 self.assertEqual([item["title"] for item in response.json()["items"]], ["9월 20일 현장학습"])
                 self.assertEqual(response.json()["items"][0]["detail"], text)
-            blocked = self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")})
+            blocked = self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")}, data={"child_id": "jiu"})
             self.assertEqual(blocked.status_code, 403)
             self.assertEqual(blocked.json()["detail"]["code"], "OCR_DAILY_LIMIT")
             self.assertEqual(extract.call_count, 2)
@@ -88,8 +184,8 @@ class ExtendedFlowTest(unittest.TestCase):
             states = {feature["id"]: feature["backend_state"] for feature in feature_data["features"]}
             self.assertEqual(states["emergency_request"], "READY")
             self.assertEqual(states["voice_schedule"], "PARTIAL")
-            self.assertEqual(states["family_album"], "NOT_CONNECTED")
-            self.assertEqual(self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")}).status_code, 201)
+            self.assertEqual(states["family_album"], "READY")
+            self.assertEqual(self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")}, data={"child_id": "jiu"}).status_code, 201)
 
     def test_owner_can_toggle_dev_plan_without_browser_secret(self):
         os.environ["LGDX_DEV_MODE"] = "1"
@@ -111,7 +207,7 @@ class ExtendedFlowTest(unittest.TestCase):
     def test_photo_without_schedule_items_keeps_text_without_review_card(self):
         image = b"\x89PNG\r\n\x1a\n" + b"demo-image"
         with patch("app.extended.ai.extract_image_text", return_value="안녕하세요. 좋은 하루 되세요."), patch("app.extended.ai.extract_schedule_items", return_value=[]):
-            response = self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")})
+            response = self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")}, data={"child_id": "jiu"})
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["items"], [])
         self.assertFalse(response.json()["requires_review"])
@@ -128,9 +224,9 @@ class ExtendedFlowTest(unittest.TestCase):
         image = b"\x89PNG\r\n\x1a\n" + b"demo-image"
         from fastapi import HTTPException
         with patch("app.extended.ai.extract_image_text", side_effect=HTTPException(422, "인식 실패")):
-            self.assertEqual(self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")}).status_code, 422)
+            self.assertEqual(self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")}, data={"child_id": "jiu"}).status_code, 422)
         with patch("app.extended.ai.extract_image_text", return_value="9월 20일 현장학습"), patch("app.extended.ai.extract_schedule_items", side_effect=HTTPException(502, "일정 분석 실패")):
-            self.assertEqual(self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")}).status_code, 502)
+            self.assertEqual(self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")}, data={"child_id": "jiu"}).status_code, 502)
         self.assertEqual(self.client.get("/api/features").json()["usage"]["ocr_today"], 0)
 
     def test_openai_credit_exhaustion_is_reported_explicitly(self):
@@ -144,6 +240,152 @@ class ExtendedFlowTest(unittest.TestCase):
                 ai._post("/responses", json={"input": "hello"})
         self.assertEqual(caught.exception.status_code, 503)
         self.assertEqual(caught.exception.detail["code"], "OPENAI_CREDITS_EXHAUSTED")
+
+    def test_child_schedule_requires_child_and_appears_in_bootstrap(self):
+        created = self.client.post("/api/child-schedules", json={
+            "child_id": "jiu", "title": "태권도", "category": "ACADEMY",
+            "starts_at": "2026-09-16T15:00:00+09:00", "ends_at": "2026-09-16T16:00:00+09:00",
+        })
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json()["child_id"], "jiu")
+        self.assertEqual(created.json()["category"], "ACADEMY")
+        schedules = self.client.get("/api/bootstrap").json()["child_schedules"]
+        self.assertTrue(any(schedule["title"] == "태권도" for schedule in schedules))
+        missing = self.client.post("/api/child-schedules", json={
+            "child_id": "missing", "title": "미술", "category": "AFTER_SCHOOL",
+            "starts_at": "2026-09-16T16:00:00+09:00", "ends_at": "2026-09-16T17:00:00+09:00",
+        })
+        self.assertEqual(missing.status_code, 404)
+
+    def test_weekly_child_and_personal_routines_expand_into_calendar_entries(self):
+        child_routine = self.client.post("/api/child-schedules", json={
+            "child_id": "jiu", "title": "태권도", "category": "ACADEMY",
+            "starts_at": "2026-09-14T15:00:00+09:00", "ends_at": "2026-09-14T16:00:00+09:00",
+            "repeat_days": [0, 2, 4], "repeat_until": "2026-09-20",
+        })
+        self.assertEqual(child_routine.status_code, 201)
+        child_body = child_routine.json()
+        self.assertEqual(child_body["scheduled_count"], 3)
+        self.assertEqual(
+            [schedule["starts_at"][:10] for schedule in child_body["schedules"]],
+            ["2026-09-14", "2026-09-16", "2026-09-18"],
+        )
+        self.assertEqual(len({schedule["recurrence_id"] for schedule in child_body["schedules"]}), 1)
+        self.assertEqual(child_body["schedules"][0]["recurrence_rule"], "WEEKLY:0,2,4:UNTIL=2026-09-20")
+
+        personal_routine = self.client.post("/api/schedules", json={
+            "member_id": "mom", "title": "저녁 운동", "kind": "ROUTINE",
+            "starts_at": "2026-09-14T19:00:00+09:00", "ends_at": "2026-09-14T20:00:00+09:00",
+            "repeat_days": [1, 3], "repeat_until": "2026-09-20",
+        })
+        self.assertEqual(personal_routine.status_code, 201)
+        personal_body = personal_routine.json()
+        self.assertEqual(personal_body["scheduled_count"], 2)
+        self.assertEqual(
+            [schedule["starts_at"][:10] for schedule in personal_body["schedules"]],
+            ["2026-09-15", "2026-09-17"],
+        )
+        self.assertEqual(len({schedule["recurrence_id"] for schedule in personal_body["schedules"]}), 1)
+
+        incomplete = self.client.post("/api/schedules", json={
+            "member_id": "mom", "title": "잘못된 반복", "kind": "ROUTINE",
+            "starts_at": "2026-09-14T19:00:00+09:00", "ends_at": "2026-09-14T20:00:00+09:00",
+            "repeat_days": [0],
+        })
+        self.assertEqual(incomplete.status_code, 422)
+
+    def test_child_schedule_opens_agent_recommendations_without_requester(self):
+        room = self.client.post("/api/families", json={"name": "지우네", "owner_name": "엄마"}).json()
+        owner_headers = {"Authorization": "Bearer " + room["access_token"]}
+        caregiver = self.client.post("/api/families/join", json={
+            "invite_code": room["invite_code"], "name": "할머니", "role": "GRANDPARENT",
+        }).json()
+        caregiver_headers = {"Authorization": "Bearer " + caregiver["access_token"]}
+        child = self.client.post("/api/children", headers=owner_headers, json={"name": "지우", "age_label": "7세"}).json()
+        created = self.client.post("/api/child-schedules", headers=owner_headers, json={
+            "child_id": child["id"], "title": "태권도", "category": "ACADEMY",
+            "starts_at": "2026-09-21T15:00:00+09:00", "ends_at": "2026-09-21T16:00:00+09:00",
+        })
+        self.assertEqual(created.status_code, 201)
+        care_item_id = created.json()["care_item_id"]
+        suggestions = self.client.get(f"/api/items/{care_item_id}/suggestions", headers=owner_headers).json()
+        self.assertEqual(suggestions["engine"], "CARE_SCHEDULE_AGENT")
+        self.assertNotIn(room["member_id"], [item["member_id"] for item in suggestions["suggestions"]])
+        self.assertIn(caregiver["member_id"], [item["member_id"] for item in suggestions["suggestions"]])
+        self.assertEqual(self.client.post("/api/assignments", headers=owner_headers, json={
+            "item_id": care_item_id, "assignee_id": room["member_id"],
+        }).status_code, 422)
+
+        assignment = self.client.post("/api/assignments", headers=owner_headers, json={
+            "item_id": care_item_id, "assignee_id": caregiver["member_id"],
+        })
+        self.assertEqual(assignment.status_code, 201)
+        assignment_id = assignment.json()["id"]
+        guest_notices = self.client.get("/api/bootstrap", headers=caregiver_headers).json()["notifications"]
+        request_notice = next(notice for notice in guest_notices if notice["action_type"] == "ASSIGNMENT_REQUEST")
+        self.assertEqual(request_notice["action_id"], assignment_id)
+        self.assertIn("엄마", request_notice["body"])
+        owner_notices = self.client.get("/api/bootstrap", headers=owner_headers).json()["notifications"]
+        self.assertFalse(any(notice.get("action_id") == assignment_id for notice in owner_notices))
+
+    def test_owner_can_remove_member_and_member_can_leave(self):
+        room = self.client.post("/api/families", json={"name": "우리 가족", "owner_name": "엄마"}).json()
+        owner_headers = {"Authorization": "Bearer " + room["access_token"]}
+        first = self.client.post("/api/families/join", json={
+            "invite_code": room["invite_code"], "name": "할머니", "role": "GRANDPARENT",
+        }).json()
+        second = self.client.post("/api/families/join", json={
+            "invite_code": room["invite_code"], "name": "아빠", "role": "PARENT",
+        }).json()
+        first_headers = {"Authorization": "Bearer " + first["access_token"]}
+        second_headers = {"Authorization": "Bearer " + second["access_token"]}
+
+        removed = self.client.post(f"/api/members/{first['member_id']}/remove", headers=owner_headers)
+        self.assertEqual(removed.status_code, 200)
+        self.assertEqual(removed.json()["status"], "REMOVED")
+        self.assertEqual(self.client.get("/api/bootstrap", headers=first_headers).status_code, 401)
+        self.assertEqual(self.client.post("/api/families/leave", headers=second_headers).status_code, 200)
+        self.assertEqual(self.client.get("/api/bootstrap", headers=second_headers).status_code, 401)
+        self.assertEqual(self.client.post("/api/families/leave", headers=owner_headers).status_code, 409)
+
+    def test_invitation_link_preview_is_public_and_exposes_only_summary(self):
+        room = self.client.post("/api/families", json={"name": "지우네 가족", "owner_name": "지연"}).json()
+        os.environ["LGDX_REQUIRE_AUTH"] = "1"
+        preview = self.client.get(f"/api/families/invitations/{room['invite_code']}")
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.json()["family_name"], "지우네 가족")
+        self.assertEqual(preview.json()["owner_name"], "지연")
+        self.assertEqual(set(preview.json()), {"family_name", "owner_name", "expires_at"})
+        self.assertEqual(self.client.get("/api/families/invitations/NOT-A-REAL-CODE").status_code, 404)
+
+    def test_calendar_connection_reports_missing_oauth_configuration(self):
+        with patch.dict(os.environ, {
+            "GOOGLE_CLIENT_ID": "", "GOOGLE_CLIENT_SECRET": "",
+            "MICROSOFT_CLIENT_ID": "", "MICROSOFT_CLIENT_SECRET": "",
+        }):
+            status = self.client.get("/api/calendar-connections")
+            self.assertEqual(status.status_code, 200)
+            self.assertTrue(all(not item["configured"] for item in status.json()["connections"]))
+            authorize = self.client.post("/api/calendar-connections/google/authorize")
+            self.assertEqual(authorize.status_code, 503)
+            self.assertEqual(authorize.json()["detail"]["code"], "CALENDAR_NOT_CONFIGURED")
+
+    def test_google_and_outlook_oauth_are_both_available_when_configured(self):
+        with patch.dict(os.environ, {
+            "GOOGLE_CLIENT_ID": "google-client", "GOOGLE_CLIENT_SECRET": "google-secret",
+            "MICROSOFT_CLIENT_ID": "microsoft-client", "MICROSOFT_CLIENT_SECRET": "microsoft-secret",
+            "CALENDAR_REDIRECT_BASE": "http://127.0.0.1:8000",
+        }):
+            connections = self.client.get("/api/calendar-connections").json()["connections"]
+            self.assertTrue(all(connection["configured"] for connection in connections))
+            google = self.client.post("/api/calendar-connections/google/authorize").json()["authorization_url"]
+            microsoft = self.client.post("/api/calendar-connections/microsoft/authorize").json()["authorization_url"]
+            self.assertIn("accounts.google.com", google)
+            self.assertIn("calendar.events.readonly", google)
+            self.assertIn("google%2Fcallback", google)
+            self.assertIn("login.microsoftonline.com/common", microsoft)
+            self.assertIn("Calendars.Read", microsoft)
+            self.assertIn("microsoft%2Fcallback", microsoft)
 
     def test_free_voice_chat_and_handoff_note(self):
         with patch("app.extended.ai.transcribe_audio", return_value="오늘 하원 누가 맡아?"), patch("app.extended.ai.answer", return_value=("할머니가 담당입니다.", 23)) as answer:
@@ -195,6 +437,60 @@ class ExtendedFlowTest(unittest.TestCase):
         ack_path = f"/api/handoffs/{handoff.json()['id']}/acknowledge"
         self.assertEqual(self.client.post(ack_path, headers=caregiver_headers).status_code, 403)
         self.assertEqual(self.client.post(ack_path, headers=owner_headers).status_code, 200)
+
+    def test_completion_photo_persists_and_handoff_reaches_next_caregiver(self):
+        os.environ["LGDX_DEV_MODE"] = "1"
+        owner = self.client.post("/api/families", json={"name": "앨범 가족", "owner_name": "엄마"}).json()
+        grandma = self.client.post("/api/families/join", json={
+            "invite_code": owner["invite_code"], "name": "할머니", "role": "GRANDPARENT",
+        }).json()
+        dad = self.client.post("/api/families/join", json={
+            "invite_code": owner["invite_code"], "name": "아빠", "role": "PARENT",
+        }).json()
+        headers = lambda room: {"Authorization": "Bearer " + room["access_token"]}
+        self.assertEqual(self.client.post("/api/dev/preview-plan", headers=headers(owner), json={"plan": "PRO"}).status_code, 200)
+        child = self.client.post("/api/children", headers=headers(owner), json={"name": "지우", "age_label": "7세"}).json()
+
+        item_ids = []
+        for title, start, end in [
+            ("학교 하원", "2026-09-20T15:00:00+09:00", "2026-09-20T15:30:00+09:00"),
+            ("태권도 이동", "2026-09-20T16:00:00+09:00", "2026-09-20T16:30:00+09:00"),
+        ]:
+            created = self.client.post("/api/child-schedules", headers=headers(owner), json={
+                "child_id": child["id"], "title": title, "category": "ACADEMY",
+                "starts_at": start, "ends_at": end,
+            }).json()
+            item_ids.append(created["care_item_id"])
+
+        first = self.client.post("/api/assignments", headers=headers(owner), json={
+            "item_id": item_ids[0], "assignee_id": grandma["member_id"],
+        }).json()
+        second = self.client.post("/api/assignments", headers=headers(owner), json={
+            "item_id": item_ids[1], "assignee_id": dad["member_id"],
+        }).json()
+        self.client.post(f"/api/assignments/{first['id']}/respond", headers=headers(grandma), json={"decision": "ACCEPTED"})
+        self.client.post(f"/api/assignments/{second['id']}/respond", headers=headers(dad), json={"decision": "ACCEPTED"})
+
+        png = b"\x89PNG\r\n\x1a\n" + b"care-photo"
+        completed = self.client.post(
+            f"/api/assignments/{first['id']}/complete-handoff", headers=headers(grandma),
+            data={"note": "무릎에 작은 상처가 있어요"}, files={"photo": ("done.png", png, "image/png")},
+        )
+        self.assertEqual(completed.status_code, 200)
+        self.assertEqual(completed.json()["photo"]["assignment_id"], first["id"])
+
+        dad_snapshot = self.client.get("/api/bootstrap", headers=headers(dad)).json()
+        handoff = next(item for item in dad_snapshot["handoffs"]
+                       if item["assignment_id"] == first["id"] and item["to_member_id"] == dad["member_id"])
+        self.assertIn("무릎에 작은 상처", handoff["special_note"])
+        self.assertIn("완료 사진 있음", handoff["briefing"])
+
+        direct = self.client.post("/api/album/photos", headers=headers(owner),
+                                  files={"file": ("family.png", png, "image/png")}, data={"caption": "주말 나들이"})
+        self.assertEqual(direct.status_code, 201)
+        photos = self.client.get("/api/album/photos", headers=headers(owner)).json()["photos"]
+        self.assertEqual(len(photos), 2)
+        self.assertTrue(all(photo["data_url"].startswith("data:image/png;base64,") for photo in photos))
 
     def test_emergency_request_first_claim_reassigns_and_closes_for_everyone(self):
         os.environ["LGDX_DEV_MODE"] = "1"

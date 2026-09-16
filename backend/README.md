@@ -2,7 +2,19 @@
 
 Run with `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload` from this directory. The request and response schemas are available at `http://127.0.0.1:8000/docs` and `/openapi.json`.
 
-Copy `.env.example` to `.env` and enter `OPENAI_API_KEY` in `.env`. The same OpenAI project key is used for Whisper audio transcription, image text extraction through a vision model, and family-context AI chat. Restart the server after editing `.env`. The key is read only by the backend and `.env` is Git-ignored.
+Copy `.env.example` to `.env` and enter `OPENAI_API_KEY` in `.env`. The same OpenAI project key is used for Whisper audio transcription, image text extraction through a vision model, and family-context AI chat. `SUBSIDY24_SERVICE_KEY` enables public care-benefit searches. `GOOGLE_CALENDAR_API_KEY` can accompany Calendar API requests, but private calendars still require Google OAuth Client ID/Secret. Restart the server after editing `.env`. Keys are read only by the backend and `.env` is Git-ignored.
+
+## Database
+
+The backend uses PostgreSQL when `DATABASE_URL` is present in `backend/.env`; otherwise it falls back to `backend/lgdx.db` for local development and isolated tests. The current PostgreSQL schema is created automatically when the app starts. Keep the connection string in `.env`, never in committed source.
+
+To copy an existing local SQLite database into an empty or initialized PostgreSQL database, stop write traffic and run once from `backend/`:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\migrate_sqlite_to_postgres.py
+```
+
+The script reads the source from `backend/lgdx.db` and the destination from `DATABASE_URL`. Set `LGDX_MIGRATION_SOURCE` only when the source file is elsewhere. Matching primary-key rows are updated from the SQLite source and missing rows are inserted, so run it as a controlled one-time migration and keep the SQLite file as a backup until the copied data has been checked.
 
 PC testing does not require a phone. Open `http://127.0.0.1:8000/docs` and use `POST /api/assistant/chat` for text, or upload a recording to `POST /api/audio/transcribe` (speech text only) or `POST /api/assistant/voice` (speech text plus AI answer). From PowerShell, the same requests are:
 
@@ -12,42 +24,49 @@ curl.exe -F 'file=@C:\path\voice.wav;type=audio/wav' -F 'purpose=CHAT' http://12
 curl.exe -F 'file=@C:\path\voice.wav;type=audio/wav' http://127.0.0.1:8000/api/assistant/voice
 ```
 
-Replace `C:\path\voice.wav` with an existing PC recording. WAV, MP3, M4A, OGG, and WebM uploads are accepted. If OpenAI responds with `credit_balance_exhausted`, the backend returns `503` with `OPENAI_CREDITS_EXHAUSTED`; add API credits to the OpenAI project before repeating AI chat or transcription. The current frontend chat sends no backend request and its voice icon does not start a recording, so test these endpoints directly until those controls are connected.
+Replace `C:\path\voice.wav` with an existing PC recording. WAV, MP3, M4A, OGG, and WebM uploads are accepted. If OpenAI responds with `credit_balance_exhausted`, the backend returns `503` with `OPENAI_CREDITS_EXHAUSTED`; add API credits to the OpenAI project before repeating AI chat or transcription. The frontend chat and microphone control now call these endpoints.
 
 | Frontend action | Backend API | Request |
 |---|---|---|
 | Create a family room | `POST /api/families` | JSON `name`, `owner_name`; returns a seven-day invitation code and owner bearer token |
+| Preview an invitation link | `GET /api/families/invitations/{invite_code}` | Public, expiry-checked summary containing only family name, owner name, and expiry |
 | Join with invitation code | `POST /api/families/join` | JSON `invite_code`, `name`, `role`; returns a member bearer token |
 | Rotate invitation code | `POST /api/families/invite-code/rotate` | Owner bearer token |
 | Read room data | Existing `/api/bootstrap` and care APIs | `Authorization: Bearer <access_token>` for new rooms |
-| Pick or capture a notice photo | `POST /api/intakes/photo` | Multipart `file` (JPEG/PNG/WebP), optional `child_id`, `source=ALBUM` or `CAMERA`; returns extracted text and review items |
+| Pick or capture a notice photo | `POST /api/intakes/photo` | Multipart `file` (JPEG/PNG/WebP), required `child_id`, `source=ALBUM` or `CAMERA`; returns categorized extracted text and review items |
+| Add a child schedule | `POST /api/child-schedules` | JSON `child_id`, `title`, `category`, `starts_at`, `ends_at`; child selection is required. For a weekly routine also send `repeat_days` and `repeat_until` |
+| Add a caregiver schedule or routine | `POST /api/schedules` | JSON `member_id`, `title`, `starts_at`, `ends_at`, `kind=WORK|ROUTINE`; weekly routines accept `repeat_days` and `repeat_until` |
+| Recommend a caregiver | `GET /api/items/{id}/suggestions` | Excludes the requester and ranks other active members using personal-calendar conflicts, simultaneous care work, and active workload |
+| Remove or leave a family | `POST /api/members/{id}/remove`, `POST /api/families/leave` | Owner removes another member; a non-owner leaves and immediately loses all family sessions. Owner transfer is not implemented, so the owner cannot leave |
+| Connect work calendars | `GET /api/calendar-connections`, `POST /api/calendar-connections/{provider}/authorize`, `POST /api/calendar-connections/{provider}/sync` | Per-caregiver Google/Outlook OAuth and import into personal schedules |
 | Record speech | `POST /api/audio/transcribe` | Multipart `file`, `purpose=CHAT|INTAKE|SCHEDULE|HANDOFF_NOTE|EMERGENCY` |
 | Speech to AI chat | `POST /api/assistant/voice` | Multipart `file`; returns transcript, answer, and token usage |
 | Text AI chat | `POST /api/assistant/chat` | JSON `message`; available to FREE and PRO |
 | Restore the chat thread | `GET /api/assistant/history` | Returns the current caregiver's last 50 messages in chronological order |
-| Enter a handoff note | `PATCH /api/handoffs/{id}` | JSON `special_note` and/or `briefing` |
-| Pass a completed assignment to the next caregiver | `POST /api/assignments/{id}/handoff` | JSON `to_member_id`, optional `special_note` and `briefing`; defaults to the completed assignment note |
+| Complete care and hand off | `POST /api/assignments/{id}/complete-handoff` | Multipart `note` and optional Pro `photo`; completes the assignment, sends the note to the next scheduled caregiver (or owner fallback), and stores the photo in the family album |
+| Read/upload family album | `GET`, `POST /api/album/photos` | Pro multipart `file`, optional `child_id` and `caption`; completion and direct photos persist in `media_asset` |
+| Save the benefit area | `GET`, `PATCH /api/benefits/location` | Pro update; stores only `city` and `district` for the family room. An authenticated room owner changes the shared area |
+| Search care benefits | `GET /api/benefits?keyword=돌봄&city=서울특별시&district=은평구` | Pro; returns child-related district, city, and central-government matches in `DISTRICT`, `CITY`, `NATIONAL` order, excluding other municipalities and adult-only care programs |
+| Find local care institutions | `GET /api/benefits/institutions?city=서울특별시&district=은평구` | Pro; calls the official 아이돌봄 service-institution API and normalizes province names such as `서울특별시` to `서울` |
+| Read official eligibility references | `GET /api/benefits/eligibility-criteria` | Pro; returns the latest criterion year present in the public household-income and health-insurance datasets, plus the dataset update date |
 | Ask the family for urgent help | `POST /api/emergency-requests` | PRO parent only; JSON `assignment_id`, optional `reason`; creates per-member DB notifications |
 | See, claim, or cancel an urgent request | `GET /api/emergency-requests`, `POST /api/emergency-requests/{id}/claim`, `POST /api/emergency-requests/{id}/cancel` | First eligible caregiver claim atomically replaces the assignment and closes the request |
 | Get plan and available feature list | `GET /api/plans`, `/api/subscription`, `/api/features` | Current family bearer token for a new room |
 
 The frontend opens the camera or album; the backend accepts and analyzes the resulting image. OCR has a FREE limit of two successful submissions per Seoul calendar day. AI chat is FREE up to 10,000 API-reported input-plus-output tokens per Seoul calendar day. Schedule and emergency speech input require PRO; chat and handoff-note speech input are FREE.
 
+Creating a child schedule also creates a confirmed care item for each occurrence. The first item and ranked candidates are returned immediately, and the owner receives a `CARE_SUGGESTION` notification. Assignment-request notifications store `action_type=ASSIGNMENT_REQUEST` and the assignment ID, so the recipient can open the exact request and accept or decline it. Acceptance is written to the same assignment data used by the calendar and task screens, then the requester receives `ASSIGNMENT_RESULT`. The frontend polls while signed in and can show browser system notifications when permission is granted. Closed-app Web Push still requires HTTPS, a service worker, and VAPID/provider configuration.
+
 `/api/features` separates plan entitlement (`available`) from backend progress (`backend_state`). `READY` means a local API exists, `PARTIAL` means voice transcription exists without the complete follow-up action, and `NOT_CONNECTED` covers mock screens or external integrations that have no backend service yet. Pro is an available plan, but a Pro entitlement does not make every mock screen operational.
 
 For local Free/Pro testing, set `LGDX_DEV_MODE=1` in `backend/.env` and restart the backend. Sign in as the family-room creator and use the Free/Pro buttons on the frontend plan screen; the authenticated owner can call `POST /api/dev/preview-plan` without putting a secret in browser code. A private `LGDX_DEV_TOKEN` plus `X-Developer-Token` remains available for manual API tests. This changes only local family entitlements, not billing or a verified subscription. Turn development mode off before public deployment.
 
-The frontend revision in `origin/main` still uses the original demo room without a bearer token. It only calls `/api/bootstrap` and the original care APIs. Its camera/album inputs keep the image in browser memory, `sendChat` uses a local rule-based reply, onboarding and Free/Pro switches update local state, and the emergency button shows a preview. **No backend response can turn those local actions into server calls.** The frontend teammate needs to connect the existing UI controls as follows:
+The frontend is organized as `홈 · 케어 · 일정 · 가족 · 더보기`. It uses bearer family sessions, sends photo files for OCR, calls the AI chat/voice APIs, and reads server plan and emergency-request state. `/api/bootstrap` now includes `child_schedules`; confirmed OCR care items remain categorized as `SCHEDULE`, `SUPPLY`, `TODO`, or `CHANGE`, so the UI can separate child schedules and supplies.
 
-| Current frontend control | Required server request and UI result |
-|---|---|
-| `capture` camera/upload inputs | Keep the selected `File`, send multipart `file`, `child_id`, `source=CAMERA|ALBUM` to `/api/intakes/photo`, then show `transcript` and `items` for review. Keep the existing JSON `/api/intakes` path for manual entry. A filename and `PHOTO_TRANSCRIPT` alone do not send a photo or run OCR. |
-| `chat` input and voice icon | Use `/api/assistant/chat` for typed questions and render `answer`; load `/api/assistant/history` for the thread. Add a microphone recording control and upload the recording to `/api/assistant/voice` to render `transcript` and `answer`. FREE chat is available until the daily token limit. |
-| `onboarding` and family settings | Create a room through `/api/families`, show its `invite_code`, and join through `/api/families/join`. Save the returned bearer token for later requests and replace hard-coded `mom`, `jiu`, and `grandma` defaults with IDs from `/api/bootstrap` or `/api/families/me`. |
-| Free/Pro test buttons | Read the authoritative `family.plan` from `/api/bootstrap` and `/api/features`. When `/api/subscription` returns `dev_switch_available=true`, the authenticated family owner may call `/api/dev/preview-plan` with a bearer token. Never bundle `LGDX_DEV_TOKEN` into public frontend code. |
-| `emergency` preview button | Offer only `PROPOSED` or `ACCEPTED` assignments, submit the selected ID to `/api/emergency-requests`, then render returned request state and let an eligible caregiver call `/{id}/claim`. The API writes DB notifications; ThinQ push still needs the host app integration. |
-| `tasks` completion sheet and `handoff` list | The existing completion POST already sends `note`. A nonempty note now creates a pending handoff to the primary caregiver, and its `briefing` includes the note so the current handoff list can show it after `/api/bootstrap` reloads. With bearer authentication, show the acknowledge button only when `handoff.to_member_id` is the current member. |
+For recurring schedules, `repeat_days` uses Monday `0` through Sunday `6`, and `repeat_until` is an inclusive `YYYY-MM-DD` date. Both fields must be provided together. The server expands the rule into individual calendar rows, returns them in `schedules`, records a common `recurrence_id`, and limits one request to a one-year range.
 
-A new room needs its returned token on later API calls. For authenticated rooms, `/api/bootstrap` gives each caregiver only their own DB notifications and shows other caregivers' personal schedule titles as `바쁨`. The backend has no Google or Microsoft calendar OAuth flow, ThinQ host integration, or billing-provider verification yet. Before public deployment, replace local room sessions with account authentication, enforce member data permissions across every API, and verify subscriptions with the payment provider. Set `LGDX_REQUIRE_AUTH=1` to turn off anonymous access to the legacy demo room.
+Google and Outlook require OAuth application credentials rather than a simple API key. Put `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `MICROSOFT_CLIENT_ID`, and `MICROSOFT_CLIENT_SECRET` in `.env`; register `{CALENDAR_REDIRECT_BASE}/api/calendar-connections/google/callback` and `{CALENDAR_REDIRECT_BASE}/api/calendar-connections/microsoft/callback` as web redirect URIs in the provider consoles. `GOOGLE_CALENDAR_API_KEY` alone leaves Google `configured=false`. The frontend reports each provider independently and allows both accounts to be connected and synchronized. Tokens are stored only for this local prototype; production needs encrypted token storage, revocation handling, and a reviewed HTTPS redirect URL.
+
+A new room needs its returned token on later API calls. For authenticated rooms, `/api/bootstrap` gives each caregiver only their own DB notifications and shows other caregivers' personal schedule titles as `바쁨`. ThinQ host integration and billing-provider verification are still absent. Before public deployment, replace local room sessions with account authentication, enforce member data permissions across every API, and verify subscriptions with the payment provider. Set `LGDX_REQUIRE_AUTH=1` to turn off anonymous access to the legacy demo room.
 
 The AI assistant uses a domain instruction and current family schedules/care records in `app/ai.py`. It does not change assignments automatically. For further specialization, collect representative, consented examples, evaluate answers and action proposals, then consider retrieval or fine-tuning if prompt and data grounding are insufficient.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import base64
 from datetime import datetime
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -31,6 +32,7 @@ API_READY = {
     "inbox_text", "role_match", "handoff", "calendar_manual",
     "chat_daily_10000_tokens", "ocr_daily_2", "handoff_voice_note",
     "emergency_request", "ocr_unlimited", "chat_unlimited",
+    "family_album", "care_programs",
 }
 TRANSCRIPTION_ONLY = {"voice_schedule", "voice_emergency"}
 
@@ -67,7 +69,7 @@ def _used(db, feature: str) -> int:
 
 def _add_usage(db, feature: str, amount: int) -> None:
     db.execute("""INSERT INTO daily_usage(family_id, day, feature, amount) VALUES (?, ?, ?, ?)
-       ON CONFLICT(family_id, day, feature) DO UPDATE SET amount = amount + excluded.amount""",
+       ON CONFLICT(family_id, day, feature) DO UPDATE SET amount = daily_usage.amount + excluded.amount""",
        (family_id(), _day(), feature, amount))
 
 
@@ -86,6 +88,79 @@ def _image_mime(data: bytes) -> str:
     if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
         return "image/webp"
     raise HTTPException(415, "JPEG, PNG, WebP 사진만 지원합니다")
+
+
+def _store_photo(db, *, image: bytes, mime: str, file_name: str, child_id: str | None = None,
+                 assignment_id: str | None = None, kind: str = "ALBUM", caption: str = "") -> dict:
+    photo_id = str(uuid4())
+    created_at = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+    db.execute(
+        """INSERT INTO media_asset(id, family_id, child_id, assignment_id, uploaded_by_member_id,
+           kind, file_name, mime_type, content_base64, caption, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (photo_id, family_id(), child_id, assignment_id, member_id(), kind, file_name[:240], mime,
+         base64.b64encode(image).decode("ascii"), caption[:500], created_at),
+    )
+    return {"id": photo_id, "child_id": child_id, "assignment_id": assignment_id, "kind": kind,
+            "file_name": file_name[:240], "mime_type": mime,
+            "data_url": f"data:{mime};base64,{base64.b64encode(image).decode('ascii')}",
+            "caption": caption[:500], "created_at": created_at}
+
+
+@router.get("/album/photos")
+def album_photos():
+    with database() as db:
+        _require_pro(db)
+        photos = [dict(row) for row in db.execute(
+            """SELECT id, child_id, assignment_id, kind, file_name, mime_type, content_base64,
+               caption, created_at FROM media_asset WHERE family_id = ? ORDER BY created_at DESC""",
+            (family_id(),),
+        ).fetchall()]
+    for photo in photos:
+        photo["data_url"] = f"data:{photo['mime_type']};base64,{photo.pop('content_base64')}"
+    return {"photos": photos}
+
+
+@router.post("/album/photos", status_code=201)
+def upload_album_photo(file: UploadFile, child_id: str | None = Form(default=None),
+                       caption: str = Form(default="")):
+    image = _read_file(file, 10 * 1024 * 1024)
+    mime = _image_mime(image)
+    with database() as db:
+        _require_pro(db)
+        if child_id:
+            if not db.execute("SELECT 1 FROM child WHERE id = ? AND family_id = ?", (child_id, family_id())).fetchone():
+                raise HTTPException(404, "아이를 찾을 수 없습니다")
+        return _store_photo(db, image=image, mime=mime, file_name=file.filename or "family-photo",
+                            child_id=child_id, caption=caption)
+
+
+@router.post("/assignments/{assignment_id}/complete-handoff")
+def complete_with_handoff(assignment_id: str, note: str = Form(default=""),
+                          photo: UploadFile | None = None):
+    if len(note) > 2000:
+        raise HTTPException(422, "특이사항은 2,000자까지 입력할 수 있습니다")
+    image = mime = None
+    if photo is not None:
+        image = _read_file(photo, 10 * 1024 * 1024)
+        mime = _image_mime(image)
+    with database() as db:
+        if image is not None:
+            _require_pro(db)
+        from .main import complete_assignment_record
+        assignment = complete_assignment_record(db, assignment_id, note, image is not None)
+        saved_photo = None
+        if image is not None and mime is not None and photo is not None:
+            item = db.execute(
+                "SELECT i.child_id FROM care_item i JOIN care_assignment a ON a.item_id = i.id WHERE a.id = ?",
+                (assignment_id,),
+            ).fetchone()
+            saved_photo = _store_photo(
+                db, image=image, mime=mime, file_name=photo.filename or "care-completion-photo",
+                child_id=item["child_id"] if item else None, assignment_id=assignment_id,
+                kind="CARE_COMPLETION", caption=note,
+            )
+        return {"assignment": assignment, "photo": saved_photo}
 
 
 @router.get("/plans")
@@ -141,14 +216,14 @@ def preview_plan(payload: PreviewPlan, x_developer_token: str | None = Header(de
 
 
 @router.post("/intakes/photo", status_code=201)
-def photo_intake(file: UploadFile, child_id: str | None = Form(default=None), source: str = Form(default="ALBUM")):
+def photo_intake(file: UploadFile, child_id: str = Form(...), source: str = Form(default="ALBUM")):
     if source not in {"ALBUM", "CAMERA"}:
         raise HTTPException(422, "source는 ALBUM 또는 CAMERA여야 합니다")
     image = _read_file(file, 10 * 1024 * 1024)
     mime = _image_mime(image)
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
-        if child_id and not db.execute("SELECT 1 FROM child WHERE id = ? AND family_id = ?", (child_id, family_id())).fetchone():
+        if not db.execute("SELECT 1 FROM child WHERE id = ? AND family_id = ?", (child_id, family_id())).fetchone():
             raise HTTPException(404, "아이를 찾을 수 없습니다")
         if _plan(db) == "FREE" and _used(db, "OCR") >= 2:
             raise HTTPException(403, detail={"code": "OCR_DAILY_LIMIT", "message": "무료 OCR은 하루 2회입니다. 텍스트 입력 또는 Pro를 이용해주세요"})
@@ -169,7 +244,7 @@ def photo_intake(file: UploadFile, child_id: str | None = Form(default=None), so
 
 AUDIO_TYPES = {
     "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3", "audio/mp4",
-    "audio/x-m4a", "audio/m4a", "audio/ogg", "audio/webm", "video/webm",
+    "audio/x-m4a", "audio/m4a", "audio/ogg", "audio/webm", "video/webm", "audio/aac",
 }
 
 
@@ -177,6 +252,10 @@ def _transcribe(file: UploadFile, purpose: str) -> str:
     if purpose not in {"CHAT", "INTAKE", "SCHEDULE", "HANDOFF_NOTE", "EMERGENCY"}:
         raise HTTPException(422, "지원하지 않는 음성 입력 목적입니다")
     mime = (file.content_type or "").split(";", 1)[0].strip().lower()
+    if mime in {"", "application/octet-stream"}:
+        extension = (file.filename or "").lower().rsplit(".", 1)[-1]
+        mime = {"wav": "audio/wav", "mp3": "audio/mpeg", "m4a": "audio/mp4", "mp4": "audio/mp4",
+                "ogg": "audio/ogg", "webm": "audio/webm", "aac": "audio/aac"}.get(extension, mime)
     if mime not in AUDIO_TYPES:
         raise HTTPException(415, "WAV, MP3, M4A, OGG, WebM 음성 파일만 지원합니다")
     with database() as db:
@@ -214,10 +293,14 @@ def _chat(message: str) -> dict:
             """SELECT i.title, m.name AS assignee, a.status FROM care_assignment a
                JOIN care_item i ON i.id = a.item_id JOIN family_member m ON m.id = a.assignee_id
                WHERE a.family_id = ? ORDER BY a.created_at DESC LIMIT 20""", (family_id(),))]
+        child_schedules = [dict(row) for row in db.execute(
+            """SELECT c.name AS child, s.title, s.category, s.starts_at, s.ends_at
+               FROM child_schedule s JOIN child c ON c.id = s.child_id
+               WHERE s.family_id = ? ORDER BY s.starts_at LIMIT 30""", (family_id(),))]
         history = [{"role": row["role"], "content": row["content"]} for row in reversed(db.execute(
             """SELECT role, content FROM assistant_message WHERE family_id = ? AND member_id = ?
-               ORDER BY created_at DESC, rowid DESC LIMIT 6""", (family_id(), member_id())).fetchall())]
-    context = json.dumps({"personal_schedules": schedules, "care_items": items,
+               ORDER BY created_at DESC, id DESC LIMIT 6""", (family_id(), member_id())).fetchall())]
+    context = json.dumps({"personal_schedules": schedules, "child_schedules": child_schedules, "care_items": items,
                           "assignments": assignments}, ensure_ascii=False)
     response, tokens = ai.answer(message, context, history, min(900, remaining) if plan == "FREE" else 900)
     if tokens <= 0:
@@ -238,7 +321,7 @@ def assistant_history():
         messages = [dict(row) for row in reversed(db.execute(
             """SELECT id, role, content, created_at FROM assistant_message
                WHERE family_id = ? AND member_id = ?
-               ORDER BY created_at DESC, rowid DESC LIMIT 50""", (family_id(), member_id()),
+               ORDER BY created_at DESC, id DESC LIMIT 50""", (family_id(), member_id()),
         ).fetchall())]
     return {"messages": messages}
 
