@@ -21,19 +21,20 @@ from .family import authenticated, family_id, member_id, owner_id, require_owner
 
 
 router = APIRouter(prefix="/api", tags=["media and assistant"])
+CHAT_TOKEN_LIMITS = {"FREE": 50_000, "PRO": 200_000}
 FEATURES = {
     "inbox_text": "FREE", "role_match": "FREE", "handoff": "FREE",
-    "calendar_manual": "FREE", "chat_daily_10000_tokens": "FREE",
+    "calendar_manual": "FREE", "chat_daily_50000_tokens": "FREE",
     "ocr_daily_2": "FREE", "handoff_voice_note": "FREE",
     "emergency_request": "PRO", "care_gap": "PRO", "family_album": "PRO",
     "care_programs": "PRO", "device_alerts": "PRO",
     "voice_schedule": "PRO", "voice_emergency": "PRO",
-    "ocr_unlimited": "PRO", "chat_unlimited": "PRO",
+    "ocr_unlimited": "PRO", "chat_daily_200000_tokens": "PRO",
 }
 API_READY = {
     "inbox_text", "role_match", "handoff", "calendar_manual",
-    "chat_daily_10000_tokens", "ocr_daily_2", "handoff_voice_note",
-    "emergency_request", "ocr_unlimited", "chat_unlimited",
+    "chat_daily_50000_tokens", "ocr_daily_2", "handoff_voice_note",
+    "emergency_request", "ocr_unlimited", "chat_daily_200000_tokens",
     "family_album", "care_programs",
 }
 TRANSCRIPTION_ONLY = {"voice_schedule", "voice_emergency"}
@@ -87,6 +88,13 @@ def _add_usage(db, feature: str, amount: int) -> None:
     db.execute("""INSERT INTO daily_usage(family_id, day, feature, amount) VALUES (?, ?, ?, ?)
        ON CONFLICT(family_id, day, feature) DO UPDATE SET amount = daily_usage.amount + excluded.amount""",
        (family_id(), _day(), feature, amount))
+
+
+def _chat_usage(db, plan: str) -> dict[str, int]:
+    used = _used(db, "CHAT_TOKENS")
+    limit = CHAT_TOKEN_LIMITS[plan]
+    return {"chat_tokens_today": used, "chat_tokens_limit": limit,
+            "chat_tokens_remaining": max(0, limit - used)}
 
 
 def _read_file(file: UploadFile, maximum: int) -> bytes:
@@ -290,7 +298,7 @@ def features():
             {"id": key, "tier": tier, "available": tier == "FREE" or plan == "PRO",
              "backend_state": _backend_state(key)}
             for key, tier in FEATURES.items()
-        ], "usage": {"ocr_today": _used(db, "OCR"), "chat_tokens_today": _used(db, "CHAT_TOKENS")}}
+        ], "usage": {"ocr_today": _used(db, "OCR"), **_chat_usage(db, plan)}}
 
 
 class PreviewPlan(BaseModel):
@@ -505,9 +513,10 @@ def _chat(message: str) -> dict:
     with database() as db:
         plan = _plan(db)
         used = _used(db, "CHAT_TOKENS")
-        remaining = 10_000 - used
-        if plan == "FREE" and remaining < 256:
-            raise HTTPException(403, detail={"code": "CHAT_DAILY_LIMIT", "message": "오늘의 무료 AI 채팅 토큰을 다 썼습니다"})
+        limit = CHAT_TOKEN_LIMITS[plan]
+        remaining = limit - used
+        if remaining < 256:
+            raise HTTPException(403, detail={"code": "CHAT_DAILY_LIMIT", "message": "오늘의 AI 채팅 토큰을 다 썼습니다"})
         family = dict(db.execute("SELECT id, name, plan FROM family_group WHERE id = ?", (family_id(),)).fetchone())
         current_member = dict(db.execute(
             "SELECT id, name, role, is_owner FROM family_member WHERE id = ? AND family_id = ?",
@@ -573,7 +582,7 @@ def _chat(message: str) -> dict:
         "album_recent_metadata": album, "benefit_search_location": dict(location) if location else None,
         "benefit_search_result": benefit_data, "capability_catalog": APP_CAPABILITIES,
     }, ensure_ascii=False)
-    structured, tokens = ai.answer(message, context, history, min(1400, remaining) if plan == "FREE" else 1400)
+    structured, tokens = ai.answer(message, context, history, min(1400, remaining))
     if tokens <= 0:
         raise HTTPException(502, detail={"code": "AI_USAGE_MISSING", "message": "AI 서비스 사용량을 확인하지 못했습니다"})
     if isinstance(structured, str):
@@ -613,12 +622,13 @@ def _chat(message: str) -> dict:
             db.execute("INSERT INTO assistant_message VALUES (?, ?, ?, ?, ?, ?)",
                        (str(uuid4()), family_id(), member_id(), role, content, datetime.now(ZoneInfo("Asia/Seoul")).isoformat()))
         _add_usage(db, "CHAT_TOKENS", tokens)
-        used = _used(db, "CHAT_TOKENS")
+        usage = _chat_usage(db, plan)
     links = [{"label": f"{card.get('title') or '관련 내용'} 보기", "screen": card.get("screen")}
              for card in cards if card.get("screen")]
     return {"message": message, "answer": answer, "cards": cards, "links": links,
             "schedule_changes": applied, "schedule_creations": created,
-            "usage": {"total_tokens": tokens, "used_today": used},
+            "usage": {"total_tokens": tokens, "used_today": usage["chat_tokens_today"],
+                      "limit": usage["chat_tokens_limit"], "remaining": usage["chat_tokens_remaining"]},
             "plan": plan, "requires_confirmation_for_actions": False}
 
 

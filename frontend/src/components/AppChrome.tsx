@@ -1,27 +1,34 @@
 import type { Screen } from '../api'
-import floatingIcon from '../../../asset/floating.png'
+import assistantMainLogo from '../../../asset/assistant-main-logo-centered.png'
 import calendarTabIcon from '../../../bar_asset/twotone-calendar-month.png'
 import careTabIcon from '../../../bar_asset/baseline-child-care.png'
 import homeTabIcon from '../../../bar_asset/Vector.png'
 import familyTabIcon from '../../../bar_asset/Group 19.png'
 import moreTabIcon from '../../../bar_asset/Vector-1.png'
+import bellIcon from '../../../asset/bell.png'
 
 type ChromeProps = {
   screen: Screen
   familyName: string
   memberName: string
+  contextLine?: string
   unread: number
   onNavigate: (screen: Screen) => void
   onOpenThinQHomes: () => void
 }
 
-export function AppHeader({ familyName, memberName, unread, onNavigate, onOpenThinQHomes }: ChromeProps) {
+export function MobileStatusBar() {
+  const time = new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date())
+  return <div className="mobile-status" aria-hidden="true"><strong>{time}</strong><span>5G&nbsp;&nbsp;58%</span></div>
+}
+
+export function AppHeader({ familyName, memberName, contextLine, unread, onNavigate, onOpenThinQHomes }: ChromeProps) {
   return <header className="app-header">
     <button className="family-switcher" aria-label={`${familyName} 홈 선택`} onClick={onOpenThinQHomes}>
-      <strong>{familyName}</strong><span aria-hidden="true">⌄</span><small>Family Care</small>
+      <strong>{familyName}</strong><span aria-hidden="true">⌄</span><small>{contextLine || 'Family Care'}</small>
     </button>
-    <button className="header-bell" aria-label="알림함" onClick={() => onNavigate('notifications')}>🔔{unread > 0 && <i>{unread}</i>}</button>
-    <button className="header-profile" aria-label="내 프로필과 가족 설정" onClick={() => onNavigate('members')}>{(memberName || '가').slice(0, 1)}</button>
+    <button className="header-bell" aria-label="알림함" onClick={() => onNavigate('notifications')}><img src={bellIcon} alt="" />{unread > 0 && <i>{unread}</i>}</button>
+    <button className="header-profile" aria-label={`${memberName || '내'} 프로필과 가족 설정`} onClick={() => onNavigate('members')}>{memberName.trim().slice(0, 1) || '나'}</button>
   </header>
 }
 
@@ -42,6 +49,10 @@ export function BottomNav({ screen, onNavigate }: Pick<ChromeProps, 'screen' | '
   })}</nav>
 }
 
+export function AssistantLogo({ className = '' }: { className?: string }) {
+  return <img className={`assistant-logo ${className}`.trim()} src={assistantMainLogo} alt="" />
+}
+
 export function FloatingAssistant({ onOpen }: { onOpen: () => void }) {
-  return <button className="floating-assistant" aria-label="케어 어시스턴트 열기" onClick={onOpen}><img src={floatingIcon} alt="" /></button>
+  return <button className="floating-assistant" aria-label="케어 어시스턴트 열기" onClick={onOpen}><AssistantLogo /></button>
 }

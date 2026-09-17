@@ -106,7 +106,7 @@ def find_schedule_collisions(db: Any, member_id: str, starts_at: str, ends_at: s
     start = datetime.fromisoformat(starts_at)
     end = datetime.fromisoformat(ends_at)
     assignments = db.execute(
-        """SELECT a.id AS assignment_id, a.item_id, i.title, i.starts_at FROM care_assignment a
+        """SELECT a.id AS assignment_id, a.item_id, a.assignee_id, i.child_id, i.title, i.starts_at FROM care_assignment a
            JOIN care_item i ON i.id = a.item_id WHERE a.assignee_id = ?
            AND a.status IN ('PROPOSED', 'CANDIDATE_ACCEPTED', 'ACCEPTED') AND i.starts_at IS NOT NULL""",
         (member_id,),

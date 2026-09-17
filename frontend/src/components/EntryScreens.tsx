@@ -1,7 +1,22 @@
-import thinqHomeMock from '../../../asset/thinq-home.png'
-import thinqHomeSelectorMock from '../../../asset/thinq-home-selector.png'
-import thinqHomeSelectorEmptyMock from '../../../asset/thinq-home-selector-empty.png'
+import thinqFloorPlan from '../../../asset/thinq-floor-plan.png'
+import homeTabIcon from '../../../bar_asset/Vector.png'
+import deviceTabIcon from '../../../asset/Group 5.png'
+import careTabIcon from '../../../asset/Group 7.png'
+import menuTabIcon from '../../../bar_asset/Vector-1.png'
 import lockscreenWallpaper from '../../../asset/lockscreen-wallpaper.png'
+import { AssistantLogo } from './AppChrome'
+
+type HomeSelectorProps = {
+  hasFamily: boolean
+  onClose: () => void
+  onSelectThinQHome: () => void
+  onSelectFamily: () => void
+  onStartOnboarding: () => void
+}
+
+export function ThinQHomeSelector({ hasFamily, onClose, onSelectThinQHome, onSelectFamily, onStartOnboarding }: HomeSelectorProps) {
+  return <div className="thinq-selector-shade" onClick={onClose}><section className="thinq-selector-sheet" role="dialog" aria-modal="true" aria-label="홈 선택" onClick={event => event.stopPropagation()}><i /><header><h2>홈 선택</h2><button aria-label="홈 선택 닫기" onClick={onClose}>×</button></header><button className="thinq-selected-home" onClick={onSelectThinQHome}><b>✓</b><span><strong>우리 집</strong><small>ThinQ 홈으로 이동</small></span></button><h3>Family Care</h3><button className="thinq-family-home" onClick={hasFamily ? onSelectFamily : onStartOnboarding}><AssistantLogo /><span><strong>{hasFamily ? 'Family Care 가족방' : '가족방 지금 만들기'}</strong><small>{hasFamily ? '가족 일정과 돌봄 현황 보기' : '가족을 초대하고 돌봄을 시작해보세요'}</small></span><b>›</b></button></section></div>
+}
 
 export function ThinQEntry({ selectorOpen, hasFamily, onOpenSelector, onCloseSelector, onOpenService, onStartOnboarding }: {
   selectorOpen: boolean
@@ -11,16 +26,18 @@ export function ThinQEntry({ selectorOpen, hasFamily, onOpenSelector, onCloseSel
   onOpenService: () => void
   onStartOnboarding: () => void
 }) {
-  return <div className="thinq-entry-mock">
-    <img src={selectorOpen ? (hasFamily ? thinqHomeSelectorMock : thinqHomeSelectorEmptyMock) : thinqHomeMock} alt="LG ThinQ 홈과 Family Care 진입 목업" />
-    {!selectorOpen ? <>
-      <button className="thinq-hotspot home-picker" aria-label="이지윤 홈 선택 열기" onClick={onOpenSelector} />
-      <button className="thinq-hotspot family-learn" aria-label="Family Care 더 알아보기" onClick={onOpenService} />
-    </> : <>
-      <button className="thinq-hotspot selector-dismiss" aria-label="홈 선택 닫기" onClick={onCloseSelector} />
-      <button className="thinq-hotspot current-home" aria-label="이지윤 홈 선택" onClick={onCloseSelector} />
-      <button className="thinq-hotspot family-home" aria-label={hasFamily ? '민솔이네 집 Family Care 열기' : 'Family Care 가족방 지금 만들기'} onClick={hasFamily ? onOpenService : onStartOnboarding} />
-    </>}
+  const navItems = [['홈', homeTabIcon], ['디바이스', deviceTabIcon], ['케어', careTabIcon], ['메뉴', menuTabIcon]]
+  return <div className="thinq-entry">
+    <header className="thinq-app-header"><button className="thinq-home-picker" onClick={onOpenSelector}>우리 집 <span>⌄</span></button><div><button aria-label="제품 추가">＋</button><button aria-label="알림">●</button><button aria-label="더보기">⋮</button></div></header>
+    <main className="thinq-home-content">
+      <button className="thinq-agent-banner" onClick={onOpenService}><AssistantLogo /><span><strong>가족의 돌봄을 알아서 조율해드려요</strong><small>Family Care로 일정과 역할을 함께 관리해보세요</small><b>더 알아보기 ›</b></span></button>
+      <section className="thinq-floor-card" aria-label="우리 집 평면도"><img src={thinqFloorPlan} alt="침실과 거실이 표시된 우리 집 평면도" /><span>연결된 공간 5개</span></section>
+      <section className="thinq-favorites"><div><h2>즐겨 찾는 제품</h2><button>편집</button></div><article><p>자주 사용하는 제품을 추가하면<br />홈에서 바로 확인할 수 있어요.</p><button>＋ 제품 추가</button></article></section>
+      <button className="thinq-play-card"><span>▷</span><div><strong>ThinQ PLAY</strong><small>우리 집을 더 편리하게 만드는 새로운 기능</small></div><b>›</b></button>
+    </main>
+    <button className="thinq-family-fab" aria-label="Family Care 열기" onClick={onOpenService}><AssistantLogo /></button>
+    <nav className="thinq-bottom-nav" aria-label="ThinQ 주요 메뉴">{navItems.map(([label, icon], index) => <button key={label} className={index === 0 ? 'active' : ''}><img src={icon} alt="" /><span>{label}</span></button>)}</nav>
+    {selectorOpen && <ThinQHomeSelector hasFamily={hasFamily} onClose={onCloseSelector} onSelectThinQHome={onCloseSelector} onSelectFamily={onOpenService} onStartOnboarding={onStartOnboarding} />}
   </div>
 }
 

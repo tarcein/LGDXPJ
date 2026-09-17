@@ -113,6 +113,7 @@ class ScheduleCreate(BaseModel):
     kind: str = Field(default="ROUTINE", pattern="^(WORK|ROUTINE)$")
     repeat_days: list[int] = Field(default_factory=list)
     repeat_until: date | None = None
+    repeat_dates: list[date] = Field(default_factory=list)
 
 
 class ChildScheduleCreate(BaseModel):
@@ -124,6 +125,7 @@ class ChildScheduleCreate(BaseModel):
     source: str = Field(default="MANUAL", pattern="^(MANUAL|NOTICE)$")
     repeat_days: list[int] = Field(default_factory=list)
     repeat_until: date | None = None
+    repeat_dates: list[date] = Field(default_factory=list)
 
 
 class ScheduleUpdate(BaseModel):
@@ -141,12 +143,22 @@ class ChildScheduleUpdate(BaseModel):
     ends_at: datetime | None = None
 
 
-def recurring_occurrences(starts_at: datetime, ends_at: datetime, repeat_days: list[int], repeat_until: date | None):
+def recurring_occurrences(starts_at: datetime, ends_at: datetime, repeat_days: list[int], repeat_until: date | None,
+                          repeat_dates: list[date] | None = None):
     if ends_at <= starts_at:
         raise HTTPException(422, "종료 시각은 시작 시각보다 늦어야 합니다")
     days = sorted(set(repeat_days))
+    dates = sorted(set(repeat_dates or []))
     if any(day < 0 or day > 6 for day in days):
         raise HTTPException(422, "반복 요일은 월요일 0부터 일요일 6 사이여야 합니다")
+    if dates:
+        if days:
+            raise HTTPException(422, "반복 요일과 특정 날짜를 동시에 입력할 수 없습니다")
+        if dates[0] < starts_at.date() or dates[-1] > starts_at.date() + timedelta(days=366):
+            raise HTTPException(422, "반복 날짜는 시작일부터 최대 1년 안으로 선택해주세요")
+        duration = ends_at - starts_at
+        return [(starts_at + timedelta(days=(day - starts_at.date()).days),
+                 starts_at + timedelta(days=(day - starts_at.date()).days) + duration) for day in dates]
     if not days and repeat_until is None:
         return [(starts_at, ends_at)]
     if not days or repeat_until is None:
@@ -191,6 +203,24 @@ def flag_schedule_collisions(db, schedule_title: str, collisions: list[dict]) ->
         notify(db, owner_id(db), "일정 충돌 감지",
                f"{schedule_title} 일정과 {collision['title']} 배정이 겹칩니다. 새 담당자를 선택해주세요.",
                "IMPORTANT", "CARE_SUGGESTION", collision["item_id"])
+        pending = db.execute(
+            "SELECT id FROM care_exception WHERE assignment_id = ? AND status = 'PENDING'",
+            (collision["assignment_id"],),
+        ).fetchone()
+        alternatives = rank_members(
+            db, family_id(), collision["starts_at"],
+            exclude_member_id=collision["assignee_id"], target_child_id=collision["child_id"],
+        )
+        alternative = next((candidate for candidate in alternatives if candidate["available"]), None)
+        if not pending and alternative:
+            db.execute(
+                """INSERT INTO care_exception
+                   (id, family_id, assignment_id, reason, alternative_member_id, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, 'PENDING', ?)""",
+                (str(uuid4()), family_id(), collision["assignment_id"],
+                 f"{schedule_title} 일정과 {collision['title']} 돌봄이 겹쳐요.",
+                 alternative["member_id"], now()),
+            )
 
 
 class IntakeCreate(BaseModel):
@@ -394,13 +424,14 @@ def leave_family_room():
 @app.post("/api/schedules", status_code=201)
 def create_schedule(payload: ScheduleCreate):
     normalized_end, has_end_time = normalize_schedule_end(payload.starts_at, payload.ends_at)
-    occurrences = recurring_occurrences(payload.starts_at, normalized_end, payload.repeat_days, payload.repeat_until)
+    occurrences = recurring_occurrences(payload.starts_at, normalized_end, payload.repeat_days, payload.repeat_until, payload.repeat_dates)
     if authenticated() and payload.member_id != current_member_id():
         raise HTTPException(403, "본인의 일정만 등록할 수 있습니다")
     with database() as db:
         one(db, "SELECT id FROM family_member WHERE id = ? AND family_id = ? AND status = 'ACTIVE'", (payload.member_id, family_id()))
         recurrence_id = str(uuid4()) if len(occurrences) > 1 else None
-        recurrence_rule = f"WEEKLY:{','.join(map(str, sorted(set(payload.repeat_days))))}:UNTIL={payload.repeat_until}" if recurrence_id else None
+        recurrence_rule = (f"DATES:{','.join(map(str, sorted(set(payload.repeat_dates))))}" if payload.repeat_dates
+                           else f"WEEKLY:{','.join(map(str, sorted(set(payload.repeat_days))))}:UNTIL={payload.repeat_until}") if recurrence_id else None
         created, collisions = [], []
         for start, end in occurrences:
             schedule_id = str(uuid4())
@@ -454,11 +485,12 @@ def delete_schedule(schedule_id: str):
 @app.post("/api/child-schedules", status_code=201)
 def create_child_schedule(payload: ChildScheduleCreate):
     normalized_end, has_end_time = normalize_schedule_end(payload.starts_at, payload.ends_at)
-    occurrences = recurring_occurrences(payload.starts_at, normalized_end, payload.repeat_days, payload.repeat_until)
+    occurrences = recurring_occurrences(payload.starts_at, normalized_end, payload.repeat_days, payload.repeat_until, payload.repeat_dates)
     with database() as db:
         one(db, "SELECT id FROM child WHERE id = ? AND family_id = ?", (payload.child_id, family_id()))
         recurrence_id = str(uuid4()) if len(occurrences) > 1 else None
-        recurrence_rule = f"WEEKLY:{','.join(map(str, sorted(set(payload.repeat_days))))}:UNTIL={payload.repeat_until}" if recurrence_id else None
+        recurrence_rule = (f"DATES:{','.join(map(str, sorted(set(payload.repeat_dates))))}" if payload.repeat_dates
+                           else f"WEEKLY:{','.join(map(str, sorted(set(payload.repeat_days))))}:UNTIL={payload.repeat_until}") if recurrence_id else None
         created, care_item_ids = [], []
         for start, end in occurrences:
             schedule_id = str(uuid4())

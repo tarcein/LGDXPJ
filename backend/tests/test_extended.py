@@ -249,7 +249,9 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual(self.client.post("/api/dev/preview-plan", json={"plan": "PRO"}).status_code, 404)
         pro = self.client.post("/api/dev/preview-plan", headers=owner, json={"plan": "PRO"})
         self.assertEqual(pro.json()["plan"], "PRO")
-        self.assertEqual(self.client.get("/api/features", headers=owner).json()["plan"], "PRO")
+        pro_features = self.client.get("/api/features", headers=owner).json()
+        self.assertEqual(pro_features["plan"], "PRO")
+        self.assertEqual(pro_features["usage"]["chat_tokens_limit"], 200_000)
         free = self.client.post("/api/dev/preview-plan", headers=owner, json={"plan": "FREE"})
         self.assertEqual(free.json()["plan"], "FREE")
         self.assertEqual(self.client.get("/api/bootstrap", headers=owner).json()["family"]["plan"], "FREE")
@@ -362,6 +364,20 @@ class ExtendedFlowTest(unittest.TestCase):
             "repeat_days": [0],
         })
         self.assertEqual(incomplete.status_code, 422)
+
+    def test_explicit_repeat_dates_expand_for_interval_monthly_and_selected_date_modes(self):
+        response = self.client.post("/api/schedules", json={
+            "member_id": "mom", "title": "날짜 계산 반복", "kind": "ROUTINE",
+            "starts_at": "2026-09-14T19:00:00+09:00", "ends_at": "2026-09-14T20:00:00+09:00",
+            "repeat_dates": ["2026-09-14", "2026-09-17", "2026-10-01"],
+        })
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["scheduled_count"], 3)
+        self.assertEqual([row["starts_at"][:10] for row in body["schedules"]],
+                         ["2026-09-14", "2026-09-17", "2026-10-01"])
+        self.assertEqual(body["schedules"][0]["recurrence_rule"],
+                         "DATES:2026-09-14,2026-09-17,2026-10-01")
 
     def test_registered_schedules_can_be_updated_and_deleted_with_role_permissions(self):
         room = self.client.post("/api/families", json={"name": "일정 가족", "owner_name": "엄마"}).json()
@@ -565,8 +581,12 @@ class ExtendedFlowTest(unittest.TestCase):
             self.assertEqual(voice.status_code, 200)
             self.assertEqual(voice.json()["transcript"], "오늘 하원 누가 맡아?")
             self.assertEqual(voice.json()["answer"], "할머니가 담당입니다.")
+            self.assertEqual(voice.json()["usage"]["remaining"], 49_977)
             self.assertIn("하원", answer.call_args.args[1])
-            self.assertEqual(self.client.get("/api/features").json()["usage"]["chat_tokens_today"], 23)
+            usage = self.client.get("/api/features").json()["usage"]
+            self.assertEqual(usage["chat_tokens_today"], 23)
+            self.assertEqual(usage["chat_tokens_limit"], 50_000)
+            self.assertEqual(usage["chat_tokens_remaining"], 49_977)
             self.assertEqual([m["role"] for m in self.client.get("/api/assistant/history").json()["messages"]],
                              ["user", "assistant"])
             self.assertEqual(self.client.post("/api/audio/transcribe", files={"file": ("voice.webm", b"demo-voice", "audio/webm;codecs=opus")}, data={"purpose": "HANDOFF_NOTE"}).status_code, 200)

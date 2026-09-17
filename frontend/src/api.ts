@@ -40,7 +40,7 @@ export interface ChatAnswer {
   message: string; answer: string; cards: ChatCard[]; links: { label: string; screen: Screen }[];
   schedule_changes: { schedule_type: 'PERSONAL' | 'CHILD'; schedule_id: string; title: string; starts_at: string; ends_at: string | null }[];
   schedule_creations: { schedule_type: 'PERSONAL' | 'CHILD'; schedule_id: string; title: string; starts_at: string; ends_at: string | null; care_item_id?: string }[];
-  usage: { total_tokens: number; used_today: number }; plan: string
+  usage: { total_tokens: number; used_today: number; limit: number; remaining: number }; plan: string
 }
 export interface EmergencyRequest { id: string; assignment_id: string; requested_by_member_id: string; claimed_by_member_id: string | null; reason: string; status: string; item_title: string }
 export interface CalendarConnection { provider: 'google' | 'microsoft'; configured: boolean; api_key_configured?: boolean; connected: boolean; connected_at: string | null; synced_at: string | null }

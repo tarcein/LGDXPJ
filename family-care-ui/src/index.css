@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  @apply bg-bg text-ink font-sans antialiased;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 프리뷰용 폰 프레임 (실제 앱에는 불필요 — 데모 셸에서만 사용) */
+.phone-frame {
+  width: 390px;
+  max-width: 100vw;
+  min-height: 844px;
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
