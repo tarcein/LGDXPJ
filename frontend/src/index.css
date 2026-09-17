@@ -262,6 +262,23 @@ strong { font-weight: 700; }
 .payment-help, .payment-owner-note { color: #7c828c; font-size: 10px; line-height: 1.55; }
 .subscription-active { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 14px; padding: 11px; border-radius: 12px; color: #173b33; background: #fff; }
 .subscription-active small { color: #67726f; font-size: 9px; }
+.plan-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.plan-title-row h3 { margin-bottom: 0; }
+.plan-price { display: flex; align-items: baseline; gap: 3px; white-space: nowrap; }
+.plan-price strong { font-size: 19px; }
+.plan-price small { color: #bbd4cb; font-size: 9px; }
+.toss-checkout-card { padding: 17px; border-color: #dbe2f5; background: #f8faff; }
+.toss-heading { display: flex; align-items: center; gap: 10px; }
+.toss-heading > div { flex: 1; }
+.toss-heading strong { display: block; font-size: 13px; }
+.toss-heading p { margin: 2px 0 0; color: #777f8e; font-size: 10px; }
+.toss-heading > b { font-size: 12px; white-space: nowrap; }
+.toss-mark { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 12px; color: #fff; background: #3182f6; font-size: 18px; font-weight: 900; }
+.toss-pay-button { width: 100%; min-height: 48px; margin-top: 16px; border-radius: 13px; color: #fff; background: #3182f6; font-size: 13px; font-weight: 800; }
+.toss-pay-button:hover { background: #1b64da; }
+.toss-pay-button:disabled { opacity: .55; }
+.payment-caption, .payment-owner-note { display: block; margin-top: 8px; color: #888f9b; font-size: 9px; line-height: 1.45; text-align: center; }
+.payment-owner-note { color: #a44b5f; font-weight: 700; }
 .chat-intro { padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .agent-mark { color: #c4123f; font-size: 26px; }
 .chat-bubble { padding: 12px 15px; max-width: 92%; line-height: 1.6; font-size: 12px; border-radius: 15px; }
