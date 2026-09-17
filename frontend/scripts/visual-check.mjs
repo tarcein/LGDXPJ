@@ -24,7 +24,9 @@ try {
   const page = await browser.newPage({ viewport: { width: 1200, height: 840 }, permissions: ['microphone'] })
   await page.route('**/api/**', async route => {
     const request = route.request()
-    const path = new URL(request.url()).pathname
+    const requestUrl = new URL(request.url())
+    if (!['127.0.0.1', 'localhost'].includes(requestUrl.hostname)) { await route.continue(); return }
+    const path = requestUrl.pathname
     const method = request.method()
     const publicInvitePreview = path.startsWith('/api/families/invitations/')
     if (joined && !publicInvitePreview && !['/api/families', '/api/families/join'].includes(path) && request.headers().authorization !== 'Bearer qa-session') throw new Error(`${path}: 가족방 토큰 누락`)
@@ -35,6 +37,7 @@ try {
       handoffs[0].from_member_id = owner.id
       body = { family_id: family.id, member_id: owner.id, access_token: 'qa-session', invite_code: 'ABCDEFG234', invite_expires_at: new Date().toISOString(), plan: 'FREE' }
     } else if (publicInvitePreview && method === 'GET') body = { family_name: family.name, owner_name: owner.name, expires_at: new Date(Date.now() + 86400000).toISOString() }
+    else if (path === '/api/families/dev-login-options') body = { members: [] }
     else if (path === '/api/families/me') body = { family, member: owner, authenticated: joined }
     else if (path === '/api/bootstrap') body = { family, members: [owner, caregiver], children, items, schedules: [], child_schedules: childSchedules, assignments, exceptions: [], handoffs, notifications: [], permissions: [], notification_preferences: [] }
     else if (path === '/api/children' && method === 'POST') { const payload = request.postDataJSON(); children.push({ id: 'qa-child', ...payload }); childSchedules.push({ id: 'qa-calendar-event', child_id: 'qa-child', title: '태권도', category: 'ACADEMY', starts_at: new Date().toISOString(), ends_at: new Date(Date.now() + 3600000).toISOString(), source: 'MANUAL' }); items.push({ id: 'qa-calendar-care', child_id: 'qa-child', child_schedule_id: 'qa-calendar-event', item_type: 'SCHEDULE', title: '태권도', detail: '태권도 이동', starts_at: childSchedules[0].starts_at, confidence: 'HIGH', status: 'ASSIGNED', created_at: new Date().toISOString() }); assignments.push({ id: 'qa-assignment', item_id: 'qa-calendar-care', assignee_id: owner.id, status: 'ACCEPTED', source: 'ROLE_MATCH', note: '', completed_at: null }); body = children[0] }
@@ -107,9 +110,12 @@ try {
   await page.getByRole('button', { name: '■ 녹음 끝내고 보내기' }).click()
   await page.getByText('음성 AI 답변').waitFor()
   await page.locator('.screen-index').getByRole('button', { name: '플랜 비교' }).click()
-  await page.getByText('서버 요금제: FREE').waitFor()
+  await page.getByText('현재 FREE 플랜을 이용 중이에요.').waitFor()
+  await page.locator('#toss-payment-methods iframe').waitFor()
+  await page.getByRole('button', { name: '선택한 수단으로 결제하기' }).waitFor()
+  await page.screenshot({ path: join(tmpdir(), 'lgdx-connected-payment.png'), fullPage: true })
   await page.getByRole('button', { name: 'Pro', exact: true }).click()
-  await page.getByText('서버 요금제: PRO').waitFor()
+  await page.getByText('현재 PRO 플랜을 이용 중이에요.').waitFor()
   await page.screenshot({ path: join(tmpdir(), 'lgdx-connected-plan.png'), fullPage: true })
   for (const label of ['홈', '알림장·돌봄 정보', '추출 결과 확인', '오늘의 배정', '배정 제안', '오늘 할 일', '개인 일정', '예외 상황', '알림함', '온보딩', '캘린더 연동', '가족 구성원', '정보 공개 권한', '알림 설정', '플랜 비교', 'AI 채팅', '긴급 요청', '돌봄 동선', '돌봄 공백 예측', '패밀리 앨범', '돌봄 제도']) {
     await page.locator('.screen-index').getByRole('button', { name: label, exact: true }).click()

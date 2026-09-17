@@ -27,8 +27,24 @@ type KakaoSdk = {
   isInitialized: () => boolean
   Share: { sendDefault: (options: { objectType: 'text'; text: string; link: { mobileWebUrl: string; webUrl: string }; buttonTitle: string }) => Promise<unknown> }
 }
-declare global { interface Window { Kakao?: KakaoSdk } }
+type TossPaymentSdk = {
+  widgets: (options: { customerKey: string }) => {
+    setAmount: (amount: { currency: 'KRW'; value: number }) => Promise<void>
+    renderPaymentMethods: (options: { selector: string; variantKey?: string }) => Promise<{ destroy: () => void }>
+    renderAgreement: (options: { selector: string; variantKey?: string }) => Promise<{ destroy: () => void }>
+    requestPayment: (options: {
+      orderId: string
+      orderName: string
+      successUrl: string
+      failUrl: string
+    }) => Promise<void>
+  }
+}
+type TossReturn = { status: 'success' | 'fail'; orderId: string; message: string }
+declare global { interface Window { Kakao?: KakaoSdk; TossPayments?: (clientKey: string) => TossPaymentSdk } }
 const kakaoJavaScriptKey = import.meta.env.VITE_KAKAO_JAVASCRIPT_KEY?.trim()
+const tossClientKey = import.meta.env.VITE_TOSS_CLIENT_KEY?.trim()
+const tossProAmount = 4_900
 const localDateTime = (value: string | null) => value ? new Date(new Date(value).getTime() - new Date(value).getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : ''
 const normalizeClock = (value: string) => {
   const compact = value.trim().replace(/\s/g, '')
@@ -126,14 +142,23 @@ function ProgramsPage({ plan, keyword, city, district, savedLocation, busy, loca
 }
 
 function App() {
-  const invitationFromUrl = new URLSearchParams(location.search).get('invite')?.trim().toUpperCase() ?? ''
-  const roleFromUrl = new URLSearchParams(location.search).get('role')?.trim().toUpperCase() ?? ''
+  const initialQuery = new URLSearchParams(location.search)
+  const invitationFromUrl = initialQuery.get('invite')?.trim().toUpperCase() ?? ''
+  const roleFromUrl = initialQuery.get('role')?.trim().toUpperCase() ?? ''
+  const paymentFromUrl = initialQuery.get('payment')
   const invitedRole = ['PARENT', 'GRANDPARENT', 'CAREGIVER'].includes(roleFromUrl) ? roleFromUrl : 'CAREGIVER'
   const [boot, setBoot] = useState<Bootstrap | null>(null)
   const [me, setMe] = useState<FamilyMe | null>(null)
-  const [screen, setScreen] = useState<Screen>(() => invitationFromUrl ? 'onboarding' : hasFamilyToken() ? (new URLSearchParams(location.search).has('calendar') ? 'calendar' : 'home') : 'onboarding')
+  const [screen, setScreen] = useState<Screen>(() => invitationFromUrl ? 'onboarding' : hasFamilyToken() ? (initialQuery.has('calendar') ? 'calendar' : paymentFromUrl ? 'plan' : 'home') : 'onboarding')
   const [error, setError] = useState('')
   const [toast, setToast] = useState('')
+  const [paymentBusy, setPaymentBusy] = useState(false)
+  const [tossWidgetReady, setTossWidgetReady] = useState(false)
+  const [tossReturn] = useState<TossReturn | null>(() => paymentFromUrl === 'success'
+    ? { status: 'success', orderId: initialQuery.get('orderId') ?? '', message: '토스페이 인증을 마쳤어요. 백엔드 승인 API를 연결하면 Pro가 활성화됩니다.' }
+    : paymentFromUrl === 'fail'
+      ? { status: 'fail', orderId: initialQuery.get('orderId') ?? '', message: initialQuery.get('message') ?? '결제가 취소되었거나 완료되지 않았어요.' }
+      : null)
   const [filter, setFilter] = useState('all')
   const [viewer, setViewer] = useState('mom')
   const [itemId, setItemId] = useState<string | null>(null)
@@ -201,7 +226,6 @@ function App() {
   const [emergencyRequests, setEmergencyRequests] = useState<EmergencyRequest[]>([])
   const [subscription, setSubscription] = useState<{ plan: string; status: string; developer_preview: boolean; dev_switch_available: boolean } | null>(null)
   const [planBusy, setPlanBusy] = useState(false)
-  const [plans, setPlans] = useState<{ id: string; status: string }[]>([])
   const [features, setFeatures] = useState<{ id: string; available: boolean; backend_state: string }[]>([])
   const [albumPhotos, setAlbumPhotos] = useState<AlbumPhoto[]>([])
   const [albumBusy, setAlbumBusy] = useState(false)
@@ -226,6 +250,7 @@ function App() {
   const completionCancelRecordingRef = useRef(false)
   const completionCameraInputRef = useRef<HTMLInputElement>(null)
   const completionPhotoInputRef = useRef<HTMLInputElement>(null)
+  const tossWidgetsRef = useRef<ReturnType<TossPaymentSdk['widgets']> | null>(null)
   const initialScreenRef = useRef(screen)
   const seenNoticeIdsRef = useRef<Set<string>>(new Set())
   const benefitsLoadedRef = useRef(false)
@@ -265,6 +290,12 @@ function App() {
     if (!invitationFromUrl) void Promise.resolve().then(load).catch(reportError)
   }, [invitationFromUrl])
   useEffect(() => {
+    if (!tossReturn) return
+    const clean = new URL(location.href)
+    ;['payment', 'paymentKey', 'orderId', 'amount', 'code', 'message'].forEach(key => clean.searchParams.delete(key))
+    history.replaceState({ ...history.state, lgdxScreen: 'plan' }, '', clean.pathname + clean.search + clean.hash)
+  }, [tossReturn])
+  useEffect(() => {
     history.replaceState({ ...history.state, lgdxScreen: initialScreenRef.current }, '')
     const handleBack = (event: PopStateEvent) => {
       setScheduleSheet('NONE'); setShowSheet(false); setSelectedAlbumPhoto(null)
@@ -300,8 +331,7 @@ function App() {
     if ((screen === 'plan' || screen === 'more') && activeFamilyId) Promise.all([
       api<{ plan: string; status: string; developer_preview: boolean; dev_switch_available: boolean }>('/subscription'),
       api<{ features: { id: string; available: boolean; backend_state: string }[] }>('/features'),
-      api<{ plans: { id: string; status: string }[] }>('/plans'),
-    ]).then(([current, available, products]) => { setSubscription(current); setFeatures(available.features); setPlans(products.plans) }).catch(reportError)
+    ]).then(([current, available]) => { setSubscription(current); setFeatures(available.features) }).catch(reportError)
     if (screen === 'emergency' && activeFamilyId) api<{ requests: EmergencyRequest[] }>('/emergency-requests')
       .then(result => setEmergencyRequests(result.requests)).catch(reportError)
     if (screen === 'calendar' && activeFamilyId) api<{ connections: CalendarConnection[] }>('/calendar-connections')
@@ -325,6 +355,33 @@ function App() {
       }).catch(error => { benefitsLoadedRef.current = false; reportError(error) }).finally(() => setBenefitsBusy(false))
     }
   }, [screen, activeFamilyId, boot?.family.plan, benefitKeyword])
+  useEffect(() => {
+    if (screen !== 'plan' || boot?.family.plan === 'PRO') { tossWidgetsRef.current = null; return }
+    let cancelled = false
+    let paymentMethods: { destroy: () => void } | undefined
+    let agreement: { destroy: () => void } | undefined
+    const renderTossWidgets = async () => {
+      if (!tossClientKey) throw new Error('frontend/.env에 VITE_TOSS_CLIENT_KEY를 설정해주세요.')
+      if (!tossClientKey.startsWith('test_gck_')) throw new Error('결제위젯용 test_gck 클라이언트 키가 필요해요.')
+      if (!window.TossPayments) throw new Error('토스페이먼츠 SDK를 불러오지 못했어요. 네트워크 연결을 확인해주세요.')
+      const widgets = window.TossPayments(tossClientKey).widgets({ customerKey: 'ANONYMOUS' })
+      await widgets.setAmount({ currency: 'KRW', value: tossProAmount })
+      ;[paymentMethods, agreement] = await Promise.all([
+        widgets.renderPaymentMethods({ selector: '#toss-payment-methods' }),
+        widgets.renderAgreement({ selector: '#toss-agreement' }),
+      ])
+      if (cancelled) { paymentMethods.destroy(); agreement.destroy(); return }
+      tossWidgetsRef.current = widgets
+      setTossWidgetReady(true)
+    }
+    void renderTossWidgets().catch(failure => {
+      if (!cancelled) { setTossWidgetReady(false); setError(failure instanceof Error ? failure.message : '결제수단을 불러오지 못했어요.') }
+    })
+    return () => {
+      cancelled = true; tossWidgetsRef.current = null; setTossWidgetReady(false)
+      paymentMethods?.destroy(); agreement?.destroy()
+    }
+  }, [screen, boot?.family.plan])
   useEffect(() => { if (toast) { const timer = setTimeout(() => setToast(''), 3200); return () => clearTimeout(timer) } }, [toast])
   useEffect(() => { contentRef.current?.scrollTo(0, 0) }, [screen])
   useEffect(() => { if (screen !== 'chat' && recorderRef.current?.state === 'recording') { cancelRecordingRef.current = true; recorderRef.current.stop() } }, [screen])
@@ -739,6 +796,26 @@ function App() {
       }, `개발용 플랜을 ${next}로 바꿨어요`)
     } finally { setPlanBusy(false) }
   }
+  const startTossPayment = async () => {
+    if (paymentBusy || plan === 'PRO') return
+    if (me?.authenticated && !me.member.is_owner) { setError('플랜 결제는 현재 주돌봄자만 할 수 있어요.'); return }
+    if (!tossWidgetsRef.current || !tossWidgetReady) { setError('결제수단을 불러오는 중이에요. 잠시 후 다시 눌러주세요.'); return }
+    setPaymentBusy(true); setError('')
+    try {
+      const returnUrl = new URL(location.href)
+      returnUrl.search = ''
+      const successUrl = new URL(returnUrl); successUrl.searchParams.set('payment', 'success')
+      const failUrl = new URL(returnUrl); failUrl.searchParams.set('payment', 'fail')
+      await tossWidgetsRef.current.requestPayment({
+        orderId: `PRO-${crypto.randomUUID()}`,
+        orderName: 'Family Care Pro 30일 이용권',
+        successUrl: successUrl.toString(),
+        failUrl: failUrl.toString(),
+      })
+    } catch (failure) {
+      reportError(failure instanceof Error ? failure : new Error('토스페이 결제창을 열지 못했어요.'))
+    } finally { setPaymentBusy(false) }
+  }
   const complete = () => run(async () => {
     if (!activeAssignment) return
     const form = new FormData(); form.append('note', note)
@@ -875,7 +952,18 @@ function App() {
   if (boot && screen === 'calendar') page = <><div className="eyebrow">업무 캘린더 연결</div><h2 className="hero-title">업무 일정 다음엔<br />개인 루틴도 알려주세요</h2><p className="hero-copy">Google 또는 Outlook의 일정은 내 계정에 연결됩니다. 연결 뒤 운동·정기 모임 같은 개인 루틴도 일정 탭에서 추가할 수 있어요.</p>{calendarConnections.map(connection => { const label = connection.provider === 'google' ? 'Google Calendar' : 'Outlook Calendar'; return <Card key={connection.provider} className="calendar-provider"><img className="provider-icon" src={connection.provider === 'google' ? googleIcon : outlookIcon} alt="" /><div><strong>{label}</strong><p>{connection.connected ? `연결됨${connection.synced_at ? ' · 최근 동기화 ' + formatDate(connection.synced_at) : ''}` : connection.configured ? '계정을 연결할 수 있어요' : 'OAuth 앱 설정이 필요해요'}</p></div>{connection.connected ? <button className="text-link" onClick={() => syncCalendar(connection.provider)}>동기화</button> : <button className="text-link" disabled={!connection.configured} onClick={() => connectCalendar(connection.provider)}>{connection.configured ? '연결' : '설정 전'}</button>}</Card> })}<Card className="info-note">{calendarsReady ? 'Google·Outlook OAuth 설정을 모두 확인했어요. 연결 버튼을 누르고 각 계정에서 일정 읽기 권한을 허용하면 동기화할 수 있어요.' : '사용할 캘린더의 OAuth Client ID와 Secret을 backend/.env에 설정하면 연결 버튼이 활성화돼요.'}</Card><button className="primary-button wide-button" onClick={() => { setScheduleForm('PERSONAL'); setScheduleKind('ROUTINE'); go('schedule') }}>개인 루틴 직접 등록</button></>
   if (boot && screen === 'permissions') { const targetMember = me?.member.id ?? viewer; page = <><div className="eyebrow">내 정보 공개 범위</div><h2 className="hero-title">보여주고 싶은 정보만<br />직접 선택해요</h2><p className="hero-copy">각 구성원이 자신의 정보 공개 범위를 직접 관리해요. 다른 가족의 설정은 변경할 수 없어요.</p><Section>{member(targetMember)}님의 공개 범위</Section>{[['SCHEDULE_DETAIL', '개인 일정 내용', '켜면 제목까지, 끄면 시간과 바쁨 여부만 표시'], ['CHILD_DETAIL', '아이 정보', '이름과 돌봄 일정'], ['LOCATION', '위치', '이동과 인수인계 위치'], ['HEALTH', '건강 정보', '복약과 건강 관련 내용'], ['NOTE', '특이사항', '돌봄 완료 메모'], ['PHOTO', '사진', '완료 사진과 앨범']].map(([scope, name, detail]) => { const allowed = !!boot.permissions.find(p => p.member_id === targetMember && p.scope === scope)?.is_allowed; return <Card key={scope} className="permission-row"><div><strong>{name}</strong><p>{detail}</p></div><button className={'switch ' + (allowed ? 'on' : '')} role="switch" aria-checked={allowed} aria-label={name + ' 공개'} onClick={() => run(() => send('/members/' + targetMember + '/permissions', 'PATCH', { scope, is_allowed: !allowed }), '내 공개 범위를 변경했어요')}><span /></button></Card> })}<Card className="info-note">개인 일정 내용은 기본 비공개예요. 꺼두면 다른 가족에게 일정 제목 대신 ‘바쁨’으로 보여요.</Card></> }
   if (boot && screen === 'settings') page = <><div className="eyebrow">알림 설정</div><h2 className="hero-title">조용하지만<br />놓치지 않게</h2><p className="hero-copy">돌봄 요청이 오면 앱 알림함과 허용된 브라우저 알림으로 알려드려요.</p><Section>앱 알림</Section><Card className="permission-row"><div><strong>돌봄 알림 받기</strong><p>등록, 배정, 인수인계, 완료</p></div><button className={'switch ' + (appNotices ? 'on' : '')} role="switch" aria-checked={appNotices} aria-label="돌봄 알림 받기" onClick={() => run(() => send('/members/' + viewer + '/notification-preferences', 'PATCH', { app_enabled: !appNotices }), '알림 설정을 변경했어요')}><span /></button></Card><Card className="permission-row"><div><strong>이 기기 시스템 알림</strong><p>앱이 열려 있을 때 새 요청을 브라우저 알림으로 표시</p></div><button className="text-link" onClick={() => void enableBrowserNotifications()}>{'Notification' in window && Notification.permission === 'granted' ? '허용됨' : '허용하기'}</button></Card><Card className="permission-row"><div><strong>하루 1회 모아보기</strong><p>21:00에 확인할 정보만 요약</p></div><button className={'switch ' + (dailyDigest ? 'on' : '')} role="switch" aria-checked={dailyDigest} aria-label="하루 1회 모아보기" onClick={() => run(() => send('/members/' + viewer + '/notification-preferences', 'PATCH', { daily_digest_enabled: !dailyDigest }), '모아보기 설정을 변경했어요')}><span /></button></Card><Section>가전 알림 <Pro /></Section><Card className="permission-row"><div><strong>ThinQ 가전으로 알림</strong><p>{plan === 'PRO' ? 'Pro 화면 설정 체험 · 실제 ThinQ 가전 연결 없음' : 'Pro 구독이 필요해요 · 가전 연결은 아직 없음'}</p></div><button className={'switch ' + (deviceNoticeDemo ? 'on' : '')} role="switch" aria-checked={deviceNoticeDemo} aria-label="가전 알림 화면 체험" onClick={() => plan === 'PRO' ? setDeviceNoticeDemo(value => !value) : go('plan')}><span /></button></Card></>
-  if (boot && screen === 'plan') page = <><div className="eyebrow">플랜·결제</div><h2 className="hero-title">우리 가족에게<br />맞는 돌봄</h2><p className="hero-copy">서버 요금제: {subscription?.plan ?? plan} · {subscription?.status === 'DEV_PREVIEW' ? '개발자 미리보기' : subscription?.status === 'ACTIVE' ? '구독 중' : '미구독'}. 결제·구독 신청은 아직 연결되지 않았어요.</p>{subscription?.dev_switch_available && <Card className="dev-plan-card"><strong>개발용 플랜 테스트</strong><p>결제 없이 이 가족방의 기능 권한을 바꿔 확인해요. 가족방 관리자에게만 보여요.</p><div className="dev-plan-switch"><button aria-pressed={plan === "FREE"} disabled={planBusy || plan === "FREE"} onClick={() => previewPlan("FREE")}>Free</button><button aria-pressed={plan === "PRO"} disabled={planBusy || plan === "PRO"} onClick={() => previewPlan("PRO")}>Pro</button></div></Card>}<Card className="plan-card current"><span className="small-badge ok">{plan === 'FREE' ? '현재 플랜' : '무료 플랜'}</span><h3>Family Care Free</h3><strong className="price">무료</strong><p>구성원 3명 · 자녀 2명</p><p>Family Inbox · Role Match · 완료 확인 · 하루 2회 OCR · 기본 AI 채팅</p></Card><Card className="plan-card pro"><Pro /><h3>Family Care Pro</h3><strong className="price">{plan === 'PRO' ? '현재 플랜' : plans.find(p => p.id === 'PRO')?.status === 'AVAILABLE' ? 'Pro 상품 제공 · 결제 연결 전' : '상태 조회 중'}</strong><p>긴급 요청 · OCR/채팅 한도 확장 · 음성 입력</p><p>패밀리 앨범과 돌봄 제도 검색은 API 연결 완료, 돌봄 공백 예측은 화면 데모예요.</p></Card><Section>기능 준비 상태</Section>{features.filter(f => ['chat_daily_10000_tokens', 'ocr_daily_2', 'emergency_request', 'family_album', 'care_programs', 'device_alerts'].includes(f.id)).map(f => <Card key={f.id} className="simple-list-card"><strong>{f.id}</strong><p>{f.available ? '사용 권한 있음' : 'Pro 필요'} · {f.backend_state === 'READY' ? 'API 준비됨' : '서버 미연결'}</p></Card>)}<Section>기능 화면 둘러보기</Section><div className="family-menu-list">{([['chat', '케어 어시스턴트'], ['emergency', '긴급 도움 요청'], ['gap', '돌봄 공백 예측'], ['album', '패밀리 앨범'], ['programs', '돌봄 제도 안내']] as [Screen, string][]).map(([target, label]) => <button key={target} onClick={() => go(target)}>{label}<span>›</span></button>)}</div></>
+  if (boot && screen === 'plan') page = <>
+    <div className="eyebrow">플랜·결제</div>
+    <h2 className="hero-title">우리 가족에게<br />맞는 돌봄</h2>
+    <p className="hero-copy">현재 {subscription?.plan ?? plan} 플랜을 이용 중이에요. 테스트 결제는 실제 금액이 청구되지 않으며, 백엔드 승인 연결 전에는 플랜을 변경하지 않아요.</p>
+    {tossReturn && <Card className={'payment-result ' + tossReturn.status}><strong>{tossReturn.status === 'success' ? '토스페이 인증 완료' : '결제를 완료하지 못했어요'}</strong><p>{tossReturn.message}</p>{tossReturn.orderId && <small>주문번호 · {tossReturn.orderId}</small>}</Card>}
+    <Card className="plan-card current"><span className="small-badge ok">{plan === 'FREE' ? '현재 플랜' : '무료 플랜'}</span><h3>Family Care Free</h3><strong className="price">무료</strong><p>구성원 3명 · 자녀 2명</p><p>Family Inbox · Role Match · 완료 확인 · 하루 2회 OCR · 기본 AI 채팅</p></Card>
+    <Card className="plan-card pro"><div className="plan-title-row"><div><Pro /><h3>Family Care Pro</h3></div><span className="plan-price"><strong>4,900원</strong><small>/ 30일</small></span></div><p>구성원 제한 확장 · 긴급 요청 · OCR/채팅 한도 확장 · 음성 입력</p><p>패밀리 앨범 · 돌봄 제도 검색 · 돌봄 공백 확인</p></Card>
+    <Card className="toss-checkout-card"><div className="toss-heading"><span className="toss-mark">T</span><div><strong>토스페이먼츠 테스트 결제</strong><p>Family Care Pro 30일 이용권</p></div><b>{tossProAmount.toLocaleString('ko-KR')}원</b></div>{plan !== 'PRO' && <><div id="toss-payment-methods" className="toss-widget-slot" /><div id="toss-agreement" className="toss-widget-slot" /></>}<button className="toss-pay-button" disabled={paymentBusy || plan === 'PRO' || !tossWidgetReady || (me?.authenticated && !me.member.is_owner)} onClick={() => void startTossPayment()}>{plan === 'PRO' ? '현재 Pro 이용 중' : paymentBusy ? '결제창 여는 중…' : tossWidgetReady ? '선택한 수단으로 결제하기' : '결제수단 불러오는 중…'}</button><small className="payment-caption">토스페이를 포함한 결제수단을 선택할 수 있어요 · TEST 결제 · 실제 금액 청구 없음</small>{me?.authenticated && !me.member.is_owner && <small className="payment-owner-note">플랜 결제는 주돌봄자 계정에서 진행할 수 있어요.</small>}</Card>
+    {subscription?.dev_switch_available && <Card className="dev-plan-card"><strong>개발용 플랜 테스트</strong><p>결제 없이 이 가족방의 기능 권한을 바꿔 확인해요. 가족방 관리자에게만 보여요.</p><div className="dev-plan-switch"><button aria-pressed={plan === 'FREE'} disabled={planBusy || plan === 'FREE'} onClick={() => previewPlan('FREE')}>Free</button><button aria-pressed={plan === 'PRO'} disabled={planBusy || plan === 'PRO'} onClick={() => previewPlan('PRO')}>Pro</button></div></Card>}
+    <Section>기능 준비 상태</Section>{features.filter(f => ['chat_daily_10000_tokens', 'ocr_daily_2', 'emergency_request', 'family_album', 'care_programs', 'device_alerts'].includes(f.id)).map(f => <Card key={f.id} className="simple-list-card"><strong>{f.id}</strong><p>{f.available ? '사용 권한 있음' : 'Pro 필요'} · {f.backend_state === 'READY' ? 'API 준비됨' : '서버 미연결'}</p></Card>)}
+    <Section>기능 화면 둘러보기</Section><div className="family-menu-list">{([['chat', '케어 어시스턴트'], ['emergency', '긴급 도움 요청'], ['gap', '돌봄 공백 예측'], ['album', '패밀리 앨범'], ['programs', '돌봄 제도 안내']] as [Screen, string][]).map(([target, label]) => <button key={target} onClick={() => go(target)}>{label}<span>›</span></button>)}</div>
+  </>
   if (boot && screen === 'chat') page = <><div className="eyebrow">케어 어시스턴트 · {plan === 'PRO' ? 'PRO' : 'FREE'}</div><Card className="chat-intro"><img className="voice-mark" src={voiceIcon} alt="" /><strong>무엇을 도와드릴까요?</strong><p>가족방의 일정·돌봄 정보·배정을 바탕으로 서버 AI가 답해요. 배정 변경은 확인 없이 실행하지 않아요.</p>{plan === 'FREE' && <small>오늘 사용: {chatUsedToday.toLocaleString()} / 10,000 토큰</small>}</Card><div className="chat-thread">{!chatMessages.length && <div className="chat-bubble agent">일정이나 배정에 대해 물어보세요.</div>}{chatMessages.map((m, index) => <div key={index} className={'chat-bubble ' + m.from}>{m.text}</div>)}</div><div className="chat-prompts">{['확인할 알림 알려줘', '오늘 담당 배정은?', '등록된 일정은?'].map(text => <button key={text} disabled={chatBusy} onClick={() => sendChat(text)}>{text}</button>)}</div><form className="chat-composer" onSubmit={e => { e.preventDefault(); sendChat() }}><input aria-label="케어 어시스턴트에게 질문" value={chatDraft} onChange={e => setChatDraft(e.target.value)} placeholder="일정이나 배정을 물어보세요" /><button type="submit" disabled={chatBusy || !chatDraft.trim()}>{chatBusy ? '답변 중…' : '보내기'}</button></form><div className="voice-actions"><button className="outline-button" disabled={chatBusy} onClick={toggleRecording}>{recording ? '■ 녹음 끝내고 보내기' : chatBusy ? '음성 처리 중…' : '● 음성 녹음'}</button></div><p className="helper-text">{window.isSecureContext ? '녹음을 끝내면 Whisper가 채팅으로 옮기고 AI가 이어서 답해요.' : '휴대폰 음성 녹음은 HTTPS 접속이 필요해요. 일반 Wi-Fi 주소에서는 파일이나 카메라를 열지 않아요.'}</p></>
   if (boot && screen === 'emergency') page = <><div className="eyebrow urgent">긴급 도움 요청 <Pro /></div><h2 className="hero-title">갑자기 돌봄이<br />어려워졌나요?</h2><p className="hero-copy">Pro 부모가 가족에게 요청할 수 있어요. 서버 알림 기록은 남지만 ThinQ 푸시는 아직 연결되지 않았어요.</p><Card className="form-card"><label className="form-label">도움이 필요한 돌봄</label><select className="form-control" value={emergencyItem} onChange={e => setEmergencyItem(e.target.value)}><option value="">선택하세요</option>{assignments.filter(a => ['PROPOSED', 'ACCEPTED'].includes(a.status)).map(a => <option key={a.id} value={a.id}>{itemFor(a)?.title ?? '돌봄'} · {member(a.assignee_id)}</option>)}</select><label className="form-label">요청 사유</label><input className="form-control" value={emergencyReason} onChange={e => setEmergencyReason(e.target.value)} /><Section>요청을 받을 가족</Section><p>{members.filter(m => m.id !== me?.member.id).map(m => m.name).join(' · ') || '참여 중인 다른 가족이 없어요'}</p></Card><button className="primary-button wide-button" disabled={!emergencyItem || plan !== 'PRO' || (me?.authenticated && me.member.role !== 'PARENT')} onClick={() => run(async () => { await send('/emergency-requests', 'POST', { assignment_id: emergencyItem, reason: emergencyReason.trim() }); const result = await api<{ requests: EmergencyRequest[] }>('/emergency-requests'); setEmergencyRequests(result.requests); setEmergencyItem('') }, '가족에게 긴급 요청을 보냈어요')}>{plan !== 'PRO' ? 'Pro 구독 필요' : '가족 전체에 실제 요청'}</button>{plan !== 'PRO' && <button className="text-link centered" onClick={() => go('plan')}>플랜 확인하기</button>}
     <Section>요청 현황</Section>{emergencyRequests.length ? emergencyRequests.map(r => { const original = boot.assignments.find(a => a.id === r.assignment_id); const canClaim = r.status === 'OPEN' && me?.member.id !== r.requested_by_member_id && me?.member.id !== original?.assignee_id; const canCancel = r.status === 'OPEN' && (me?.member.id === r.requested_by_member_id || !!me?.member.is_owner); return <Card key={r.id} className="urgent-card"><span className={'small-badge ' + (r.status === 'OPEN' ? 'danger' : 'ok')}>{r.status === 'OPEN' ? '도움 대기' : r.status === 'CLAIMED' ? '담당 확정' : '취소됨'}</span><strong>{r.item_title}</strong><p>{r.reason}</p>{r.claimed_by_member_id && <p>새 담당 · {member(r.claimed_by_member_id)}</p>}{canClaim && <button className="primary-button wide-button" onClick={() => run(async () => { await send('/emergency-requests/' + r.id + '/claim', 'POST'); setEmergencyRequests((await api<{ requests: EmergencyRequest[] }>('/emergency-requests')).requests) }, '새 담당자로 확정됐어요')}>제가 맡을게요</button>}{canCancel && <button className="outline-button wide-button" onClick={() => run(async () => { await send('/emergency-requests/' + r.id + '/cancel', 'POST'); setEmergencyRequests((await api<{ requests: EmergencyRequest[] }>('/emergency-requests')).requests) }, '긴급 요청을 취소했어요')}>요청 취소</button>}</Card> }) : <Empty title="진행 중인 긴급 요청이 없어요" text="요청이 생기면 이곳에서 응답할 수 있어요" />}</>

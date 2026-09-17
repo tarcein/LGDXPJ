@@ -258,6 +258,30 @@ strong { font-weight: 700; }
 .plan-card h3 { margin: 11px 0 8px; font-size: 16px; }
 .price { display: block; font-size: 21px !important; margin: 8px 0 12px; }
 .plan-card p { padding: 5px 0; border-top: 1px solid #7b8b8b23; }
+.plan-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.plan-title-row h3 { margin-bottom: 0; }
+.plan-price { display: flex; align-items: baseline; gap: 3px; white-space: nowrap; }
+.plan-price strong { font-size: 19px; }
+.plan-price small { color: #bbd4cb; font-size: 9px; }
+.toss-checkout-card { padding: 17px; border-color: #dbe2f5; background: #f8faff; }
+.toss-heading { display: flex; align-items: center; gap: 10px; }
+.toss-heading > div { flex: 1; }
+.toss-heading strong { display: block; font-size: 13px; }
+.toss-heading p { margin: 2px 0 0; color: #777f8e; font-size: 10px; }
+.toss-heading > b { font-size: 14px; }
+.toss-mark { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 12px; color: #fff; background: #3182f6; font-size: 18px; font-weight: 900; }
+.toss-widget-slot { margin-inline: -17px; }
+.toss-widget-slot:empty { min-height: 45px; }
+.toss-pay-button { width: 100%; min-height: 48px; border-radius: 13px; color: #fff; background: #3182f6; font-size: 13px; font-weight: 800; }
+.toss-pay-button:hover { background: #1b64da; }
+.payment-caption, .payment-owner-note { display: block; margin-top: 8px; color: #888f9b; font-size: 9px; line-height: 1.45; text-align: center; }
+.payment-owner-note { color: #a44b5f; font-weight: 700; }
+.payment-result { padding: 14px 16px; }
+.payment-result strong, .payment-result small { display: block; }
+.payment-result p { margin: 5px 0; }
+.payment-result small { color: #7d838c; font-size: 9px; word-break: break-all; }
+.payment-result.success { border-color: #a8d2b7; background: #edf8f1; }
+.payment-result.fail { border-color: #ecc5ca; background: #fff1f3; }
 .chat-intro { padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .agent-mark { color: #c4123f; font-size: 26px; }
 .chat-bubble { padding: 12px 15px; max-width: 85%; line-height: 1.6; font-size: 12px; border-radius: 15px; }
