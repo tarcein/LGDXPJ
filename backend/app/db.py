@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS media_asset (
 CREATE TABLE IF NOT EXISTS calendar_oauth_state (
   state TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
   member_id TEXT NOT NULL REFERENCES family_member(id), provider TEXT NOT NULL,
-  expires_at TEXT NOT NULL
+  expires_at TEXT NOT NULL, return_url TEXT
 );
 CREATE TABLE IF NOT EXISTS calendar_connection (
   family_id TEXT NOT NULL REFERENCES family_group(id),
@@ -250,6 +250,7 @@ def initialize() -> None:
                 ("notification", "action_type", "TEXT"),
                 ("notification", "action_id", "TEXT"),
                 ("care_assignment", "requested_by_member_id", "TEXT REFERENCES family_member(id)"),
+                ("calendar_oauth_state", "return_url", "TEXT"),
             ):
                 db.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {definition}")
         else:
@@ -261,6 +262,7 @@ def initialize() -> None:
                 ("care_item", (("child_schedule_id", "TEXT REFERENCES child_schedule(id)"),)),
                 ("notification", (("action_type", "TEXT"), ("action_id", "TEXT"))),
                 ("care_assignment", (("requested_by_member_id", "TEXT REFERENCES family_member(id)"),)),
+                ("calendar_oauth_state", (("return_url", "TEXT"),)),
             ):
                 columns = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
                 for name, definition in additions:
@@ -268,6 +270,9 @@ def initialize() -> None:
                         db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_external_schedule ON personal_schedule(family_id, member_id, external_source, external_id) WHERE external_id IS NOT NULL")
         db.execute("INSERT INTO notification_preference(member_id) SELECT id FROM family_member WHERE 1=1 ON CONFLICT(member_id) DO NOTHING")
+        db.execute("""INSERT INTO family_data_permission(member_id, scope, is_allowed)
+                      SELECT id, 'SCHEDULE_DETAIL', 0 FROM family_member WHERE 1=1
+                      ON CONFLICT(member_id, scope) DO NOTHING""")
         if db.execute("SELECT 1 FROM family_group WHERE id = 'demo-family'").fetchone():
             return
 
@@ -332,8 +337,8 @@ def initialize() -> None:
             )
         for member_id in ["mom", "dad", "grandma"]:
             db.execute("INSERT INTO notification_preference(member_id) VALUES (?)", (member_id,))
-            for scope in ["CHILD_DETAIL", "LOCATION", "HEALTH", "NOTE", "PHOTO"]:
-                allowed = member_id == "mom" or scope in ["CHILD_DETAIL", "NOTE"]
+            for scope in ["CHILD_DETAIL", "LOCATION", "HEALTH", "NOTE", "PHOTO", "SCHEDULE_DETAIL"]:
+                allowed = scope != "SCHEDULE_DETAIL" and (member_id == "mom" or scope in ["CHILD_DETAIL", "NOTE"])
                 db.execute(
                     "INSERT INTO family_data_permission VALUES (?, ?, ?)",
                     (member_id, scope, int(allowed)),

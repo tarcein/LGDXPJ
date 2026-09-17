@@ -31,13 +31,14 @@ Replace `C:\path\voice.wav` with an existing PC recording. WAV, MP3, M4A, OGG, a
 | Create a family room | `POST /api/families` | JSON `name`, `owner_name`; returns a seven-day invitation code and owner bearer token |
 | Preview an invitation link | `GET /api/families/invitations/{invite_code}` | Public, expiry-checked summary containing only family name, owner name, and expiry |
 | Join with invitation code | `POST /api/families/join` | JSON `invite_code`, `name`, `role`; returns a member bearer token |
-| Rotate invitation code | `POST /api/families/invite-code/rotate` | Owner bearer token |
+| Rotate invitation code | `POST /api/families/invite-code/rotate` | Any authenticated active family member; creating a new code invalidates the previous one |
+| Temporary test login | `GET /api/families/dev-login-options`, `POST /api/families/dev-login` | Available only with `LGDX_DEV_MODE=1`; remove these endpoints and the frontend test-login panel before deployment |
 | Read room data | Existing `/api/bootstrap` and care APIs | `Authorization: Bearer <access_token>` for new rooms |
 | Pick or capture a notice photo | `POST /api/intakes/photo` | Multipart `file` (JPEG/PNG/WebP), required `child_id`, `source=ALBUM` or `CAMERA`; returns categorized extracted text and review items |
 | Add a child schedule | `POST /api/child-schedules` | JSON `child_id`, `title`, `category`, `starts_at`, `ends_at`; child selection is required. For a weekly routine also send `repeat_days` and `repeat_until` |
 | Add a caregiver schedule or routine | `POST /api/schedules` | JSON `member_id`, `title`, `starts_at`, `ends_at`, `kind=WORK|ROUTINE`; weekly routines accept `repeat_days` and `repeat_until` |
 | Recommend a caregiver | `GET /api/items/{id}/suggestions` | Excludes the requester and ranks other active members using personal-calendar conflicts, simultaneous care work, and active workload |
-| Remove or leave a family | `POST /api/members/{id}/remove`, `POST /api/families/leave` | Owner removes another member; a non-owner leaves and immediately loses all family sessions. Owner transfer is not implemented, so the owner cannot leave |
+| Transfer, remove, or leave a family | `POST /api/members/{id}/transfer-ownership`, `POST /api/members/{id}/remove`, `POST /api/families/leave` | The current owner can transfer ownership to an active member. The previous owner then becomes a regular member and may leave; removed or departed members immediately lose all family sessions |
 | Connect work calendars | `GET /api/calendar-connections`, `POST /api/calendar-connections/{provider}/authorize`, `POST /api/calendar-connections/{provider}/sync` | Per-caregiver Google/Outlook OAuth and import into personal schedules |
 | Record speech | `POST /api/audio/transcribe` | Multipart `file`, `purpose=CHAT|INTAKE|SCHEDULE|HANDOFF_NOTE|EMERGENCY` |
 | Speech to AI chat | `POST /api/assistant/voice` | Multipart `file`; returns transcript, answer, and token usage |

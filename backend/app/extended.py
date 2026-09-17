@@ -283,7 +283,10 @@ def _chat(message: str) -> dict:
             raise HTTPException(403, detail={"code": "CHAT_DAILY_LIMIT", "message": "오늘의 무료 AI 채팅 토큰을 다 썼습니다"})
         schedules = [dict(row) for row in db.execute(
             """SELECT m.name AS member,
-                 CASE WHEN s.member_id = ? THEN s.title ELSE '바쁨' END AS title,
+                 CASE WHEN s.member_id = ? OR EXISTS (
+                   SELECT 1 FROM family_data_permission p
+                   WHERE p.member_id = s.member_id AND p.scope = 'SCHEDULE_DETAIL' AND p.is_allowed = 1
+                 ) THEN s.title ELSE '바쁨' END AS title,
                  s.starts_at, s.ends_at FROM personal_schedule s
                JOIN family_member m ON m.id = s.member_id
                WHERE s.family_id = ? ORDER BY s.starts_at LIMIT 20""", (member_id(), family_id()))]

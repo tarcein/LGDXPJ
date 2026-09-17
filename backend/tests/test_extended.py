@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 import httpx
@@ -148,9 +149,21 @@ class ExtendedFlowTest(unittest.TestCase):
         }).status_code, 201)
         self.assertEqual(self.client.get("/api/bootstrap", headers=a_headers).json()["schedules"][0]["title"], "개인 병원 일정")
         self.assertEqual(self.client.get("/api/bootstrap", headers=member_headers).json()["schedules"][0]["title"], "바쁨")
-        self.assertEqual(self.client.post("/api/families/invite-code/rotate", headers=member_headers).status_code, 403)
-        self.assertEqual(self.client.post("/api/families/join", json={"invite_code": a["invite_code"], "name": "이모", "role": "CAREGIVER"}).status_code, 201)
-        fourth = self.client.post("/api/families/join", json={"invite_code": a["invite_code"], "name": "삼촌", "role": "CAREGIVER"})
+        self.assertEqual(self.client.patch(
+            f"/api/members/{a['member_id']}/permissions", headers=member_headers,
+            json={"scope": "SCHEDULE_DETAIL", "is_allowed": True},
+        ).status_code, 403)
+        shared = self.client.patch(
+            f"/api/members/{a['member_id']}/permissions", headers=a_headers,
+            json={"scope": "SCHEDULE_DETAIL", "is_allowed": True},
+        )
+        self.assertEqual(shared.status_code, 200)
+        self.assertEqual(self.client.get("/api/bootstrap", headers=member_headers).json()["schedules"][0]["title"], "개인 병원 일정")
+        rotated = self.client.post("/api/families/invite-code/rotate", headers=member_headers)
+        self.assertEqual(rotated.status_code, 200)
+        shared_code = rotated.json()["invite_code"]
+        self.assertEqual(self.client.post("/api/families/join", json={"invite_code": shared_code, "name": "이모", "role": "CAREGIVER"}).status_code, 201)
+        fourth = self.client.post("/api/families/join", json={"invite_code": shared_code, "name": "삼촌", "role": "CAREGIVER"})
         self.assertEqual(fourth.status_code, 403)
         self.assertEqual(fourth.json()["detail"]["code"], "PLAN_LIMIT")
         self.assertEqual(self.client.get("/api/bootstrap", headers={"Authorization": "Bearer bad"}).status_code, 401)
@@ -203,6 +216,25 @@ class ExtendedFlowTest(unittest.TestCase):
         free = self.client.post("/api/dev/preview-plan", headers=owner, json={"plan": "FREE"})
         self.assertEqual(free.json()["plan"], "FREE")
         self.assertEqual(self.client.get("/api/bootstrap", headers=owner).json()["family"]["plan"], "FREE")
+
+    def test_temporary_dev_login_can_select_an_active_member(self):
+        self.assertEqual(self.client.get("/api/families/dev-login-options").status_code, 404)
+        with patch.dict(os.environ, {"LGDX_DEV_MODE": "1"}):
+            room = self.client.post("/api/families", json={"name": "테스트 가족", "owner_name": "엄마"}).json()
+            joined = self.client.post("/api/families/join", json={
+                "invite_code": room["invite_code"], "name": "아빠", "role": "PARENT",
+            }).json()
+            options = self.client.get("/api/families/dev-login-options")
+            self.assertEqual(options.status_code, 200)
+            self.assertTrue(any(member["member_id"] == room["member_id"] and member["is_owner"]
+                                for member in options.json()["members"]))
+            login = self.client.post("/api/families/dev-login", json={"member_id": joined["member_id"]})
+            self.assertEqual(login.status_code, 200)
+            me = self.client.get("/api/families/me", headers={
+                "Authorization": "Bearer " + login.json()["access_token"],
+            }).json()
+            self.assertEqual(me["member"]["id"], joined["member_id"])
+            self.assertTrue(me["authenticated"])
 
     def test_photo_without_schedule_items_keeps_text_without_review_card(self):
         image = b"\x89PNG\r\n\x1a\n" + b"demo-image"
@@ -340,13 +372,41 @@ class ExtendedFlowTest(unittest.TestCase):
         first_headers = {"Authorization": "Bearer " + first["access_token"]}
         second_headers = {"Authorization": "Bearer " + second["access_token"]}
 
+        self.assertEqual(self.client.post("/api/schedules", headers=first_headers, json={
+            "member_id": first["member_id"], "title": "개인 약속",
+            "starts_at": "2026-09-20T10:00:00+09:00", "ends_at": "2026-09-20T11:00:00+09:00",
+            "kind": "ROUTINE",
+        }).status_code, 201)
+
         removed = self.client.post(f"/api/members/{first['member_id']}/remove", headers=owner_headers)
         self.assertEqual(removed.status_code, 200)
         self.assertEqual(removed.json()["status"], "REMOVED")
+        self.assertFalse(any(item["member_id"] == first["member_id"] for item in
+                             self.client.get("/api/bootstrap", headers=owner_headers).json()["schedules"]))
         self.assertEqual(self.client.get("/api/bootstrap", headers=first_headers).status_code, 401)
         self.assertEqual(self.client.post("/api/families/leave", headers=second_headers).status_code, 200)
         self.assertEqual(self.client.get("/api/bootstrap", headers=second_headers).status_code, 401)
         self.assertEqual(self.client.post("/api/families/leave", headers=owner_headers).status_code, 409)
+
+    def test_owner_can_transfer_ownership_to_an_active_member(self):
+        room = self.client.post("/api/families", json={"name": "우리 가족", "owner_name": "엄마"}).json()
+        owner_headers = {"Authorization": "Bearer " + room["access_token"]}
+        next_owner = self.client.post("/api/families/join", json={
+            "invite_code": room["invite_code"], "name": "아빠", "role": "PARENT",
+        }).json()
+        next_owner_headers = {"Authorization": "Bearer " + next_owner["access_token"]}
+
+        transferred = self.client.post(
+            f"/api/members/{next_owner['member_id']}/transfer-ownership", headers=owner_headers,
+        )
+        self.assertEqual(transferred.status_code, 200)
+        self.assertEqual(transferred.json()["owner"]["id"], next_owner["member_id"])
+        self.assertEqual(self.client.get("/api/families/me", headers=owner_headers).json()["member"]["is_owner"], 0)
+        self.assertEqual(self.client.get("/api/families/me", headers=next_owner_headers).json()["member"]["is_owner"], 1)
+        self.assertEqual(self.client.post(
+            f"/api/members/{room['member_id']}/transfer-ownership", headers=owner_headers,
+        ).status_code, 403)
+        self.assertEqual(self.client.post("/api/families/leave", headers=owner_headers).status_code, 200)
 
     def test_invitation_link_preview_is_public_and_exposes_only_summary(self):
         room = self.client.post("/api/families", json={"name": "지우네 가족", "owner_name": "지연"}).json()
@@ -386,6 +446,28 @@ class ExtendedFlowTest(unittest.TestCase):
             self.assertIn("login.microsoftonline.com/common", microsoft)
             self.assertIn("Calendars.Read", microsoft)
             self.assertIn("microsoft%2Fcallback", microsoft)
+
+    def test_calendar_oauth_returns_to_the_frontend_that_started_it(self):
+        with patch.dict(os.environ, {
+            "GOOGLE_CLIENT_ID": "google-client", "GOOGLE_CLIENT_SECRET": "google-secret",
+            "CALENDAR_REDIRECT_BASE": "http://127.0.0.1:8000",
+            "FRONTEND_URL": "http://localhost:5173",
+        }):
+            authorization_url = self.client.post(
+                "/api/calendar-connections/google/authorize",
+                headers={"Origin": "http://192.168.0.20:5173"},
+            ).json()["authorization_url"]
+            state = parse_qs(urlparse(authorization_url).query)["state"][0]
+            token_response = httpx.Response(200, request=httpx.Request("POST", "https://oauth2.googleapis.com/token"), json={
+                "access_token": "access", "refresh_token": "refresh", "expires_in": 3600,
+            })
+            with patch("app.calendar.httpx.post", return_value=token_response):
+                callback = self.client.get(
+                    f"/api/calendar-connections/google/callback?code=demo-code&state={state}",
+                    follow_redirects=False,
+                )
+            self.assertEqual(callback.status_code, 307)
+            self.assertEqual(callback.headers["location"], "http://192.168.0.20:5173/?calendar=google-connected")
 
     def test_free_voice_chat_and_handoff_note(self):
         with patch("app.extended.ai.transcribe_audio", return_value="오늘 하원 누가 맡아?"), patch("app.extended.ai.answer", return_value=("할머니가 담당입니다.", 23)) as answer:

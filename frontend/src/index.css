@@ -229,6 +229,8 @@ strong { font-weight: 700; }
 .notice-mark.important { color: #b03a2e; background: #f8ece8; }
 .unread-dot { width: 6px; height: 6px; border-radius: 50%; background: #c4123f; }
 .member-remove { flex: none; padding: 7px 9px; border-radius: 9px; color: #a53232; background: #fff0f0; font-size: 10px; font-weight: 700; }
+.member-actions { display: grid; flex: none; gap: 5px; }
+.member-owner-transfer { padding: 7px 9px; border-radius: 9px; color: #674d00; background: #fff4cc; font-size: 10px; font-weight: 700; }
 .danger-link { display: block; margin: 12px auto; color: #b12b38; background: transparent; font-size: 11px; font-weight: 700; }
 .permission-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 13px 15px; }
 .permission-row div { flex: 1; }
@@ -245,6 +247,11 @@ strong { font-weight: 700; }
 .dev-plan-switch button { min-height: 44px; border-radius: 11px; color: #444954; background: #eceef2; font-size: 14px; font-weight: 700; }
 .dev-plan-switch button[aria-pressed="true"] { color: #fff; background: #c4123f; }
 .dev-plan-switch button[aria-pressed="true"]:disabled { opacity: 1; }
+.dev-login-card { margin-top: 16px; padding: 16px; border-color: #ead9dd; background: #fffafb; }
+.dev-login-card > strong { display: block; margin: 9px 0 4px; }
+.dev-login-list { display: grid; gap: 7px; margin-top: 12px; }
+.dev-login-list button { display: flex; justify-content: space-between; align-items: center; padding: 11px 12px; border-radius: 10px; color: #3f4249; background: #f0f1f4; }
+.dev-login-list button span { color: #878b94; font-size: 10px; }
 .plan-card.current { border-color: #b8d8c1; }
 .plan-card.pro { background: #203d36; color: white; }
 .plan-card.pro p { color: #bbd4cb; }

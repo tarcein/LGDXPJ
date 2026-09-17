@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 
 from .config import setting
@@ -31,6 +31,14 @@ def _credentials(provider: str) -> tuple[str, str]:
 def _redirect_uri(provider: str) -> str:
     configured = setting("CALENDAR_REDIRECT_BASE", "http://127.0.0.1:8000")
     return configured.rstrip("/") + f"/api/calendar-connections/{provider}/callback"
+
+
+def _frontend_return_url(request: Request) -> str:
+    origin = request.headers.get("origin", "").strip()
+    parsed = urlsplit(origin)
+    if parsed.scheme in {"http", "https"} and parsed.netloc and not parsed.username and not parsed.password:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return setting("FRONTEND_URL", "http://127.0.0.1:5173").rstrip("/")
 
 
 def _provider(provider: str) -> str:
@@ -57,7 +65,7 @@ def connections():
 
 
 @router.post("/{provider}/authorize")
-def authorize(provider: str):
+def authorize(provider: str, request: Request):
     provider = _provider(provider)
     client_id, client_secret = _credentials(provider)
     if not client_id or not client_secret:
@@ -69,8 +77,10 @@ def authorize(provider: str):
     with database() as db:
         db.execute("DELETE FROM calendar_oauth_state WHERE expires_at < ?", (_now().isoformat(),))
         db.execute(
-            "INSERT INTO calendar_oauth_state VALUES (?, ?, ?, ?, ?)",
-            (state, family_id(), member_id(), provider, (_now() + timedelta(minutes=10)).isoformat()),
+            """INSERT INTO calendar_oauth_state
+               (state, family_id, member_id, provider, expires_at, return_url) VALUES (?, ?, ?, ?, ?, ?)""",
+            (state, family_id(), member_id(), provider, (_now() + timedelta(minutes=10)).isoformat(),
+             _frontend_return_url(request)),
         )
     if provider == "google":
         base = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -96,6 +106,7 @@ def callback(provider: str, code: str = Query(min_length=1), state: str = Query(
         if stored is None or datetime.fromisoformat(stored["expires_at"]) <= _now():
             raise HTTPException(400, "캘린더 연결 요청이 만료됐습니다")
         target_family, target_member = stored["family_id"], stored["member_id"]
+        return_url = stored.get("return_url") if isinstance(stored, dict) else stored["return_url"]
     client_id, client_secret = _credentials(provider)
     if provider == "google":
         token_url = "https://oauth2.googleapis.com/token"
@@ -125,7 +136,7 @@ def callback(provider: str, code: str = Query(min_length=1), state: str = Query(
              expires_at, _now().isoformat()),
         )
         db.execute("DELETE FROM calendar_oauth_state WHERE state = ?", (state,))
-    frontend = setting("FRONTEND_URL", "http://127.0.0.1:5173")
+    frontend = return_url or setting("FRONTEND_URL", "http://127.0.0.1:5173")
     return RedirectResponse(frontend.rstrip("/") + f"/?calendar={provider}-connected")
 
 

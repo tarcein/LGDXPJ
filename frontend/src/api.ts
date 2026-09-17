@@ -5,7 +5,7 @@ export type Screen =
   | 'location' | 'album' | 'programs' | 'settings' | 'onboarding' | 'calendar' | 'gap'
 
 export interface Family { id: string; name: string; plan: string }
-export interface Member { id: string; name: string; role: string; status: string; is_owner: number }
+export interface Member { id: string; name: string; role: string; status: string; is_owner: boolean }
 export interface Child { id: string; name: string; age_label: string }
 export interface Schedule { id: string; member_id: string; title: string; starts_at: string; ends_at: string; kind: 'WORK' | 'ROUTINE'; external_source: string | null }
 export interface ChildSchedule { id: string; child_id: string; title: string; category: string; starts_at: string; ends_at: string; source: string }
@@ -61,8 +61,13 @@ export interface EligibilityCriteria {
 }
 
 const tokenKey = 'family-care-access-token'
-export const hasFamilyToken = () => !!sessionStorage.getItem(tokenKey)
-export const setFamilyToken = (token: string | null) => token ? sessionStorage.setItem(tokenKey, token) : sessionStorage.removeItem(tokenKey)
+// ponytail: localStorage keeps the prototype signed in; replace with an HttpOnly cookie when real account auth lands.
+const legacyToken = sessionStorage.getItem(tokenKey)
+if (legacyToken && !localStorage.getItem(tokenKey)) localStorage.setItem(tokenKey, legacyToken)
+sessionStorage.removeItem(tokenKey)
+
+export const hasFamilyToken = () => !!localStorage.getItem(tokenKey)
+export const setFamilyToken = (token: string | null) => token ? localStorage.setItem(tokenKey, token) : localStorage.removeItem(tokenKey)
 
 export class ApiError extends Error {
   status: number
@@ -73,7 +78,7 @@ export class ApiError extends Error {
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   if (init?.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
-  const token = sessionStorage.getItem(tokenKey)
+  const token = localStorage.getItem(tokenKey)
   if (token) headers.set('Authorization', `Bearer ${token}`)
   const response = await fetch(`/api${path}`, {
     ...init,

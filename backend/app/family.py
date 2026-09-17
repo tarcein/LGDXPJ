@@ -88,8 +88,8 @@ def _new_session(db, target_family: str, target_member: str) -> str:
 
 def _seed_member_settings(db, target_member: str, is_owner: bool) -> None:
     db.execute("INSERT INTO notification_preference(member_id) VALUES (?)", (target_member,))
-    for scope in ("CHILD_DETAIL", "LOCATION", "HEALTH", "NOTE", "PHOTO"):
-        allowed = is_owner or scope in ("CHILD_DETAIL", "NOTE")
+    for scope in ("CHILD_DETAIL", "LOCATION", "HEALTH", "NOTE", "PHOTO", "SCHEDULE_DETAIL"):
+        allowed = scope != "SCHEDULE_DETAIL" and (is_owner or scope in ("CHILD_DETAIL", "NOTE"))
         db.execute("INSERT INTO family_data_permission VALUES (?, ?, ?)", (target_member, scope, int(allowed)))
 
 
@@ -121,6 +121,42 @@ class FamilyJoin(BaseModel):
     invite_code: str = Field(min_length=8, max_length=20)
     name: str = Field(min_length=1, max_length=100)
     role: str = Field(pattern="^(PARENT|GRANDPARENT|CAREGIVER)$")
+
+
+class DevLogin(BaseModel):
+    member_id: str = Field(min_length=1)
+
+
+# ponytail: temporary local test login; remove these two endpoints before deployment.
+@router.get("/dev-login-options")
+def dev_login_options():
+    if not enabled("LGDX_DEV_MODE"):
+        raise HTTPException(404, "Not found")
+    with database() as db:
+        members = db.execute(
+            """SELECT f.id AS family_id, f.name AS family_name, m.id AS member_id,
+                      m.name AS member_name, m.role, m.is_owner
+               FROM family_member m JOIN family_group f ON f.id = m.family_id
+               WHERE m.status = 'ACTIVE' ORDER BY f.created_at DESC, m.is_owner DESC, m.name"""
+        ).fetchall()
+    return {"members": [dict(member) for member in members]}
+
+
+@router.post("/dev-login")
+def dev_login(payload: DevLogin):
+    if not enabled("LGDX_DEV_MODE"):
+        raise HTTPException(404, "Not found")
+    with database() as db:
+        member = db.execute(
+            """SELECT m.*, f.plan FROM family_member m JOIN family_group f ON f.id = m.family_id
+               WHERE m.id = ? AND m.status = 'ACTIVE'""",
+            (payload.member_id,),
+        ).fetchone()
+        if member is None:
+            raise HTTPException(404, "테스트 사용자를 찾을 수 없습니다")
+        token = _new_session(db, member["family_id"], member["id"])
+    return {"family_id": member["family_id"], "member_id": member["id"],
+            "access_token": token, "plan": member["plan"]}
 
 
 @router.get("/invitations/{invite_code}")
@@ -186,7 +222,8 @@ def my_family():
 
 @router.post("/invite-code/rotate")
 def rotate_code():
+    if not authenticated():
+        raise HTTPException(401, "로그인한 가족 구성원만 초대 링크를 만들 수 있습니다")
     with database() as db:
-        require_owner(db)
         code, expires_at = _new_code(db, family_id())
     return {"invite_code": code, "invite_expires_at": expires_at}

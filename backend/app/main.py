@@ -58,7 +58,8 @@ app.include_router(family_router)
 
 @app.middleware("http")
 async def family_context(request: Request, call_next):
-    if (request.url.path in {"/api/families", "/api/families/join", "/api/health"}
+    if (request.url.path in {"/api/families", "/api/families/join", "/api/families/dev-login",
+                            "/api/families/dev-login-options", "/api/health"}
             or request.url.path.startswith("/api/families/invitations/")
             or request.url.path.endswith("/callback")
             or not request.url.path.startswith("/api/")):
@@ -165,7 +166,7 @@ class ExceptionCreate(BaseModel):
 
 
 class PermissionUpdate(BaseModel):
-    scope: str = Field(pattern="^(CHILD_DETAIL|LOCATION|HEALTH|NOTE|PHOTO)$")
+    scope: str = Field(pattern="^(CHILD_DETAIL|LOCATION|HEALTH|NOTE|PHOTO|SCHEDULE_DETAIL)$")
     is_allowed: bool
 
 
@@ -188,10 +189,13 @@ def bootstrap():
             "children": rows(db, "SELECT * FROM child WHERE family_id = ?", (family_id(),)),
             "schedules": rows(
                 db,
-                """SELECT id, family_id, member_id,
-                   CASE WHEN member_id = ? THEN title ELSE '바쁨' END AS title,
-                   starts_at, ends_at, kind, external_source, external_id
-                   FROM personal_schedule WHERE family_id = ? ORDER BY starts_at"""
+                """SELECT s.id, s.family_id, s.member_id,
+                   CASE WHEN s.member_id = ? OR EXISTS (
+                     SELECT 1 FROM family_data_permission p
+                     WHERE p.member_id = s.member_id AND p.scope = 'SCHEDULE_DETAIL' AND p.is_allowed = 1
+                   ) THEN s.title ELSE '바쁨' END AS title,
+                   s.starts_at, s.ends_at, s.kind, s.external_source, s.external_id
+                   FROM personal_schedule s WHERE s.family_id = ? ORDER BY s.starts_at"""
                 if authenticated() else
                 "SELECT * FROM personal_schedule WHERE family_id = ? ORDER BY starts_at",
                 (current_member_id(), family_id()) if authenticated() else (family_id(),),
@@ -273,6 +277,9 @@ def deactivate_family_member(db, target_member_id: str) -> dict:
     )
     for item in item_rows:
         db.execute("UPDATE care_item SET status = 'CONFIRMED' WHERE id = ?", (item["item_id"],))
+    db.execute("DELETE FROM personal_schedule WHERE family_id = ? AND member_id = ?", (family_id(), target_member_id))
+    db.execute("DELETE FROM calendar_oauth_state WHERE family_id = ? AND member_id = ?", (family_id(), target_member_id))
+    db.execute("DELETE FROM calendar_connection WHERE family_id = ? AND member_id = ?", (family_id(), target_member_id))
     db.execute("DELETE FROM family_session WHERE family_id = ? AND member_id = ?", (family_id(), target_member_id))
     db.execute("UPDATE family_member SET status = 'REMOVED' WHERE id = ?", (target_member_id,))
     return one(db, "SELECT * FROM family_member WHERE id = ?", (target_member_id,))
@@ -288,6 +295,28 @@ def remove_family_member(target_member_id: str):
         if target["is_owner"]:
             raise HTTPException(422, "주돌봄자는 퇴장시킬 수 없습니다")
         return deactivate_family_member(db, target_member_id)
+
+
+@app.post("/api/members/{target_member_id}/transfer-ownership")
+def transfer_family_ownership(target_member_id: str):
+    if not authenticated():
+        raise HTTPException(401, "로그인한 가족방에서만 주돌봄자를 변경할 수 있습니다")
+    with database() as db:
+        require_owner(db)
+        if target_member_id == current_member_id():
+            raise HTTPException(409, "이미 주돌봄자입니다")
+        target = one(
+            db,
+            "SELECT * FROM family_member WHERE id = ? AND family_id = ? AND status = 'ACTIVE'",
+            (target_member_id, family_id()),
+        )
+        previous_owner_id = current_member_id()
+        db.execute(
+            "UPDATE family_member SET is_owner = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE family_id = ?",
+            (target_member_id, family_id()),
+        )
+        notify(db, target_member_id, "주돌봄자 권한을 받았어요", "이제 가족 구성원과 가족방 설정을 관리할 수 있어요")
+        return {"previous_owner_id": previous_owner_id, "owner": {**target, "is_owner": 1}}
 
 
 @app.post("/api/families/leave")
@@ -600,7 +629,8 @@ def mark_notification_read(notification_id: str):
 @app.patch("/api/members/{member_id}/permissions")
 def update_permission(member_id: str, payload: PermissionUpdate):
     with database() as db:
-        require_owner(db)
+        if authenticated() and member_id != current_member_id():
+            raise HTTPException(403, "본인의 정보 공개 범위만 변경할 수 있습니다")
         one(db, "SELECT id FROM family_member WHERE id = ? AND family_id = ?", (member_id, family_id()))
         db.execute(
             """INSERT INTO family_data_permission(member_id, scope, is_allowed) VALUES (?, ?, ?)
