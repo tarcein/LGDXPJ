@@ -14,7 +14,9 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app import ai
+from app.db import database
 from app.main import app
+from app.payment import process_due_renewals
 
 
 class ExtendedFlowTest(unittest.TestCase):
@@ -361,7 +363,52 @@ class ExtendedFlowTest(unittest.TestCase):
         })
         self.assertEqual(incomplete.status_code, 422)
 
-    def test_child_schedule_opens_agent_recommendations_without_requester(self):
+    def test_registered_schedules_can_be_updated_and_deleted_with_role_permissions(self):
+        room = self.client.post("/api/families", json={"name": "일정 가족", "owner_name": "엄마"}).json()
+        caregiver = self.client.post("/api/families/join", json={
+            "invite_code": room["invite_code"], "name": "할머니", "role": "GRANDPARENT",
+        }).json()
+        owner_headers = {"Authorization": "Bearer " + room["access_token"]}
+        caregiver_headers = {"Authorization": "Bearer " + caregiver["access_token"]}
+
+        personal = self.client.post("/api/schedules", headers=caregiver_headers, json={
+            "member_id": caregiver["member_id"], "title": "산책", "kind": "ROUTINE",
+            "starts_at": "2026-09-21T09:00:00+09:00", "ends_at": "2026-09-21T10:00:00+09:00",
+        }).json()["schedule"]
+        personal_path = f"/api/schedules/{personal['id']}"
+        personal_update = {
+            "title": "아침 운동", "kind": "ROUTINE",
+            "starts_at": "2026-09-21T10:00:00+09:00", "ends_at": "2026-09-21T11:00:00+09:00",
+        }
+        self.assertEqual(self.client.patch(personal_path, headers=owner_headers, json=personal_update).status_code, 403)
+        updated_personal = self.client.patch(personal_path, headers=caregiver_headers, json=personal_update)
+        self.assertEqual(updated_personal.status_code, 200)
+        self.assertEqual(updated_personal.json()["schedule"]["title"], "아침 운동")
+        self.assertEqual(self.client.delete(personal_path, headers=caregiver_headers).status_code, 200)
+
+        child = self.client.post("/api/children", headers=owner_headers, json={"name": "지우", "age_label": "7세"}).json()
+        child_schedule = self.client.post("/api/child-schedules", headers=owner_headers, json={
+            "child_id": child["id"], "title": "태권도", "category": "ACADEMY",
+            "starts_at": "2026-09-21T15:00:00+09:00", "ends_at": "2026-09-21T16:00:00+09:00",
+        }).json()
+        child_path = f"/api/child-schedules/{child_schedule['id']}"
+        child_update = {
+            "child_id": child["id"], "title": "미술 학원", "category": "AFTER_SCHOOL",
+            "starts_at": "2026-09-21T16:00:00+09:00", "ends_at": "2026-09-21T17:00:00+09:00",
+        }
+        caregiver_update = self.client.patch(child_path, headers=caregiver_headers, json=child_update)
+        self.assertEqual(caregiver_update.status_code, 200)
+        owner_notices = self.client.get("/api/bootstrap", headers=owner_headers).json()["notifications"]
+        self.assertTrue(any(notice["title"] == "아이 일정이 변경됐어요" for notice in owner_notices))
+        updated_child = self.client.patch(child_path, headers=owner_headers, json=child_update)
+        self.assertEqual(updated_child.status_code, 200)
+        self.assertEqual(updated_child.json()["schedule"]["title"], "미술 학원")
+        self.assertEqual(self.client.delete(child_path, headers=caregiver_headers).status_code, 403)
+        self.assertEqual(self.client.delete(child_path, headers=owner_headers).status_code, 200)
+        snapshot = self.client.get("/api/bootstrap", headers=owner_headers).json()
+        self.assertFalse(any(item["id"] == child_schedule["id"] for item in snapshot["child_schedules"]))
+
+    def test_child_schedule_recommends_available_requester_and_self_assignment_is_immediate(self):
         room = self.client.post("/api/families", json={"name": "지우네", "owner_name": "엄마"}).json()
         owner_headers = {"Authorization": "Bearer " + room["access_token"]}
         caregiver = self.client.post("/api/families/join", json={
@@ -377,14 +424,22 @@ class ExtendedFlowTest(unittest.TestCase):
         care_item_id = created.json()["care_item_id"]
         suggestions = self.client.get(f"/api/items/{care_item_id}/suggestions", headers=owner_headers).json()
         self.assertEqual(suggestions["engine"], "CARE_SCHEDULE_AGENT")
-        self.assertNotIn(room["member_id"], [item["member_id"] for item in suggestions["suggestions"]])
+        self.assertIn(room["member_id"], [item["member_id"] for item in suggestions["suggestions"]])
         self.assertIn(caregiver["member_id"], [item["member_id"] for item in suggestions["suggestions"]])
-        self.assertEqual(self.client.post("/api/assignments", headers=owner_headers, json={
+        self_assignment = self.client.post("/api/assignments", headers=owner_headers, json={
             "item_id": care_item_id, "assignee_id": room["member_id"],
-        }).status_code, 422)
+        })
+        self.assertEqual(self_assignment.status_code, 201)
+        self.assertEqual(self_assignment.json()["status"], "ACCEPTED")
+        owner_notices = self.client.get("/api/bootstrap", headers=owner_headers).json()["notifications"]
+        self.assertFalse(any(notice.get("action_id") == self_assignment.json()["id"] for notice in owner_notices))
 
+        created_for_caregiver = self.client.post("/api/child-schedules", headers=owner_headers, json={
+            "child_id": child["id"], "title": "방과후 미술", "category": "AFTER_SCHOOL",
+            "starts_at": "2026-09-22T15:00:00+09:00", "ends_at": "2026-09-22T16:00:00+09:00",
+        }).json()
         assignment = self.client.post("/api/assignments", headers=owner_headers, json={
-            "item_id": care_item_id, "assignee_id": caregiver["member_id"],
+            "item_id": created_for_caregiver["care_item_id"], "assignee_id": caregiver["member_id"],
         })
         self.assertEqual(assignment.status_code, 201)
         assignment_id = assignment.json()["id"]
@@ -605,9 +660,20 @@ class ExtendedFlowTest(unittest.TestCase):
         direct = self.client.post("/api/album/photos", headers=headers(owner),
                                   files={"file": ("family.png", png, "image/png")}, data={"caption": "주말 나들이"})
         self.assertEqual(direct.status_code, 201)
+        self.assertTrue(direct.json()["can_delete"])
+        stored_file = Path(self.temp.name) / "uploads" / "family_album" / direct.json()["storage_path"]
+        self.assertTrue(stored_file.is_file())
         photos = self.client.get("/api/album/photos", headers=headers(owner)).json()["photos"]
         self.assertEqual(len(photos), 2)
         self.assertTrue(all(photo["data_url"].startswith("data:image/png;base64,") for photo in photos))
+        self.assertTrue(next(photo for photo in photos if photo["id"] == direct.json()["id"])["can_delete"])
+        dad_photos = self.client.get("/api/album/photos", headers=headers(dad)).json()["photos"]
+        self.assertFalse(next(photo for photo in dad_photos if photo["id"] == direct.json()["id"])["can_delete"])
+        delete_path = f"/api/album/photos/{direct.json()['id']}"
+        self.assertEqual(self.client.delete(delete_path, headers=headers(dad)).status_code, 403)
+        self.assertEqual(self.client.delete(delete_path, headers=headers(owner)).status_code, 200)
+        self.assertFalse(stored_file.exists())
+        self.assertEqual(len(self.client.get("/api/album/photos", headers=headers(owner)).json()["photos"]), 1)
 
     def test_emergency_request_first_claim_reassigns_and_closes_for_everyone(self):
         os.environ["LGDX_DEV_MODE"] = "1"
@@ -716,7 +782,109 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual(activated.status_code, 200)
         self.assertEqual(activated.json()["plan"], "PRO")
         self.assertNotIn("billing_key", activated.json())
-        self.assertEqual(self.client.get("/api/subscription", headers=headers).json()["status"], "ACTIVE")
+        subscription = self.client.get("/api/subscription", headers=headers).json()
+        self.assertEqual(subscription["status"], "ACTIVE")
+        self.assertTrue(subscription["auto_renew_available"])
+        self.assertFalse(subscription["cancel_at_period_end"])
+
+        canceled = self.client.post("/api/billing/cancel", headers=headers)
+        self.assertEqual(canceled.status_code, 200)
+        self.assertTrue(canceled.json()["cancel_at_period_end"])
+        self.assertIsNone(canceled.json()["next_billing_at"])
+        self.assertEqual(self.client.get("/api/subscription", headers=headers).json()["plan"], "PRO")
+
+        resumed = self.client.post("/api/billing/resume", headers=headers)
+        self.assertEqual(resumed.status_code, 200)
+        self.assertFalse(resumed.json()["cancel_at_period_end"])
+        self.assertTrue(resumed.json()["next_billing_at"])
+
+        with database() as db:
+            db.execute(
+                "UPDATE family_subscription SET current_period_end = ?, next_billing_at = ? WHERE family_id = ?",
+                ("2026-01-01T00:00:00+09:00", "2026-01-01T00:00:00+09:00", room["family_id"]),
+            )
+        renewal = httpx.Response(200, request=request, json={
+            "status": "DONE", "paymentKey": "renewal-payment-key", "approvedAt": "2026-09-17T13:00:00+09:00",
+        })
+        with patch("app.payment.httpx.post", return_value=renewal):
+            result = process_due_renewals()
+        self.assertEqual(result["renewed"], 1)
+        renewed = self.client.get("/api/subscription", headers=headers).json()
+        self.assertEqual(renewed["status"], "ACTIVE")
+        self.assertTrue(renewed["next_billing_at"])
+
+    def test_toss_widget_order_confirms_server_amount_and_activates_one_period(self):
+        os.environ["TOSS_BILLING_CLIENT_KEY"] = "test_gck_demo"
+        os.environ["TOSS_BILLING_SECRET_KEY"] = "test_gsk_demo"
+        os.environ["TOSS_BILLING_AMOUNT"] = "7900"
+        room = self.client.post("/api/families", json={"name": "결제 가족", "owner_name": "엄마"}).json()
+        headers = {"Authorization": "Bearer " + room["access_token"]}
+
+        config = self.client.get("/api/billing/config", headers=headers)
+        self.assertEqual(config.status_code, 200)
+        self.assertEqual(config.json()["integration_mode"], "WIDGET")
+        self.assertEqual(config.json()["amount"], 7900)
+
+        created = self.client.post("/api/billing/orders", headers=headers)
+        self.assertEqual(created.status_code, 201)
+        order = created.json()
+        self.assertEqual(order["amount"], 7900)
+        self.assertNotIn("secret_key", order)
+        bad_amount = self.client.post("/api/billing/confirm", headers=headers, json={
+            "payment_key": "payment-key", "order_id": order["order_id"], "amount": 100,
+        })
+        self.assertEqual(bad_amount.status_code, 400)
+
+        request = httpx.Request("POST", "https://api.tosspayments.com/v1/payments/confirm")
+        wrong_total = httpx.Response(200, request=request, json={
+            "status": "DONE", "orderId": order["order_id"], "totalAmount": 7800,
+            "paymentKey": "payment-key", "approvedAt": "2026-09-17T12:00:00+09:00",
+        })
+        with patch("app.payment.httpx.post", return_value=wrong_total):
+            rejected = self.client.post("/api/billing/confirm", headers=headers, json={
+                "payment_key": "payment-key", "order_id": order["order_id"], "amount": 7900,
+            })
+        self.assertEqual(rejected.status_code, 502)
+
+        paid = httpx.Response(200, request=request, json={
+            "status": "DONE", "orderId": order["order_id"], "totalAmount": 7900,
+            "paymentKey": "payment-key", "approvedAt": "2026-09-17T12:00:00+09:00",
+        })
+        with patch("app.payment.httpx.post", return_value=paid) as toss_post:
+            confirmed = self.client.post("/api/billing/confirm", headers=headers, json={
+                "payment_key": "payment-key", "order_id": order["order_id"], "amount": 7900,
+            })
+        self.assertEqual(confirmed.status_code, 200)
+        self.assertEqual(confirmed.json()["plan"], "PRO")
+        self.assertEqual(confirmed.json()["amount"], 7900)
+        self.assertTrue(confirmed.json()["current_period_end"])
+        toss_post.assert_called_once()
+        self.assertEqual(toss_post.call_args.kwargs["json"]["amount"], 7900)
+        self.assertEqual(toss_post.call_args.kwargs["headers"]["Idempotency-Key"], f"confirm-{order['order_id']}")
+
+        replayed = self.client.post("/api/billing/confirm", headers=headers, json={
+            "payment_key": "payment-key", "order_id": order["order_id"], "amount": 7900,
+        })
+        self.assertEqual(replayed.status_code, 200)
+        self.assertTrue(replayed.json()["already_processed"])
+        subscription = self.client.get("/api/subscription", headers=headers).json()
+        self.assertEqual(subscription["status"], "ACTIVE")
+        self.assertEqual(subscription["plan"], "PRO")
+        self.assertFalse(subscription["auto_renew_available"])
+
+        canceled = self.client.post("/api/billing/cancel", headers=headers)
+        self.assertEqual(canceled.status_code, 200)
+        self.assertTrue(canceled.json()["cancel_at_period_end"])
+        self.assertEqual(self.client.post("/api/billing/resume", headers=headers).status_code, 409)
+        with database() as db:
+            db.execute(
+                "UPDATE family_subscription SET current_period_end = ? WHERE family_id = ?",
+                ("2026-01-01T00:00:00+09:00", room["family_id"]),
+            )
+        self.assertEqual(process_due_renewals()["expired"], 1)
+        expired = self.client.get("/api/subscription", headers=headers).json()
+        self.assertEqual(expired["status"], "CANCELED")
+        self.assertEqual(expired["plan"], "FREE")
 
 
 if __name__ == "__main__":

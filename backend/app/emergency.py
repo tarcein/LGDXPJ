@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from .db import database
 from .extended import _require_pro
 from .family import family_id, member_id, owner_id
+from .services import rank_members
 
 
 router = APIRouter(prefix="/api/emergency-requests", tags=["emergency care"])
@@ -60,7 +61,7 @@ def create_emergency_request(payload: EmergencyCreate):
         if requester is None or requester["role"] != "PARENT":
             raise HTTPException(403, "부모만 긴급 도움을 요청할 수 있습니다")
         assignment = db.execute(
-            """SELECT a.*, i.title AS item_title FROM care_assignment a
+            """SELECT a.*, i.title AS item_title, i.starts_at, i.child_id FROM care_assignment a
                JOIN care_item i ON i.id = a.item_id
                WHERE a.id = ? AND a.family_id = ?""",
             (payload.assignment_id, family_id()),
@@ -81,13 +82,17 @@ def create_emergency_request(payload: EmergencyCreate):
                VALUES (?, ?, ?, ?, ?, ?)""",
             (request_id, family_id(), assignment["id"], member_id(), payload.reason, now()),
         )
+        suggestions = rank_members(db, family_id(), assignment["starts_at"], target_child_id=assignment["child_id"])
+        eligible = [candidate for candidate in suggestions
+                    if candidate["available"] and candidate["member_id"] not in {member_id(), assignment["assignee_id"]}]
         recipients = [row["id"] for row in db.execute(
             "SELECT id FROM family_member WHERE family_id = ? AND status = 'ACTIVE' AND id != ?",
             (family_id(), member_id()),
         )]
         for target in recipients:
-            notify(db, target, "긴급 돌봄 도움 요청", f"{assignment['item_title']} · {payload.reason}", "IMPORTANT")
-        return {"request": _request(db, request_id), "recipient_member_ids": recipients}
+            notify(db, target, "긴급 돌봄 도움 요청", f"{assignment['item_title']} · {payload.reason}", "IMPORTANT",
+                   "EMERGENCY_REQUEST", request_id)
+        return {"request": _request(db, request_id), "recipient_member_ids": recipients, "suggestions": eligible}
 
 
 @router.post("/{request_id}/claim")

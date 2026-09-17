@@ -43,26 +43,32 @@ def is_busy(db: Any, member_id: str, starts_at: str | None) -> bool:
     return False
 
 
-def active_care_count(db: Any, member_id: str, starts_at: str | None) -> tuple[int, bool]:
+def active_care_count(db: Any, member_id: str, starts_at: str | None,
+                      target_child_id: str | None = None) -> tuple[int, bool, int]:
     assignments = db.execute(
-        """SELECT i.starts_at FROM care_assignment a JOIN care_item i ON i.id = a.item_id
-           WHERE a.assignee_id = ? AND a.status IN ('PROPOSED', 'ACCEPTED')""",
+        """SELECT i.starts_at, i.child_id FROM care_assignment a JOIN care_item i ON i.id = a.item_id
+           WHERE a.assignee_id = ? AND a.status IN ('PROPOSED', 'CANDIDATE_ACCEPTED', 'ACCEPTED')""",
         (member_id,),
     ).fetchall()
     if not starts_at:
-        return len(assignments), False
+        return len(assignments), False, 0
     target = datetime.fromisoformat(starts_at)
     overlaps = False
+    bundle_count = 0
     for assignment in assignments:
         if not assignment["starts_at"]:
             continue
         care_time = datetime.fromisoformat(assignment["starts_at"])
         if abs((care_time - target).total_seconds()) < 60 * 60:
-            overlaps = True
-    return len(assignments), overlaps
+            if target_child_id and assignment["child_id"] and assignment["child_id"] != target_child_id:
+                bundle_count += 1
+            else:
+                overlaps = True
+    return len(assignments), overlaps, bundle_count
 
 
-def rank_members(db: Any, family_id: str, starts_at: str | None, exclude_member_id: str | None = None) -> list[dict]:
+def rank_members(db: Any, family_id: str, starts_at: str | None, exclude_member_id: str | None = None,
+                 target_child_id: str | None = None) -> list[dict]:
     members = db.execute(
         "SELECT * FROM family_member WHERE family_id = ? AND status = 'ACTIVE'", (family_id,)
     ).fetchall()
@@ -71,12 +77,14 @@ def rank_members(db: Any, family_id: str, starts_at: str | None, exclude_member_
         if member["id"] == exclude_member_id:
             continue
         schedule_busy = is_busy(db, member["id"], starts_at)
-        care_count, care_busy = active_care_count(db, member["id"], starts_at)
+        care_count, care_busy, bundle_count = active_care_count(db, member["id"], starts_at, target_child_id)
         busy = schedule_busy or care_busy
         if schedule_busy:
             reason = "등록된 개인 일정과 겹칩니다"
         elif care_busy:
             reason = "같은 시간대에 다른 돌봄을 맡고 있습니다"
+        elif bundle_count:
+            reason = f"같은 시간대 아이 돌봄과 함께 가능 · 진행 중 돌봄 {care_count}건"
         else:
             reason = f"일정 충돌 없음 · 진행 중 돌봄 {care_count}건"
         ranked.append({
@@ -84,6 +92,7 @@ def rank_members(db: Any, family_id: str, starts_at: str | None, exclude_member_
             "name": member["name"],
             "available": not busy,
             "reason": reason,
+            "can_bundle_children": bool(bundle_count),
             "rank": (1 if busy else 0, care_count, member["name"]),
         })
     ranked.sort(key=lambda item: item["rank"])
@@ -97,9 +106,9 @@ def find_schedule_collisions(db: Any, member_id: str, starts_at: str, ends_at: s
     start = datetime.fromisoformat(starts_at)
     end = datetime.fromisoformat(ends_at)
     assignments = db.execute(
-        """SELECT a.id AS assignment_id, i.title, i.starts_at FROM care_assignment a
+        """SELECT a.id AS assignment_id, a.item_id, i.title, i.starts_at FROM care_assignment a
            JOIN care_item i ON i.id = a.item_id WHERE a.assignee_id = ?
-           AND a.status IN ('PROPOSED', 'ACCEPTED') AND i.starts_at IS NOT NULL""",
+           AND a.status IN ('PROPOSED', 'CANDIDATE_ACCEPTED', 'ACCEPTED') AND i.starts_at IS NOT NULL""",
         (member_id,),
     ).fetchall()
     collisions = []

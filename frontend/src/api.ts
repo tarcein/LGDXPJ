@@ -1,5 +1,5 @@
 export type Screen =
-  | 'home' | 'careHub' | 'familyHub' | 'more' | 'family' | 'capture' | 'review' | 'assignments' | 'suggestion'
+  | 'thinq' | 'serviceLoading' | 'lockscreen' | 'home' | 'careHub' | 'familyHub' | 'more' | 'family' | 'capture' | 'review' | 'assignments' | 'suggestion'
   | 'schedule' | 'exception' | 'tasks' | 'notifications'
   | 'members' | 'permissions' | 'plan' | 'chat' | 'emergency'
   | 'location' | 'album' | 'programs' | 'settings' | 'onboarding' | 'calendar' | 'gap'
@@ -7,8 +7,8 @@ export type Screen =
 export interface Family { id: string; name: string; plan: string }
 export interface Member { id: string; name: string; role: string; status: string; is_owner: boolean }
 export interface Child { id: string; name: string; age_label: string }
-export interface Schedule { id: string; member_id: string; title: string; starts_at: string; ends_at: string; kind: 'WORK' | 'ROUTINE'; external_source: string | null }
-export interface ChildSchedule { id: string; child_id: string; title: string; category: string; starts_at: string; ends_at: string; source: string }
+export interface Schedule { id: string; member_id: string; title: string; starts_at: string; ends_at: string; has_end_time?: number | boolean; kind: 'WORK' | 'ROUTINE'; external_source: string | null }
+export interface ChildSchedule { id: string; child_id: string; title: string; category: string; starts_at: string; ends_at: string; has_end_time?: number | boolean; source: string }
 export interface CareItem {
   id: string; intake_id: string | null; child_id: string | null; child_schedule_id?: string | null; item_type: string;
   title: string; detail: string; starts_at: string | null; confidence: string;
@@ -38,13 +38,15 @@ export interface FamilySession { family_id: string; member_id: string; access_to
 export interface ChatCard { eyebrow: string; title: string; description: string; screen: Screen | '' }
 export interface ChatAnswer {
   message: string; answer: string; cards: ChatCard[]; links: { label: string; screen: Screen }[];
-  schedule_changes: { schedule_type: 'PERSONAL' | 'CHILD'; schedule_id: string; title: string; starts_at: string; ends_at: string }[];
+  schedule_changes: { schedule_type: 'PERSONAL' | 'CHILD'; schedule_id: string; title: string; starts_at: string; ends_at: string | null }[];
+  schedule_creations: { schedule_type: 'PERSONAL' | 'CHILD'; schedule_id: string; title: string; starts_at: string; ends_at: string | null; care_item_id?: string }[];
   usage: { total_tokens: number; used_today: number }; plan: string
 }
 export interface EmergencyRequest { id: string; assignment_id: string; requested_by_member_id: string; claimed_by_member_id: string | null; reason: string; status: string; item_title: string }
 export interface CalendarConnection { provider: 'google' | 'microsoft'; configured: boolean; api_key_configured?: boolean; connected: boolean; connected_at: string | null; synced_at: string | null }
-export interface AlbumPhoto { id: string; child_id: string | null; assignment_id: string | null; kind: string; file_name: string; mime_type: string; data_url: string; caption: string; created_at: string; date_folder?: string; storage_path?: string }
-export interface BillingConfig { provider: 'TOSS'; configured: boolean; client_key: string; customer_key: string; amount: number; currency: 'KRW'; status: string; next_billing_at: string | null }
+export interface AlbumPhoto { id: string; child_id: string | null; assignment_id: string | null; kind: string; file_name: string; mime_type: string; data_url: string; caption: string; created_at: string; date_folder?: string; storage_path?: string; uploaded_by_member_id?: string | null; can_delete: boolean }
+export interface BillingConfig { provider: 'TOSS'; configured: boolean; integration_mode: 'WIDGET' | 'BILLING_AUTH'; client_key: string; customer_key: string; amount: number; currency: 'KRW'; status: string; next_billing_at: string | null }
+export interface BillingOrder extends BillingConfig { order_id: string; order_name: string }
 export interface BenefitLocation { city: string; district: string; updated_at: string }
 export interface Benefit {
   id: string; name: string; summary: string; category: string; organization: string; organization_type: string;
@@ -103,7 +105,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
-export const send = <T>(path: string, method: 'POST' | 'PATCH', payload: unknown = {}) =>
+export const send = <T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', payload: unknown = {}) =>
   api<T>(path, { method, body: JSON.stringify(payload) })
 
 export const upload = <T>(path: string, form: FormData) => api<T>(path, { method: 'POST', body: form })

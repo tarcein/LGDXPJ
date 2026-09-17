@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS child (
 CREATE TABLE IF NOT EXISTS personal_schedule (
   id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
   member_id TEXT NOT NULL REFERENCES family_member(id), title TEXT NOT NULL,
-  starts_at TEXT NOT NULL, ends_at TEXT NOT NULL,
+  starts_at TEXT NOT NULL, ends_at TEXT NOT NULL, has_end_time INTEGER NOT NULL DEFAULT 1,
   kind TEXT NOT NULL DEFAULT 'ROUTINE', external_source TEXT, external_id TEXT,
   recurrence_id TEXT, recurrence_rule TEXT
 );
@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS child_schedule (
   id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
   child_id TEXT NOT NULL REFERENCES child(id), title TEXT NOT NULL,
   category TEXT NOT NULL, starts_at TEXT NOT NULL, ends_at TEXT NOT NULL,
+  has_end_time INTEGER NOT NULL DEFAULT 1,
   source TEXT NOT NULL DEFAULT 'MANUAL', created_at TEXT NOT NULL,
   recurrence_id TEXT, recurrence_rule TEXT
 );
@@ -145,7 +146,7 @@ CREATE TABLE IF NOT EXISTS care_assignment (
   item_id TEXT NOT NULL REFERENCES care_item(id), assignee_id TEXT NOT NULL REFERENCES family_member(id),
   status TEXT NOT NULL DEFAULT 'PROPOSED', source TEXT NOT NULL,
   created_at TEXT NOT NULL, responded_at TEXT, completed_at TEXT, note TEXT NOT NULL DEFAULT '',
-  requested_by_member_id TEXT REFERENCES family_member(id)
+  requested_by_member_id TEXT REFERENCES family_member(id), reminder_sent_at TEXT
 );
 CREATE TABLE IF NOT EXISTS care_exception (
   id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
@@ -217,6 +218,12 @@ CREATE TABLE IF NOT EXISTS media_asset (
   file_name TEXT NOT NULL, mime_type TEXT NOT NULL, content_base64 TEXT NOT NULL,
   caption TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS device_alert_outbox (
+  id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
+  member_id TEXT NOT NULL REFERENCES family_member(id), assignment_id TEXT REFERENCES care_assignment(id),
+  title TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'NOT_CONNECTED',
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS member_benefit_location (
   family_id TEXT NOT NULL REFERENCES family_group(id),
   member_id TEXT NOT NULL REFERENCES family_member(id),
@@ -226,8 +233,10 @@ CREATE TABLE IF NOT EXISTS member_benefit_location (
 CREATE TABLE IF NOT EXISTS family_subscription (
   family_id TEXT PRIMARY KEY REFERENCES family_group(id),
   provider TEXT NOT NULL DEFAULT 'TOSS', customer_key TEXT NOT NULL UNIQUE,
-  billing_key TEXT, status TEXT NOT NULL DEFAULT 'PENDING', amount INTEGER NOT NULL DEFAULT 5900,
+  billing_key TEXT, status TEXT NOT NULL DEFAULT 'PENDING', amount INTEGER NOT NULL DEFAULT 7900,
   current_period_start TEXT, current_period_end TEXT, next_billing_at TEXT,
+  cancel_at_period_end INTEGER NOT NULL DEFAULT 0, canceled_at TEXT,
+  renewal_failure_count INTEGER NOT NULL DEFAULT 0, last_renewal_error TEXT,
   last_auth_key_hash TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS payment_transaction (
@@ -270,28 +279,36 @@ def initialize() -> None:
                 ("personal_schedule", "external_id", "TEXT"),
                 ("personal_schedule", "recurrence_id", "TEXT"),
                 ("personal_schedule", "recurrence_rule", "TEXT"),
+                ("personal_schedule", "has_end_time", "INTEGER NOT NULL DEFAULT 1"),
                 ("child_schedule", "recurrence_id", "TEXT"),
                 ("child_schedule", "recurrence_rule", "TEXT"),
+                ("child_schedule", "has_end_time", "INTEGER NOT NULL DEFAULT 1"),
                 ("care_item", "child_schedule_id", "TEXT REFERENCES child_schedule(id)"),
                 ("notification", "action_type", "TEXT"),
                 ("notification", "action_id", "TEXT"),
                 ("care_assignment", "requested_by_member_id", "TEXT REFERENCES family_member(id)"),
+                ("care_assignment", "reminder_sent_at", "TEXT"),
                 ("calendar_oauth_state", "return_url", "TEXT"),
                 ("media_asset", "storage_path", "TEXT"),
                 ("media_asset", "date_folder", "TEXT"),
+                ("family_subscription", "cancel_at_period_end", "INTEGER NOT NULL DEFAULT 0"),
+                ("family_subscription", "canceled_at", "TEXT"),
+                ("family_subscription", "renewal_failure_count", "INTEGER NOT NULL DEFAULT 0"),
+                ("family_subscription", "last_renewal_error", "TEXT"),
             ):
                 db.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {definition}")
         else:
             if "special_note" not in {row[1] for row in db.execute("PRAGMA table_info(care_handoff)")}:
                 db.execute("ALTER TABLE care_handoff ADD COLUMN special_note TEXT NOT NULL DEFAULT ''")
             for table, additions in (
-                ("personal_schedule", (("kind", "TEXT NOT NULL DEFAULT 'ROUTINE'"), ("external_source", "TEXT"), ("external_id", "TEXT"), ("recurrence_id", "TEXT"), ("recurrence_rule", "TEXT"))),
-                ("child_schedule", (("recurrence_id", "TEXT"), ("recurrence_rule", "TEXT"))),
+                ("personal_schedule", (("kind", "TEXT NOT NULL DEFAULT 'ROUTINE'"), ("external_source", "TEXT"), ("external_id", "TEXT"), ("recurrence_id", "TEXT"), ("recurrence_rule", "TEXT"), ("has_end_time", "INTEGER NOT NULL DEFAULT 1"))),
+                ("child_schedule", (("recurrence_id", "TEXT"), ("recurrence_rule", "TEXT"), ("has_end_time", "INTEGER NOT NULL DEFAULT 1"))),
                 ("care_item", (("child_schedule_id", "TEXT REFERENCES child_schedule(id)"),)),
                 ("notification", (("action_type", "TEXT"), ("action_id", "TEXT"))),
-                ("care_assignment", (("requested_by_member_id", "TEXT REFERENCES family_member(id)"),)),
+                ("care_assignment", (("requested_by_member_id", "TEXT REFERENCES family_member(id)"), ("reminder_sent_at", "TEXT"))),
                 ("calendar_oauth_state", (("return_url", "TEXT"),)),
                 ("media_asset", (("storage_path", "TEXT"), ("date_folder", "TEXT"))),
+                ("family_subscription", (("cancel_at_period_end", "INTEGER NOT NULL DEFAULT 0"), ("canceled_at", "TEXT"), ("renewal_failure_count", "INTEGER NOT NULL DEFAULT 0"), ("last_renewal_error", "TEXT"))),
             ):
                 columns = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
                 for name, definition in additions:

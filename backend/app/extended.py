@@ -47,9 +47,9 @@ APP_CAPABILITIES = [
     {"screen": "notifications", "name": "알림함", "description": "배정 요청, 수락 결과, 인수인계 알림"},
     {"screen": "familyHub", "name": "가족", "description": "가족 설정과 정보 공개"},
     {"screen": "members", "name": "가족 구성원", "description": "재사용 가능한 초대 링크, 구성원 관리"},
-    {"screen": "album", "name": "패밀리 앨범", "description": "날짜별 사진과 돌봄 완료 사진"},
+    {"screen": "album", "name": "우리집 기록함", "description": "날짜별 사진과 돌봄 완료 사진"},
     {"screen": "programs", "name": "돌봄 제도", "description": "구성원별 지역의 아동 돌봄 혜택과 기관"},
-    {"screen": "plan", "name": "플랜·결제", "description": "Free·Pro 기능과 토스 정기결제"},
+    {"screen": "plan", "name": "플랜·결제", "description": "Free·Pro 기능과 토스 결제"},
 ]
 
 
@@ -120,18 +120,24 @@ def _photo_file(photo_id: str, mime: str, created_at: str) -> tuple[Path, str, s
     return _media_root() / relative, relative.as_posix(), date_folder
 
 
+def _stored_photo_path(storage_path: str | None) -> Path | None:
+    if not storage_path:
+        return None
+    root = _media_root()
+    candidate = (root / storage_path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate
+
+
 def _photo_payload(photo: dict) -> dict:
     encoded = photo.pop("content_base64", "") or ""
-    storage_path = photo.get("storage_path")
-    if storage_path:
-        root = _media_root()
-        candidate = (root / storage_path).resolve()
-        try:
-            candidate.relative_to(root)
-        except ValueError:
-            candidate = Path()
-        if candidate.is_file():
-            encoded = base64.b64encode(candidate.read_bytes()).decode("ascii")
+    candidate = _stored_photo_path(photo.get("storage_path"))
+    if candidate and candidate.is_file():
+        encoded = base64.b64encode(candidate.read_bytes()).decode("ascii")
+    photo["can_delete"] = photo.get("uploaded_by_member_id") == member_id()
     photo["data_url"] = f"data:{photo['mime_type']};base64,{encoded}"
     return photo
 
@@ -154,7 +160,7 @@ def _store_photo(db, *, image: bytes, mime: str, file_name: str, child_id: str |
             "file_name": file_name[:240], "mime_type": mime,
             "data_url": f"data:{mime};base64,{base64.b64encode(image).decode('ascii')}",
             "caption": caption[:500], "created_at": created_at, "storage_path": storage_path,
-            "date_folder": date_folder}
+            "date_folder": date_folder, "uploaded_by_member_id": member_id(), "can_delete": True}
 
 
 @router.get("/album/photos")
@@ -163,7 +169,7 @@ def album_photos():
         _require_pro(db)
         photos = [dict(row) for row in db.execute(
             """SELECT id, child_id, assignment_id, kind, file_name, mime_type, content_base64,
-               caption, created_at, storage_path, date_folder
+               caption, created_at, storage_path, date_folder, uploaded_by_member_id
                FROM media_asset WHERE family_id = ? ORDER BY created_at DESC""",
             (family_id(),),
         ).fetchall()]
@@ -182,6 +188,36 @@ def upload_album_photo(file: UploadFile, child_id: str | None = Form(default=Non
                 raise HTTPException(404, "아이를 찾을 수 없습니다")
         return _store_photo(db, image=image, mime=mime, file_name=file.filename or "family-photo",
                             child_id=child_id, caption=caption)
+
+
+@router.delete("/album/photos/{photo_id}")
+def delete_album_photo(photo_id: str):
+    with database() as db:
+        _require_pro(db)
+        photo = db.execute(
+            """SELECT id, uploaded_by_member_id, storage_path FROM media_asset
+               WHERE id = ? AND family_id = ?""",
+            (photo_id, family_id()),
+        ).fetchone()
+        if photo is None:
+            raise HTTPException(404, "사진을 찾을 수 없습니다")
+        if photo["uploaded_by_member_id"] != member_id():
+            raise HTTPException(403, "본인이 올린 사진만 삭제할 수 있습니다")
+        storage_path = photo["storage_path"]
+        db.execute("DELETE FROM media_asset WHERE id = ? AND family_id = ?", (photo_id, family_id()))
+
+    candidate = _stored_photo_path(storage_path)
+    if candidate and candidate.is_file():
+        candidate.unlink()
+        root = _media_root()
+        parent = candidate.parent
+        while parent != root:
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+            parent = parent.parent
+    return {"deleted": True, "photo_id": photo_id}
 
 
 @router.post("/assignments/{assignment_id}/complete-handoff")
@@ -223,10 +259,13 @@ def plans():
 @router.get("/subscription")
 def subscription():
     with database() as db:
+        from .payment import reconcile_subscription
+        reconcile_subscription(db, family_id())
         plan = _plan(db)
         row = db.execute("SELECT enabled FROM plan_preview WHERE family_id = ?", (family_id(),)).fetchone()
         paid = db.execute(
-            "SELECT status, current_period_end, next_billing_at FROM family_subscription WHERE family_id = ?",
+            """SELECT status, current_period_end, next_billing_at, billing_key,
+               cancel_at_period_end, canceled_at FROM family_subscription WHERE family_id = ?""",
             (family_id(),),
         ).fetchone()
         dev_switch_available = enabled("LGDX_DEV_MODE") and authenticated() and member_id() == owner_id(db)
@@ -236,7 +275,11 @@ def subscription():
     return {"plan": plan, "status": status, "developer_preview": preview,
             "dev_switch_available": dev_switch_available,
             "current_period_end": paid["current_period_end"] if paid else None,
-            "next_billing_at": paid["next_billing_at"] if paid else None}
+            "next_billing_at": paid["next_billing_at"] if paid else None,
+            "cancel_at_period_end": bool(paid and paid["cancel_at_period_end"]),
+            "canceled_at": paid["canceled_at"] if paid else None,
+            "auto_renew_available": bool(paid and paid["billing_key"]),
+            "renewal_mode": "AUTO_BILLING" if paid and paid["billing_key"] else "ONE_TIME"}
 
 
 @router.get("/features")
@@ -366,48 +409,95 @@ def _apply_schedule_changes(changes: list[dict], original_message: str) -> list[
     if not explicit or not changes:
         return []
     applied: list[dict] = []
-    with database() as db:
-        for change in changes[:3]:
-            schedule_type = change.get("schedule_type")
-            schedule_id = str(change.get("schedule_id") or "")
-            table = "personal_schedule" if schedule_type == "PERSONAL" else "child_schedule" if schedule_type == "CHILD" else ""
-            if not table or not schedule_id:
+    for change in changes[:3]:
+        schedule_type = change.get("schedule_type")
+        schedule_id = str(change.get("schedule_id") or "")
+        table = "personal_schedule" if schedule_type == "PERSONAL" else "child_schedule" if schedule_type == "CHILD" else ""
+        if not table or not schedule_id:
+            continue
+        with database() as db:
+            found = db.execute(f"SELECT * FROM {table} WHERE id = ? AND family_id = ?", (schedule_id, family_id())).fetchone()
+            if found is None:
                 continue
-            row = db.execute(f"SELECT * FROM {table} WHERE id = ? AND family_id = ?", (schedule_id, family_id())).fetchone()
-            if row is None:
-                continue
+            row = dict(found)
+        if table == "personal_schedule" and (row["member_id"] != member_id() or row["external_source"]):
+            continue
+        title = str(change.get("title") or row["title"]).strip()
+        starts_at = _parse_action_time(change.get("starts_at")) or row["starts_at"]
+        explicit_end = _parse_action_time(change.get("ends_at"))
+        has_end_time = change.get("has_end_time")
+        if has_end_time is False:
+            ends_at = None
+        elif explicit_end:
+            ends_at = explicit_end
+        else:
+            ends_at = row["ends_at"] if bool(row.get("has_end_time", 1)) else None
+        try:
+            from .main import ChildScheduleUpdate, ScheduleUpdate, update_child_schedule, update_schedule
             if table == "personal_schedule":
-                if row["member_id"] != member_id() or row["external_source"]:
+                result = update_schedule(schedule_id, ScheduleUpdate(
+                    title=title, starts_at=datetime.fromisoformat(starts_at),
+                    ends_at=datetime.fromisoformat(ends_at) if ends_at else None, kind=row["kind"],
+                ))
+            else:
+                result = update_child_schedule(schedule_id, ChildScheduleUpdate(
+                    child_id=row["child_id"], title=title, category=row["category"],
+                    starts_at=datetime.fromisoformat(starts_at),
+                    ends_at=datetime.fromisoformat(ends_at) if ends_at else None,
+                ))
+        except (HTTPException, ValueError):
+            continue
+        updated = result["schedule"]
+        applied.append({"schedule_type": schedule_type, "schedule_id": schedule_id,
+                        "title": updated["title"], "starts_at": updated["starts_at"],
+                        "ends_at": updated["ends_at"] if updated.get("has_end_time", 1) else None})
+    return applied
+
+
+def _apply_schedule_creations(creations: list[dict], original_message: str) -> list[dict]:
+    explicit = any(term in original_message.replace(" ", "") for term in (
+        "등록해", "추가해", "넣어줘", "일정잡아", "일정만들어", "기록해",
+    ))
+    if not explicit or not creations:
+        return []
+    applied: list[dict] = []
+    for creation in creations[:3]:
+        schedule_type = creation.get("schedule_type")
+        title = str(creation.get("title") or "").strip()
+        starts_at = _parse_action_time(creation.get("starts_at"))
+        ends_at = _parse_action_time(creation.get("ends_at"))
+        if schedule_type not in {"PERSONAL", "CHILD"} or not title or not starts_at:
+            continue
+        try:
+            from .main import ChildScheduleCreate, ScheduleCreate, create_child_schedule, create_schedule
+            start_value = datetime.fromisoformat(starts_at)
+            end_value = datetime.fromisoformat(ends_at) if ends_at else None
+            if schedule_type == "PERSONAL":
+                result = create_schedule(ScheduleCreate(
+                    member_id=member_id(), title=title, starts_at=start_value, ends_at=end_value,
+                    kind=creation.get("kind") if creation.get("kind") in {"WORK", "ROUTINE"} else "ROUTINE",
+                ))
+                schedule = result["schedule"]
+                applied.append({"schedule_type": schedule_type, "schedule_id": schedule["id"],
+                                "title": schedule["title"], "starts_at": schedule["starts_at"],
+                                "ends_at": schedule["ends_at"] if schedule.get("has_end_time", 1) else None})
+            else:
+                child_id = str(creation.get("child_id") or "")
+                if not child_id:
                     continue
-            title = change.get("title")
-            if title is not None:
-                title = str(title).strip()
-                if not title or len(title) > 200:
-                    title = None
-            starts_at = _parse_action_time(change.get("starts_at"))
-            ends_at = _parse_action_time(change.get("ends_at"))
-            next_start = starts_at or row["starts_at"]
-            next_end = ends_at or row["ends_at"]
-            try:
-                if datetime.fromisoformat(next_end) <= datetime.fromisoformat(next_start):
-                    continue
-            except ValueError:
-                continue
-            updates = {"title": title, "starts_at": starts_at, "ends_at": ends_at}
-            updates = {key: value for key, value in updates.items() if value is not None}
-            if not updates:
-                continue
-            db.execute(f"UPDATE {table} SET " + ", ".join(f"{key} = ?" for key in updates) + " WHERE id = ?",
-                       (*updates.values(), schedule_id))
-            if table == "child_schedule":
-                new_title = title or row["title"]
-                db.execute(
-                    """UPDATE care_item SET title = ?, starts_at = ?, detail = ?
-                       WHERE family_id = ? AND child_schedule_id = ?""",
-                    (new_title, next_start, f"{row['category']} · {next_start} ~ {next_end}", family_id(), schedule_id),
-                )
-            applied.append({"schedule_type": schedule_type, "schedule_id": schedule_id,
-                            "title": title or row["title"], "starts_at": next_start, "ends_at": next_end})
+                result = create_child_schedule(ChildScheduleCreate(
+                    child_id=child_id, title=title, starts_at=start_value, ends_at=end_value,
+                    category=creation.get("category") if creation.get("category") in {
+                        "ACADEMY", "SCHOOL", "AFTER_SCHOOL", "ACTIVITY", "OTHER"
+                    } else "OTHER",
+                    source="MANUAL",
+                ))
+                applied.append({"schedule_type": schedule_type, "schedule_id": result["id"],
+                                "title": result["title"], "starts_at": result["starts_at"],
+                                "ends_at": result["ends_at"] if result.get("has_end_time", 1) else None,
+                                "care_item_id": result["care_item_id"]})
+        except (HTTPException, ValueError):
+            continue
     return applied
 
 
@@ -487,10 +577,22 @@ def _chat(message: str) -> dict:
     if tokens <= 0:
         raise HTTPException(502, detail={"code": "AI_USAGE_MISSING", "message": "AI 서비스 사용량을 확인하지 못했습니다"})
     if isinstance(structured, str):
-        structured = {"answer": structured, "cards": [], "schedule_changes": []}
+        structured = {"answer": structured, "cards": [], "schedule_changes": [], "schedule_creations": []}
+    compact_message = message.replace(" ", "")
+    wants_creation = any(term in compact_message for term in ("등록해", "추가해", "넣어줘", "일정잡아", "일정만들어", "기록해"))
+    wants_change = any(term in compact_message for term in ("변경해", "바꿔", "옮겨", "수정해", "미뤄", "당겨"))
+    if ((wants_creation and not structured.get("schedule_creations"))
+            or (wants_change and not structured.get("schedule_changes"))):
+        focused, focused_tokens = ai.schedule_actions(message, context)
+        if wants_creation and not structured.get("schedule_creations"):
+            structured["schedule_creations"] = focused.get("schedule_creations", [])
+        if wants_change and not structured.get("schedule_changes"):
+            structured["schedule_changes"] = focused.get("schedule_changes", [])
+        tokens += focused_tokens
     answer = str(structured.get("answer") or "요청하신 내용을 확인하지 못했어요.").strip()
     cards = [card for card in structured.get("cards", []) if isinstance(card, dict)][:5]
     applied = _apply_schedule_changes(structured.get("schedule_changes", []), message)
+    created = _apply_schedule_creations(structured.get("schedule_creations", []), message)
     if applied:
         answer += "\n\n변경한 일정\n" + "\n".join(
             f"- {item['title']} · {item['starts_at']} ~ {item['ends_at']}" for item in applied
@@ -498,6 +600,14 @@ def _chat(message: str) -> dict:
         if not any(card.get("screen") == "schedule" for card in cards):
             cards.append({"eyebrow": "일정 변경 완료", "title": applied[0]["title"],
                           "description": "변경된 날짜와 시간을 캘린더에서 확인해보세요.", "screen": "schedule"})
+    if created:
+        answer += "\n\n등록한 일정\n" + "\n".join(
+            f"- {item['title']} · {item['starts_at']}" + (f" ~ {item['ends_at']}" if item.get("ends_at") else "")
+            for item in created
+        )
+        if not any(card.get("screen") == "schedule" for card in cards):
+            cards.append({"eyebrow": "일정 등록 완료", "title": created[0]["title"],
+                          "description": "등록된 일정을 캘린더에서 확인해보세요.", "screen": "schedule"})
     with database() as db:
         for role, content in [("user", message), ("assistant", answer)]:
             db.execute("INSERT INTO assistant_message VALUES (?, ?, ?, ?, ?, ?)",
@@ -507,7 +617,8 @@ def _chat(message: str) -> dict:
     links = [{"label": f"{card.get('title') or '관련 내용'} 보기", "screen": card.get("screen")}
              for card in cards if card.get("screen")]
     return {"message": message, "answer": answer, "cards": cards, "links": links,
-            "schedule_changes": applied, "usage": {"total_tokens": tokens, "used_today": used},
+            "schedule_changes": applied, "schedule_creations": created,
+            "usage": {"total_tokens": tokens, "used_today": used},
             "plan": plan, "requires_confirmation_for_actions": False}
 
 
