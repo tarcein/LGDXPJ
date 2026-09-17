@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import secrets
 import base64
+import re
 from datetime import datetime
+from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -14,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from . import ai
 from .config import enabled, setting
-from .db import database
+from .db import database, db_path
 from .family import authenticated, family_id, member_id, owner_id, require_owner
 
 
@@ -35,6 +37,20 @@ API_READY = {
     "family_album", "care_programs",
 }
 TRANSCRIPTION_ONLY = {"voice_schedule", "voice_emergency"}
+APP_CAPABILITIES = [
+    {"screen": "home", "name": "홈", "description": "오늘 일정, 아이 일정 요약, 준비물 요약"},
+    {"screen": "schedule", "name": "일정", "description": "가족·아이별 달력, 수기 일정, 반복 루틴"},
+    {"screen": "calendar", "name": "외부 캘린더", "description": "Google·Outlook 개인 일정 연결과 동기화"},
+    {"screen": "careHub", "name": "케어", "description": "돌봄 요청, 예외 상황, 긴급 도움, 동선"},
+    {"screen": "tasks", "name": "내 할 일", "description": "받은 돌봄 요청 수락·거절, 완료와 인수인계"},
+    {"screen": "assignments", "name": "담당 배정", "description": "아이 일정의 돌봄 담당자와 요청 상태"},
+    {"screen": "notifications", "name": "알림함", "description": "배정 요청, 수락 결과, 인수인계 알림"},
+    {"screen": "familyHub", "name": "가족", "description": "가족 설정과 정보 공개"},
+    {"screen": "members", "name": "가족 구성원", "description": "재사용 가능한 초대 링크, 구성원 관리"},
+    {"screen": "album", "name": "패밀리 앨범", "description": "날짜별 사진과 돌봄 완료 사진"},
+    {"screen": "programs", "name": "돌봄 제도", "description": "구성원별 지역의 아동 돌봄 혜택과 기관"},
+    {"screen": "plan", "name": "플랜·결제", "description": "Free·Pro 기능과 토스 정기결제"},
+]
 
 
 def _backend_state(feature: str) -> str:
@@ -90,21 +106,55 @@ def _image_mime(data: bytes) -> str:
     raise HTTPException(415, "JPEG, PNG, WebP 사진만 지원합니다")
 
 
+def _media_root() -> Path:
+    configured = setting("MEDIA_ROOT")
+    return Path(configured).expanduser().resolve() if configured else (db_path().parent / "uploads" / "family_album").resolve()
+
+
+def _photo_file(photo_id: str, mime: str, created_at: str) -> tuple[Path, str, str]:
+    extension = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[mime]
+    day = datetime.fromisoformat(created_at).date()
+    date_folder = day.strftime("%Y/%m/%d")
+    safe_family = re.sub(r"[^A-Za-z0-9_-]", "_", family_id())
+    relative = Path(safe_family) / day.strftime("%Y") / day.strftime("%m") / day.strftime("%d") / f"{photo_id}{extension}"
+    return _media_root() / relative, relative.as_posix(), date_folder
+
+
+def _photo_payload(photo: dict) -> dict:
+    encoded = photo.pop("content_base64", "") or ""
+    storage_path = photo.get("storage_path")
+    if storage_path:
+        root = _media_root()
+        candidate = (root / storage_path).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            candidate = Path()
+        if candidate.is_file():
+            encoded = base64.b64encode(candidate.read_bytes()).decode("ascii")
+    photo["data_url"] = f"data:{photo['mime_type']};base64,{encoded}"
+    return photo
+
+
 def _store_photo(db, *, image: bytes, mime: str, file_name: str, child_id: str | None = None,
-                 assignment_id: str | None = None, kind: str = "ALBUM", caption: str = "") -> dict:
+                  assignment_id: str | None = None, kind: str = "ALBUM", caption: str = "") -> dict:
     photo_id = str(uuid4())
     created_at = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+    target, storage_path, date_folder = _photo_file(photo_id, mime, created_at)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(image)
     db.execute(
         """INSERT INTO media_asset(id, family_id, child_id, assignment_id, uploaded_by_member_id,
-           kind, file_name, mime_type, content_base64, caption, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           kind, file_name, mime_type, content_base64, caption, created_at, storage_path, date_folder)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (photo_id, family_id(), child_id, assignment_id, member_id(), kind, file_name[:240], mime,
-         base64.b64encode(image).decode("ascii"), caption[:500], created_at),
+         "", caption[:500], created_at, storage_path, date_folder),
     )
     return {"id": photo_id, "child_id": child_id, "assignment_id": assignment_id, "kind": kind,
             "file_name": file_name[:240], "mime_type": mime,
             "data_url": f"data:{mime};base64,{base64.b64encode(image).decode('ascii')}",
-            "caption": caption[:500], "created_at": created_at}
+            "caption": caption[:500], "created_at": created_at, "storage_path": storage_path,
+            "date_folder": date_folder}
 
 
 @router.get("/album/photos")
@@ -113,12 +163,11 @@ def album_photos():
         _require_pro(db)
         photos = [dict(row) for row in db.execute(
             """SELECT id, child_id, assignment_id, kind, file_name, mime_type, content_base64,
-               caption, created_at FROM media_asset WHERE family_id = ? ORDER BY created_at DESC""",
+               caption, created_at, storage_path, date_folder
+               FROM media_asset WHERE family_id = ? ORDER BY created_at DESC""",
             (family_id(),),
         ).fetchall()]
-    for photo in photos:
-        photo["data_url"] = f"data:{photo['mime_type']};base64,{photo.pop('content_base64')}"
-    return {"photos": photos}
+    return {"photos": [_photo_payload(photo) for photo in photos]}
 
 
 @router.post("/album/photos", status_code=201)
@@ -176,10 +225,18 @@ def subscription():
     with database() as db:
         plan = _plan(db)
         row = db.execute("SELECT enabled FROM plan_preview WHERE family_id = ?", (family_id(),)).fetchone()
+        paid = db.execute(
+            "SELECT status, current_period_end, next_billing_at FROM family_subscription WHERE family_id = ?",
+            (family_id(),),
+        ).fetchone()
         dev_switch_available = enabled("LGDX_DEV_MODE") and authenticated() and member_id() == owner_id(db)
     preview = bool(row and row["enabled"])
-    return {"plan": plan, "status": "DEV_PREVIEW" if preview else ("ACTIVE" if plan == "PRO" else "NOT_SUBSCRIBED"),
-            "developer_preview": preview, "dev_switch_available": dev_switch_available}
+    paid_status = paid["status"] if paid else None
+    status = "DEV_PREVIEW" if preview else (paid_status or ("ACTIVE" if plan == "PRO" else "NOT_SUBSCRIBED"))
+    return {"plan": plan, "status": status, "developer_preview": preview,
+            "dev_switch_available": dev_switch_available,
+            "current_period_end": paid["current_period_end"] if paid else None,
+            "next_billing_at": paid["next_billing_at"] if paid else None}
 
 
 @router.get("/features")
@@ -274,48 +331,184 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
 
 
+def _benefit_context(message: str) -> dict:
+    if not any(term in message for term in ("돌봄 제도", "돌봄제도", "지원금", "보조금", "혜택", "아이돌봄")):
+        return {"requested": False}
+    from .benefits import _stored_location, search_programs
+
+    location = _stored_location()
+    if not location["city"] or not location["district"]:
+        return {"requested": True, "location": location, "programs": [],
+                "notice": "현재 사용자의 검색 지역이 설정되지 않았습니다."}
+    try:
+        result = search_programs(keyword="돌봄", city=location["city"], district=location["district"], per_page=8)
+        return {"requested": True, "location": location, "programs": result["programs"], "source": result["source"]}
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+        return {"requested": True, "location": location, "programs": [],
+                "notice": detail.get("message", "돌봄 제도 데이터를 불러오지 못했습니다.")}
+
+
+def _parse_action_time(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.isoformat()
+
+
+def _apply_schedule_changes(changes: list[dict], original_message: str) -> list[dict]:
+    explicit = any(term in original_message.replace(" ", "") for term in (
+        "변경해", "바꿔", "옮겨", "수정해", "미뤄", "당겨", "변경하자", "수정하자",
+    ))
+    if not explicit or not changes:
+        return []
+    applied: list[dict] = []
+    with database() as db:
+        for change in changes[:3]:
+            schedule_type = change.get("schedule_type")
+            schedule_id = str(change.get("schedule_id") or "")
+            table = "personal_schedule" if schedule_type == "PERSONAL" else "child_schedule" if schedule_type == "CHILD" else ""
+            if not table or not schedule_id:
+                continue
+            row = db.execute(f"SELECT * FROM {table} WHERE id = ? AND family_id = ?", (schedule_id, family_id())).fetchone()
+            if row is None:
+                continue
+            if table == "personal_schedule":
+                if row["member_id"] != member_id() or row["external_source"]:
+                    continue
+            title = change.get("title")
+            if title is not None:
+                title = str(title).strip()
+                if not title or len(title) > 200:
+                    title = None
+            starts_at = _parse_action_time(change.get("starts_at"))
+            ends_at = _parse_action_time(change.get("ends_at"))
+            next_start = starts_at or row["starts_at"]
+            next_end = ends_at or row["ends_at"]
+            try:
+                if datetime.fromisoformat(next_end) <= datetime.fromisoformat(next_start):
+                    continue
+            except ValueError:
+                continue
+            updates = {"title": title, "starts_at": starts_at, "ends_at": ends_at}
+            updates = {key: value for key, value in updates.items() if value is not None}
+            if not updates:
+                continue
+            db.execute(f"UPDATE {table} SET " + ", ".join(f"{key} = ?" for key in updates) + " WHERE id = ?",
+                       (*updates.values(), schedule_id))
+            if table == "child_schedule":
+                new_title = title or row["title"]
+                db.execute(
+                    """UPDATE care_item SET title = ?, starts_at = ?, detail = ?
+                       WHERE family_id = ? AND child_schedule_id = ?""",
+                    (new_title, next_start, f"{row['category']} · {next_start} ~ {next_end}", family_id(), schedule_id),
+                )
+            applied.append({"schedule_type": schedule_type, "schedule_id": schedule_id,
+                            "title": title or row["title"], "starts_at": next_start, "ends_at": next_end})
+    return applied
+
+
 def _chat(message: str) -> dict:
     with database() as db:
         plan = _plan(db)
         used = _used(db, "CHAT_TOKENS")
         remaining = 10_000 - used
-        if plan == "FREE" and remaining < 16:
+        if plan == "FREE" and remaining < 256:
             raise HTTPException(403, detail={"code": "CHAT_DAILY_LIMIT", "message": "오늘의 무료 AI 채팅 토큰을 다 썼습니다"})
+        family = dict(db.execute("SELECT id, name, plan FROM family_group WHERE id = ?", (family_id(),)).fetchone())
+        current_member = dict(db.execute(
+            "SELECT id, name, role, is_owner FROM family_member WHERE id = ? AND family_id = ?",
+            (member_id(), family_id()),
+        ).fetchone())
+        members = [dict(row) for row in db.execute(
+            "SELECT id, name, role, status, is_owner FROM family_member WHERE family_id = ? ORDER BY is_owner DESC, name",
+            (family_id(),),
+        )]
+        children = [dict(row) for row in db.execute(
+            "SELECT id, name, age_label FROM child WHERE family_id = ? ORDER BY name", (family_id(),),
+        )]
         schedules = [dict(row) for row in db.execute(
-            """SELECT m.name AS member,
+            """SELECT s.id, s.member_id, m.name AS member,
                  CASE WHEN s.member_id = ? OR EXISTS (
                    SELECT 1 FROM family_data_permission p
                    WHERE p.member_id = s.member_id AND p.scope = 'SCHEDULE_DETAIL' AND p.is_allowed = 1
                  ) THEN s.title ELSE '바쁨' END AS title,
-                 s.starts_at, s.ends_at FROM personal_schedule s
+                 s.starts_at, s.ends_at, s.kind, s.external_source FROM personal_schedule s
                JOIN family_member m ON m.id = s.member_id
                WHERE s.family_id = ? ORDER BY s.starts_at LIMIT 20""", (member_id(), family_id()))]
         items = [dict(row) for row in db.execute(
-            "SELECT title, detail, starts_at, status FROM care_item WHERE family_id = ? ORDER BY created_at DESC LIMIT 20", (family_id(),))]
+            """SELECT i.id, i.child_id, c.name AS child, i.item_type, i.title, i.detail,
+               i.starts_at, i.status FROM care_item i LEFT JOIN child c ON c.id = i.child_id
+               WHERE i.family_id = ? ORDER BY i.created_at DESC LIMIT 30""", (family_id(),))]
         assignments = [dict(row) for row in db.execute(
-            """SELECT i.title, m.name AS assignee, a.status FROM care_assignment a
+            """SELECT a.id, a.item_id, i.title, m.name AS assignee, a.assignee_id, a.status,
+               a.requested_by_member_id, a.completed_at FROM care_assignment a
                JOIN care_item i ON i.id = a.item_id JOIN family_member m ON m.id = a.assignee_id
                WHERE a.family_id = ? ORDER BY a.created_at DESC LIMIT 20""", (family_id(),))]
         child_schedules = [dict(row) for row in db.execute(
-            """SELECT c.name AS child, s.title, s.category, s.starts_at, s.ends_at
+            """SELECT s.id, s.child_id, c.name AS child, s.title, s.category, s.starts_at, s.ends_at,
+               s.source, s.recurrence_id
                FROM child_schedule s JOIN child c ON c.id = s.child_id
                WHERE s.family_id = ? ORDER BY s.starts_at LIMIT 30""", (family_id(),))]
+        handoffs = [dict(row) for row in db.execute(
+            """SELECT h.id, h.assignment_id, fm.name AS from_member, tm.name AS to_member,
+               h.briefing, h.special_note, h.status FROM care_handoff h
+               LEFT JOIN family_member fm ON fm.id = h.from_member_id
+               JOIN family_member tm ON tm.id = h.to_member_id
+               WHERE h.family_id = ? AND (h.to_member_id = ? OR h.from_member_id = ?)
+               ORDER BY h.id DESC LIMIT 15""", (family_id(), member_id(), member_id()))]
+        notices = [dict(row) for row in db.execute(
+            """SELECT id, title, body, level, is_read, action_type, action_id, created_at
+               FROM notification WHERE family_id = ? AND (member_id IS NULL OR member_id = ?)
+               ORDER BY created_at DESC LIMIT 20""", (family_id(), member_id()))]
+        album = [dict(row) for row in db.execute(
+            """SELECT id, child_id, kind, file_name, caption, created_at, date_folder
+               FROM media_asset WHERE family_id = ? ORDER BY created_at DESC LIMIT 10""", (family_id(),))]
+        location = db.execute(
+            "SELECT city, district FROM member_benefit_location WHERE family_id = ? AND member_id = ?",
+            (family_id(), member_id()),
+        ).fetchone()
         history = [{"role": row["role"], "content": row["content"]} for row in reversed(db.execute(
             """SELECT role, content FROM assistant_message WHERE family_id = ? AND member_id = ?
                ORDER BY created_at DESC, id DESC LIMIT 6""", (family_id(), member_id())).fetchall())]
-    context = json.dumps({"personal_schedules": schedules, "child_schedules": child_schedules, "care_items": items,
-                          "assignments": assignments}, ensure_ascii=False)
-    response, tokens = ai.answer(message, context, history, min(900, remaining) if plan == "FREE" else 900)
+    benefit_data = _benefit_context(message)
+    context = json.dumps({
+        "current_time": datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
+        "family": family, "current_member": current_member, "members": members, "children": children,
+        "personal_schedules": schedules, "child_schedules": child_schedules, "care_items": items,
+        "assignments": assignments, "handoffs": handoffs, "notifications": notices,
+        "album_recent_metadata": album, "benefit_search_location": dict(location) if location else None,
+        "benefit_search_result": benefit_data, "capability_catalog": APP_CAPABILITIES,
+    }, ensure_ascii=False)
+    structured, tokens = ai.answer(message, context, history, min(1400, remaining) if plan == "FREE" else 1400)
     if tokens <= 0:
         raise HTTPException(502, detail={"code": "AI_USAGE_MISSING", "message": "AI 서비스 사용량을 확인하지 못했습니다"})
+    if isinstance(structured, str):
+        structured = {"answer": structured, "cards": [], "schedule_changes": []}
+    answer = str(structured.get("answer") or "요청하신 내용을 확인하지 못했어요.").strip()
+    cards = [card for card in structured.get("cards", []) if isinstance(card, dict)][:5]
+    applied = _apply_schedule_changes(structured.get("schedule_changes", []), message)
+    if applied:
+        answer += "\n\n변경한 일정\n" + "\n".join(
+            f"- {item['title']} · {item['starts_at']} ~ {item['ends_at']}" for item in applied
+        )
+        if not any(card.get("screen") == "schedule" for card in cards):
+            cards.append({"eyebrow": "일정 변경 완료", "title": applied[0]["title"],
+                          "description": "변경된 날짜와 시간을 캘린더에서 확인해보세요.", "screen": "schedule"})
     with database() as db:
-        for role, content in [("user", message), ("assistant", response)]:
+        for role, content in [("user", message), ("assistant", answer)]:
             db.execute("INSERT INTO assistant_message VALUES (?, ?, ?, ?, ?, ?)",
                        (str(uuid4()), family_id(), member_id(), role, content, datetime.now(ZoneInfo("Asia/Seoul")).isoformat()))
         _add_usage(db, "CHAT_TOKENS", tokens)
         used = _used(db, "CHAT_TOKENS")
-    return {"message": message, "answer": response, "usage": {"total_tokens": tokens, "used_today": used},
-            "plan": plan, "requires_confirmation_for_actions": True}
+    links = [{"label": f"{card.get('title') or '관련 내용'} 보기", "screen": card.get("screen")}
+             for card in cards if card.get("screen")]
+    return {"message": message, "answer": answer, "cards": cards, "links": links,
+            "schedule_changes": applied, "usage": {"total_tokens": tokens, "used_today": used},
+            "plan": plan, "requires_confirmation_for_actions": False}
 
 
 @router.get("/assistant/history")

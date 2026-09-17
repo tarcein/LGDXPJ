@@ -29,7 +29,8 @@ class ExtendedFlowTest(unittest.TestCase):
         for key in (
             "LGDX_DB_PATH", "LGDX_DEV_MODE", "LGDX_DEV_TOKEN", "LGDX_REQUIRE_AUTH", "SUBSIDY24_SERVICE_KEY",
             "IDOL_CARE_INSTITUTION_SERVICE_KEY", "IDOL_CARE_HOUSEHOLD_INCOME_SERVICE_KEY",
-            "IDOL_CARE_HEALTH_INSURANCE_SERVICE_KEY",
+            "IDOL_CARE_HEALTH_INSURANCE_SERVICE_KEY", "TOSS_BILLING_CLIENT_KEY",
+            "TOSS_BILLING_SECRET_KEY", "TOSS_BILLING_AMOUNT",
         ):
             os.environ.pop(key, None)
         self.temp.cleanup()
@@ -170,6 +171,40 @@ class ExtendedFlowTest(unittest.TestCase):
         os.environ["LGDX_REQUIRE_AUTH"] = "1"
         self.assertEqual(self.client.get("/api/bootstrap").status_code, 401)
         self.assertEqual(self.client.get("/api/bootstrap", headers=member_headers).status_code, 200)
+
+    def test_invite_links_remain_reusable_after_new_links_are_created(self):
+        os.environ["LGDX_DEV_MODE"] = "1"
+        os.environ["LGDX_DEV_TOKEN"] = "local-test-token"
+        room = self.client.post("/api/families", json={"name": "재사용 가족", "owner_name": "엄마"}).json()
+        owner_headers = {"Authorization": "Bearer " + room["access_token"], "X-Developer-Token": "local-test-token"}
+        self.client.post("/api/dev/preview-plan", headers=owner_headers, json={"plan": "PRO"})
+        second_link = self.client.post("/api/families/invite-code/rotate", headers=owner_headers).json()["invite_code"]
+        third_link = self.client.post("/api/families/invite-code/rotate", headers=owner_headers).json()["invite_code"]
+
+        for index, code in enumerate((room["invite_code"], room["invite_code"], second_link, third_link), start=1):
+            joined = self.client.post("/api/families/join", json={
+                "invite_code": code, "name": f"가족 {index}", "role": "CAREGIVER",
+            })
+            self.assertEqual(joined.status_code, 201)
+        self.assertEqual(self.client.get(f"/api/families/invitations/{room['invite_code']}").status_code, 200)
+
+    def test_each_member_keeps_a_separate_benefit_search_location(self):
+        os.environ["LGDX_DEV_MODE"] = "1"
+        os.environ["LGDX_DEV_TOKEN"] = "local-test-token"
+        room = self.client.post("/api/families", json={"name": "지역 가족", "owner_name": "엄마"}).json()
+        owner_headers = {"Authorization": "Bearer " + room["access_token"], "X-Developer-Token": "local-test-token"}
+        self.client.post("/api/dev/preview-plan", headers=owner_headers, json={"plan": "PRO"})
+        joined = self.client.post("/api/families/join", json={
+            "invite_code": room["invite_code"], "name": "할머니", "role": "GRANDPARENT",
+        }).json()
+        member_headers = {"Authorization": "Bearer " + joined["access_token"]}
+
+        self.assertEqual(self.client.patch("/api/benefits/location", headers=owner_headers,
+                                          json={"city": "서울특별시", "district": "은평구"}).status_code, 200)
+        self.assertEqual(self.client.patch("/api/benefits/location", headers=member_headers,
+                                          json={"city": "경기도", "district": "고양시"}).status_code, 200)
+        self.assertEqual(self.client.get("/api/benefits/location", headers=owner_headers).json()["district"], "은평구")
+        self.assertEqual(self.client.get("/api/benefits/location", headers=member_headers).json()["district"], "고양시")
 
     def test_photo_ocr_limit_and_developer_pro_preview(self):
         image = b"\x89PNG\r\n\x1a\n" + b"demo-image"
@@ -637,6 +672,51 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual([message["content"] for message in owner_messages], ["내 일정 알려줘", "확인해볼게요."])
         self.assertEqual([message["content"] for message in caregiver_messages], ["오늘 담당은?", "확인해볼게요."])
         self.assertEqual(self.client.get("/api/features", headers=owner_headers).json()["usage"]["chat_tokens_today"], 46)
+
+    def test_chat_can_apply_an_explicit_personal_schedule_change(self):
+        room = self.client.post("/api/families", json={"name": "일정 가족", "owner_name": "엄마"}).json()
+        headers = {"Authorization": "Bearer " + room["access_token"]}
+        created = self.client.post("/api/schedules", headers=headers, json={
+            "member_id": room["member_id"], "title": "운동",
+            "starts_at": "2026-09-20T09:00:00+09:00", "ends_at": "2026-09-20T10:00:00+09:00",
+        }).json()["schedule"]
+        structured = {
+            "answer": "운동 일정을 변경할게요.",
+            "cards": [{"eyebrow": "일정", "title": "운동", "description": "오전 11시로 변경", "screen": "schedule"}],
+            "schedule_changes": [{
+                "schedule_type": "PERSONAL", "schedule_id": created["id"], "title": None,
+                "starts_at": "2026-09-20T11:00:00+09:00", "ends_at": "2026-09-20T12:00:00+09:00",
+            }],
+        }
+        with patch("app.extended.ai.answer", return_value=(structured, 40)):
+            response = self.client.post("/api/assistant/chat", headers=headers, json={"message": "운동 일정을 11시로 변경해줘"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["schedule_changes"][0]["starts_at"], "2026-09-20T11:00:00+09:00")
+        saved = next(item for item in self.client.get("/api/bootstrap", headers=headers).json()["schedules"] if item["id"] == created["id"])
+        self.assertEqual(saved["starts_at"], "2026-09-20T11:00:00+09:00")
+
+    def test_toss_billing_activation_enables_pro_without_exposing_billing_key(self):
+        os.environ["TOSS_BILLING_CLIENT_KEY"] = "test_ck_demo"
+        os.environ["TOSS_BILLING_SECRET_KEY"] = "test_sk_demo"
+        room = self.client.post("/api/families", json={"name": "결제 가족", "owner_name": "엄마"}).json()
+        headers = {"Authorization": "Bearer " + room["access_token"]}
+        config = self.client.get("/api/billing/config", headers=headers)
+        self.assertEqual(config.status_code, 200)
+        self.assertTrue(config.json()["configured"])
+
+        request = httpx.Request("POST", "https://api.tosspayments.com/v1/demo")
+        issued = httpx.Response(200, request=request, json={"billingKey": "billing-secret-value"})
+        paid = httpx.Response(200, request=request, json={
+            "status": "DONE", "paymentKey": "payment-key", "approvedAt": "2026-09-17T12:00:00+09:00",
+        })
+        with patch("app.payment.httpx.post", side_effect=[issued, paid]):
+            activated = self.client.post("/api/billing/activate", headers=headers, json={
+                "auth_key": "temporary-auth-key", "customer_key": config.json()["customer_key"],
+            })
+        self.assertEqual(activated.status_code, 200)
+        self.assertEqual(activated.json()["plan"], "PRO")
+        self.assertNotIn("billing_key", activated.json())
+        self.assertEqual(self.client.get("/api/subscription", headers=headers).json()["status"], "ACTIVE")
 
 
 if __name__ == "__main__":

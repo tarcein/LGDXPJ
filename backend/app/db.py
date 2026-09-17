@@ -179,6 +179,12 @@ CREATE TABLE IF NOT EXISTS family_invite_code (
   family_id TEXT PRIMARY KEY REFERENCES family_group(id),
   code_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS family_invite_link (
+  code_hash TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
+  expires_at TEXT NOT NULL, created_by_member_id TEXT REFERENCES family_member(id),
+  created_at TEXT NOT NULL, join_count INTEGER NOT NULL DEFAULT 0,
+  max_uses INTEGER, revoked_at TEXT
+);
 CREATE TABLE IF NOT EXISTS family_session (
   token_hash TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
   member_id TEXT NOT NULL REFERENCES family_member(id), expires_at TEXT NOT NULL
@@ -211,6 +217,24 @@ CREATE TABLE IF NOT EXISTS media_asset (
   file_name TEXT NOT NULL, mime_type TEXT NOT NULL, content_base64 TEXT NOT NULL,
   caption TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS member_benefit_location (
+  family_id TEXT NOT NULL REFERENCES family_group(id),
+  member_id TEXT NOT NULL REFERENCES family_member(id),
+  city TEXT NOT NULL, district TEXT NOT NULL, updated_at TEXT NOT NULL,
+  PRIMARY KEY (family_id, member_id)
+);
+CREATE TABLE IF NOT EXISTS family_subscription (
+  family_id TEXT PRIMARY KEY REFERENCES family_group(id),
+  provider TEXT NOT NULL DEFAULT 'TOSS', customer_key TEXT NOT NULL UNIQUE,
+  billing_key TEXT, status TEXT NOT NULL DEFAULT 'PENDING', amount INTEGER NOT NULL DEFAULT 5900,
+  current_period_start TEXT, current_period_end TEXT, next_billing_at TEXT,
+  last_auth_key_hash TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS payment_transaction (
+  order_id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
+  provider TEXT NOT NULL DEFAULT 'TOSS', amount INTEGER NOT NULL,
+  status TEXT NOT NULL, payment_key TEXT, approved_at TEXT, created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS calendar_oauth_state (
   state TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
   member_id TEXT NOT NULL REFERENCES family_member(id), provider TEXT NOT NULL,
@@ -229,6 +253,8 @@ CREATE INDEX IF NOT EXISTS idx_assignment_family ON care_assignment(family_id, s
 CREATE INDEX IF NOT EXISTS idx_notification_member ON notification(family_id, member_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_emergency_family_status ON emergency_request(family_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_media_family_created ON media_asset(family_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_invite_link_family ON family_invite_link(family_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_payment_family_created ON payment_transaction(family_id, created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emergency_open_assignment ON emergency_request(assignment_id) WHERE status = 'OPEN';
 """
 
@@ -251,6 +277,8 @@ def initialize() -> None:
                 ("notification", "action_id", "TEXT"),
                 ("care_assignment", "requested_by_member_id", "TEXT REFERENCES family_member(id)"),
                 ("calendar_oauth_state", "return_url", "TEXT"),
+                ("media_asset", "storage_path", "TEXT"),
+                ("media_asset", "date_folder", "TEXT"),
             ):
                 db.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {definition}")
         else:
@@ -263,6 +291,7 @@ def initialize() -> None:
                 ("notification", (("action_type", "TEXT"), ("action_id", "TEXT"))),
                 ("care_assignment", (("requested_by_member_id", "TEXT REFERENCES family_member(id)"),)),
                 ("calendar_oauth_state", (("return_url", "TEXT"),)),
+                ("media_asset", (("storage_path", "TEXT"), ("date_folder", "TEXT"))),
             ):
                 columns = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
                 for name, definition in additions:

@@ -148,22 +148,75 @@ def transcribe_audio(audio: bytes, filename: str, mime: str) -> str:
     return text
 
 
-AGENT_INSTRUCTIONS = """당신은 가족 돌봄 운영을 돕는 한국어 에이전트입니다.
-사용자가 제공한 가족 일정, 돌봄 항목, 담당 상태에만 근거해 답하세요.
-가전/ThinQ 상태나 외부 캘린더가 제공되지 않았다면 연결된 것처럼 말하지 마세요.
-아이 돌봄에 관한 긴급 상황은 실제 보호자에게 바로 확인하도록 안내하세요.
-할 일 변경이나 배정은 실제 API가 실행되기 전에는 완료됐다고 말하지 마세요.
-근거가 부족하면 필요한 정보를 짧게 물어보세요.
-사진, 건강, 위치 등 민감한 정보를 불필요하게 반복하지 마세요."""
+AGENT_INSTRUCTIONS = """당신은 Family Care 앱 안에서 가족 돌봄 운영을 돕는 한국어 에이전트입니다.
+현재 가족 데이터와 앱 기능 목록만 사실의 근거로 사용하세요. 가전, 위치, 외부 캘린더, 결제, 정책 데이터를 받지 못했다면 연결됐다고 말하지 마세요.
+
+답변 작성 원칙:
+- 첫 문단에서 사용자의 핵심 질문에 바로 답하고, 이후 내용을 2~5개의 짧은 문단이나 글머리표로 나눕니다.
+- 일정 질문에는 날짜, 시간, 아이 또는 담당자, 상태를 한눈에 읽게 정리합니다.
+- 돌봄 제도 질문에는 제도명, 대상, 지원 내용, 신청 방법, 문의처를 제공된 데이터 범위에서 요약합니다.
+- cards에는 가장 중요한 일정·알림·혜택만 최대 5개 담고, 관련 화면이 있으면 정확한 screen 값을 사용합니다.
+- 앱 사용법을 물으면 capability_catalog를 근거로 실제 화면 경로를 안내합니다.
+
+일정 변경 원칙:
+- 사용자가 '바꿔줘', '변경해줘', '옮겨줘'처럼 실행을 명확히 요청한 경우에만 schedule_changes를 만듭니다.
+- context에 있는 정확한 schedule_id만 사용합니다. 대상을 하나로 특정할 수 없거나 날짜·시간이 불명확하면 변경하지 말고 질문합니다.
+- 개인 일정은 current_member 소유 일정만, 아이 일정은 family의 child_schedules만 변경 대상으로 삼습니다.
+- 외부 캘린더에서 가져온 일정은 앱에서 직접 변경할 수 없으므로 변경 명령을 만들지 않습니다.
+- 실제 반영 여부는 서버가 검증하므로 답변에서 미리 완료됐다고 단정하지 않습니다.
+
+아이의 건강·안전과 관련된 긴급 상황은 실제 보호자 또는 긴급기관에 바로 확인하도록 안내합니다.
+사진, 건강, 위치 같은 민감한 정보를 필요 이상으로 반복하지 마세요."""
 
 
-def answer(message: str, context: str, history: list[dict], max_output_tokens: int) -> tuple[str, int]:
+def answer(message: str, context: str, history: list[dict], max_output_tokens: int) -> tuple[dict, int]:
     result = _post("/responses", json={
         "model": setting("OPENAI_CHAT_MODEL", "gpt-4.1-mini"),
         "store": False,
         "max_output_tokens": max_output_tokens,
         "instructions": AGENT_INSTRUCTIONS + "\n\n현재 가족 데이터:\n" + context,
         "input": [*history, {"role": "user", "content": message}],
+        "text": {"format": {
+            "type": "json_schema", "name": "family_care_assistant", "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "answer": {"type": "string"},
+                    "cards": {"type": "array", "maxItems": 5, "items": {
+                        "type": "object",
+                        "properties": {
+                            "eyebrow": {"type": "string"},
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                            "screen": {"type": "string", "enum": [
+                                "", "home", "careHub", "schedule", "calendar", "familyHub", "members",
+                                "tasks", "assignments", "notifications", "album", "programs", "plan", "settings"
+                            ]},
+                        },
+                        "required": ["eyebrow", "title", "description", "screen"],
+                        "additionalProperties": False,
+                    }},
+                    "schedule_changes": {"type": "array", "maxItems": 3, "items": {
+                        "type": "object",
+                        "properties": {
+                            "schedule_type": {"type": "string", "enum": ["PERSONAL", "CHILD"]},
+                            "schedule_id": {"type": "string"},
+                            "title": {"type": ["string", "null"]},
+                            "starts_at": {"type": ["string", "null"]},
+                            "ends_at": {"type": ["string", "null"]},
+                        },
+                        "required": ["schedule_type", "schedule_id", "title", "starts_at", "ends_at"],
+                        "additionalProperties": False,
+                    }},
+                },
+                "required": ["answer", "cards", "schedule_changes"],
+                "additionalProperties": False,
+            },
+        }},
     })
     usage = result.get("usage") or {}
-    return output_text(result), int(usage.get("total_tokens") or 0)
+    try:
+        structured = json.loads(output_text(result))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(502, detail={"code": "AI_INVALID_RESULT", "message": "AI 답변 형식을 확인할 수 없습니다"}) from exc
+    return structured, int(usage.get("total_tokens") or 0)

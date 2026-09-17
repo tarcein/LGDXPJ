@@ -67,14 +67,40 @@ def _now() -> datetime:
 
 def _new_code(db, target_family: str) -> tuple[str, str]:
     code = "".join(secrets.choice(ALPHABET) for _ in range(10))
+    while db.execute("SELECT 1 FROM family_invite_link WHERE code_hash = ?", (_hash(code),)).fetchone():
+        code = "".join(secrets.choice(ALPHABET) for _ in range(10))
     expires_at = (_now() + timedelta(days=7)).isoformat()
     db.execute(
-        """INSERT INTO family_invite_code(family_id, code_hash, expires_at) VALUES (?, ?, ?)
-           ON CONFLICT(family_id) DO UPDATE SET code_hash = excluded.code_hash,
-             expires_at = excluded.expires_at""",
-        (target_family, _hash(code), expires_at),
+        """INSERT INTO family_invite_link(code_hash, family_id, expires_at,
+              created_by_member_id, created_at, join_count)
+           VALUES (?, ?, ?, ?, ?, 0)""",
+        (_hash(code), target_family, expires_at, member_id(), _now().isoformat()),
     )
     return code, expires_at
+
+
+def _invitation(db, code_hash: str):
+    invitation = db.execute(
+        """SELECT family_id, expires_at, join_count, max_uses, revoked_at
+           FROM family_invite_link WHERE code_hash = ?""",
+        (code_hash,),
+    ).fetchone()
+    if invitation is not None:
+        return invitation, True
+    legacy = db.execute(
+        """SELECT family_id, expires_at, 0 AS join_count, NULL AS max_uses, NULL AS revoked_at
+           FROM family_invite_code WHERE code_hash = ?""",
+        (code_hash,),
+    ).fetchone()
+    return legacy, False
+
+
+def _active_invitation(invitation) -> bool:
+    if invitation is None or invitation["revoked_at"]:
+        return False
+    if datetime.fromisoformat(invitation["expires_at"]) <= _now():
+        return False
+    return invitation["max_uses"] is None or invitation["join_count"] < invitation["max_uses"]
 
 
 def _new_session(db, target_family: str, target_member: str) -> str:
@@ -163,16 +189,18 @@ def dev_login(payload: DevLogin):
 def invitation_preview(invite_code: str):
     code = "".join(ch for ch in invite_code.upper() if ch in string.ascii_uppercase + string.digits)
     with database() as db:
-        invitation = db.execute(
-            """SELECT f.name AS family_name, m.name AS owner_name, i.expires_at
-               FROM family_invite_code i JOIN family_group f ON f.id = i.family_id
-               JOIN family_member m ON m.family_id = f.id AND m.is_owner = 1
-               WHERE i.code_hash = ?""",
-            (_hash(code),),
+        invitation, _ = _invitation(db, _hash(code))
+        if not _active_invitation(invitation):
+            raise HTTPException(404, "초대 링크가 없거나 만료됐습니다")
+        summary = db.execute(
+            """SELECT f.name AS family_name, m.name AS owner_name
+               FROM family_group f JOIN family_member m ON m.family_id = f.id AND m.is_owner = 1
+               WHERE f.id = ?""",
+            (invitation["family_id"],),
         ).fetchone()
-    if invitation is None or datetime.fromisoformat(invitation["expires_at"]) <= _now():
-        raise HTTPException(404, "초대 링크가 없거나 만료됐습니다")
-    return dict(invitation)
+    if summary is None:
+        raise HTTPException(404, "초대할 가족방을 찾을 수 없습니다")
+    return {**dict(summary), "expires_at": invitation["expires_at"]}
 
 
 @router.post("", status_code=201)
@@ -196,8 +224,8 @@ def create_family(payload: FamilyCreate):
 def join_family(payload: FamilyJoin):
     code = "".join(ch for ch in payload.invite_code.upper() if ch in string.ascii_uppercase + string.digits)
     with database() as db:
-        invitation = db.execute("SELECT family_id, expires_at FROM family_invite_code WHERE code_hash = ?", (_hash(code),)).fetchone()
-        if invitation is None or datetime.fromisoformat(invitation["expires_at"]) <= _now():
+        invitation, reusable = _invitation(db, _hash(code))
+        if not _active_invitation(invitation):
             raise HTTPException(404, "초대코드가 없거나 만료됐습니다")
         target_family = invitation["family_id"]
         family = db.execute("SELECT plan FROM family_group WHERE id = ?", (target_family,)).fetchone()
@@ -209,6 +237,8 @@ def join_family(payload: FamilyJoin):
                    (target_member, target_family, payload.name, payload.role))
         _seed_member_settings(db, target_member, False)
         token = _new_session(db, target_family, target_member)
+        if reusable:
+            db.execute("UPDATE family_invite_link SET join_count = join_count + 1 WHERE code_hash = ?", (_hash(code),))
     return {"family_id": target_family, "member_id": target_member, "access_token": token, "plan": family["plan"]}
 
 
@@ -226,4 +256,4 @@ def rotate_code():
         raise HTTPException(401, "로그인한 가족 구성원만 초대 링크를 만들 수 있습니다")
     with database() as db:
         code, expires_at = _new_code(db, family_id())
-    return {"invite_code": code, "invite_expires_at": expires_at}
+    return {"invite_code": code, "invite_expires_at": expires_at, "reusable": True}

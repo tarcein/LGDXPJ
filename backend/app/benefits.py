@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from .config import setting
 from .db import database
-from .family import authenticated, family_id, require_owner
+from .family import authenticated, family_id, member_id
 
 
 router = APIRouter(prefix="/api/benefits", tags=["care benefits"])
@@ -80,10 +80,17 @@ def _validate_area(value: str, label: str) -> str:
 
 def _stored_location() -> dict[str, str]:
     with database() as db:
-        row = db.execute(
-            "SELECT city, district, updated_at FROM family_location WHERE family_id = ?",
-            (family_id(),),
-        ).fetchone()
+        if authenticated() and member_id():
+            row = db.execute(
+                """SELECT city, district, updated_at FROM member_benefit_location
+                   WHERE family_id = ? AND member_id = ?""",
+                (family_id(), member_id()),
+            ).fetchone()
+        else:
+            row = db.execute(
+                "SELECT city, district, updated_at FROM family_location WHERE family_id = ?",
+                (family_id(),),
+            ).fetchone()
     return dict(row) if row else {"city": "", "district": "", "updated_at": ""}
 
 
@@ -225,26 +232,32 @@ def update_benefit_location(payload: BenefitLocationUpdate):
     district = _validate_area(payload.district, "시·군·구")
     updated_at = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
     with database() as db:
-        if authenticated():
-            require_owner(db)
-        db.execute(
-            """INSERT INTO family_location(family_id, city, district, updated_at) VALUES (?, ?, ?, ?)
-               ON CONFLICT(family_id) DO UPDATE SET city=excluded.city,
-               district=excluded.district, updated_at=excluded.updated_at""",
-            (family_id(), city, district, updated_at),
-        )
+        if authenticated() and member_id():
+            active = db.execute(
+                "SELECT 1 FROM family_member WHERE id = ? AND family_id = ? AND status = 'ACTIVE'",
+                (member_id(), family_id()),
+            ).fetchone()
+            if active is None:
+                raise HTTPException(403, "활성 가족 구성원만 검색 지역을 저장할 수 있습니다")
+            db.execute(
+                """INSERT INTO member_benefit_location(family_id, member_id, city, district, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(family_id, member_id) DO UPDATE SET city=excluded.city,
+                   district=excluded.district, updated_at=excluded.updated_at""",
+                (family_id(), member_id(), city, district, updated_at),
+            )
+        else:
+            db.execute(
+                """INSERT INTO family_location(family_id, city, district, updated_at) VALUES (?, ?, ?, ?)
+                   ON CONFLICT(family_id) DO UPDATE SET city=excluded.city,
+                   district=excluded.district, updated_at=excluded.updated_at""",
+                (family_id(), city, district, updated_at),
+            )
     return {"city": city, "district": district, "updated_at": updated_at}
 
 
-@router.get("")
-def benefits(
-    keyword: str = Query(default="돌봄", min_length=1, max_length=40),
-    city: str | None = Query(default=None, max_length=40),
-    district: str | None = Query(default=None, max_length=40),
-    per_page: int = Query(default=30, ge=1, le=50),
-):
-    _require_pro()
-    city, district = _area_from_query(city, district)
+def search_programs(*, keyword: str, city: str, district: str, per_page: int = 30) -> dict[str, Any]:
+    city, district = _validate_area(city, "시·도"), _validate_area(district, "시·군·구")
     district_region = f"{city} {district}"
     keyword_text = keyword.strip().casefold()
 
@@ -285,6 +298,18 @@ def benefits(
         "audience": "CHILD_CARE_ONLY",
         "source": "보조금24",
     }
+
+
+@router.get("")
+def benefits(
+    keyword: str = Query(default="돌봄", min_length=1, max_length=40),
+    city: str | None = Query(default=None, max_length=40),
+    district: str | None = Query(default=None, max_length=40),
+    per_page: int = Query(default=30, ge=1, le=50),
+):
+    _require_pro()
+    city, district = _area_from_query(city, district)
+    return search_programs(keyword=keyword, city=city, district=district, per_page=per_page)
 
 
 @router.get("/institutions")

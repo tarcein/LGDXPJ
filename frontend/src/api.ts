@@ -35,10 +35,16 @@ export interface Bootstrap {
 export interface Suggestion { member_id: string; name: string; available: boolean; reason: string; priority: number }
 export interface FamilyMe { family: Family; member: Member; authenticated: boolean }
 export interface FamilySession { family_id: string; member_id: string; access_token: string; plan: string; invite_code?: string; invite_expires_at?: string }
-export interface ChatAnswer { message: string; answer: string; usage: { total_tokens: number; used_today: number }; plan: string }
+export interface ChatCard { eyebrow: string; title: string; description: string; screen: Screen | '' }
+export interface ChatAnswer {
+  message: string; answer: string; cards: ChatCard[]; links: { label: string; screen: Screen }[];
+  schedule_changes: { schedule_type: 'PERSONAL' | 'CHILD'; schedule_id: string; title: string; starts_at: string; ends_at: string }[];
+  usage: { total_tokens: number; used_today: number }; plan: string
+}
 export interface EmergencyRequest { id: string; assignment_id: string; requested_by_member_id: string; claimed_by_member_id: string | null; reason: string; status: string; item_title: string }
 export interface CalendarConnection { provider: 'google' | 'microsoft'; configured: boolean; api_key_configured?: boolean; connected: boolean; connected_at: string | null; synced_at: string | null }
-export interface AlbumPhoto { id: string; child_id: string | null; assignment_id: string | null; kind: string; file_name: string; mime_type: string; data_url: string; caption: string; created_at: string }
+export interface AlbumPhoto { id: string; child_id: string | null; assignment_id: string | null; kind: string; file_name: string; mime_type: string; data_url: string; caption: string; created_at: string; date_folder?: string; storage_path?: string }
+export interface BillingConfig { provider: 'TOSS'; configured: boolean; client_key: string; customer_key: string; amount: number; currency: 'KRW'; status: string; next_billing_at: string | null }
 export interface BenefitLocation { city: string; district: string; updated_at: string }
 export interface Benefit {
   id: string; name: string; summary: string; category: string; organization: string; organization_type: string;

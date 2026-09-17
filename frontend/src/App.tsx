@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, send, upload, setFamilyToken, hasFamilyToken, ApiError, formatDate, formatTime, type Assignment, type Bootstrap, type CareItem, type Screen, type Suggestion, type FamilyMe, type FamilySession, type ChatAnswer, type EmergencyRequest, type CalendarConnection, type Notice, type AlbumPhoto, type Benefit, type BenefitLocation, type CareInstitution, type EligibilityCriteria } from './api'
+import { api, send, upload, setFamilyToken, hasFamilyToken, ApiError, formatDate, formatTime, type Assignment, type Bootstrap, type CareItem, type Screen, type Suggestion, type FamilyMe, type FamilySession, type ChatAnswer, type EmergencyRequest, type CalendarConnection, type Notice, type AlbumPhoto, type Benefit, type BenefitLocation, type CareInstitution, type EligibilityCriteria, type BillingConfig, type ChatCard } from './api'
 import floatingIcon from '../../asset/floating.png'
 import voiceIcon from '../../asset/voice.png'
 import googleIcon from '../../asset/google.png'
@@ -21,6 +21,10 @@ const groups: { title: string; pages: [Screen, string][] }[] = [
 const typeLabel: Record<string, string> = { SCHEDULE: '일정', SUPPLY: '준비물', TODO: '할 일', CHANGE: '변경사항' }
 const childScheduleLabel: Record<string, string> = { ACADEMY: '학원', SCHOOL: '학교', AFTER_SCHOOL: '방과후', ACTIVITY: '활동', OTHER: '기타' }
 const roleLabel: Record<string, string> = { PARENT: '부모', GRANDPARENT: '조부모', CAREGIVER: '돌봄 참여자' }
+const chatScreenLabel: Partial<Record<Screen, string>> = { schedule: '캘린더 보기', calendar: '캘린더 연동 보기', tasks: '내 할 일 보기', assignments: '담당 배정 보기', notifications: '알림함 보기', members: '가족 구성원 보기', album: '패밀리 앨범 보기', programs: '돌봄 제도 보기', plan: '플랜 보기', home: '홈으로 가기', careHub: '케어 보기', familyHub: '가족 설정 보기', settings: '설정 보기' }
+type ChatMessage = { from: 'me' | 'agent'; text: string; cards?: ChatCard[] }
+type TossPayment = { requestBillingAuth: (request: { method: 'CARD'; successUrl: string; failUrl: string; customerName?: string; windowTarget?: 'self' | 'iframe' }) => Promise<void> }
+type TossFactory = (clientKey: string) => { payment: (options: { customerKey: string }) => TossPayment }
 type DevLoginOption = { family_id: string; family_name: string; member_id: string; member_name: string; role: string; is_owner: boolean }
 type KakaoSdk = {
   init: (key: string) => void
@@ -61,7 +65,7 @@ function AlbumPage({ plan, busy, groups, onUpload, onSelect, onPlan }: {
   plan: string; busy: boolean; groups: [string, AlbumPhoto[]][]
   onUpload: (files: File[]) => void; onSelect: (photo: AlbumPhoto) => void; onPlan: () => void
 }) {
-  return <><div className="eyebrow">패밀리 앨범 <Pro /></div><h2 className="hero-title">가족의 순간을<br />함께 모아요</h2><p className="hero-copy">직접 올린 사진과 돌봄 완료 사진을 가족방 DB에 저장해 날짜별로 함께 봐요.</p>{plan === 'PRO' ? <><label className="album-upload">{busy ? '저장 중…' : '＋ 사진 선택'}<input type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={busy} onChange={event => { onUpload(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = '' }} /></label>{groups.map(([date, photos]) => <section className="album-date-group" key={date}><Section>{new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(date + 'T12:00:00'))}</Section><div className="album-grid">{photos.map(photo => <button key={photo.id} onClick={() => onSelect(photo)}><img src={photo.data_url} alt={photo.caption || photo.file_name} /><small>{photo.kind === 'CARE_COMPLETION' ? '돌봄 완료 · ' : ''}{photo.caption || photo.file_name}</small></button>)}</div></section>)}{!groups.length && <Empty title="아직 사진이 없어요" text="사진을 올리거나 돌봄 완료 때 사진을 남겨보세요" />}</> : <button className="primary-button wide-button" onClick={onPlan}>Pro에서 패밀리 앨범 사용</button>}</>
+  return <><div className="eyebrow">패밀리 앨범 <Pro /></div><h2 className="hero-title">가족의 순간을<br />날짜별로 모아요</h2><p className="hero-copy">직접 올린 사진과 돌봄 완료 사진을 날짜 폴더로 나눠 저장하고 함께 봐요.</p>{plan === 'PRO' ? <><label className="album-upload">{busy ? '저장 중…' : '＋ 사진 선택'}<input type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={busy} onChange={event => { onUpload(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = '' }} /></label>{groups.map(([date, photos]) => <section className="album-date-group" key={date}><Section>{new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(date + 'T12:00:00'))}</Section><small className="album-folder-path">폴더 · {photos[0]?.date_folder ?? date.replaceAll('-', '/')}</small><div className="album-grid">{photos.map(photo => <button key={photo.id} onClick={() => onSelect(photo)}><img src={photo.data_url} alt={photo.caption || photo.file_name} /><small>{photo.kind === 'CARE_COMPLETION' ? '돌봄 완료 · ' : ''}{photo.caption || photo.file_name}</small></button>)}</div></section>)}{!groups.length && <Empty title="아직 사진이 없어요" text="사진을 올리거나 돌봄 완료 때 사진을 남겨보세요" />}</> : <button className="primary-button wide-button" onClick={onPlan}>Pro에서 패밀리 앨범 사용</button>}</>
 }
 function AlbumLightbox({ photo, onClose }: { photo: AlbumPhoto; onClose: () => void }) {
   return <div className="photo-lightbox" role="dialog" aria-modal="true" aria-label="사진 크게 보기" onClick={onClose}><div className="photo-lightbox-panel" onClick={event => event.stopPropagation()}><button className="photo-lightbox-close" aria-label="사진 닫기" onClick={onClose}>×</button><img src={photo.data_url} alt={photo.caption || photo.file_name} /><div className="photo-lightbox-info"><strong>{photo.caption || photo.file_name}</strong><small>{formatDate(photo.created_at)} · {photo.kind === 'CARE_COMPLETION' ? '돌봄 완료 사진' : '패밀리 앨범'}</small><a className="primary-button" href={photo.data_url} download={photo.file_name || `family-photo-${photo.id}`}>사진 다운로드</a></div></div></div>
@@ -85,13 +89,13 @@ function ProgramsPage({ plan, keyword, city, district, savedLocation, busy, loca
     <p className="hero-copy">시·도와 시·군·구까지만 저장하고, 보조금24 결과 중 아동·자녀·양육·보육과 관련된 돌봄 제도만 찾아요.</p>
     {plan !== 'PRO' ? <button className="primary-button wide-button" onClick={onPlan}>Pro에서 돌봄 제도 검색</button> : <>
       <Card className="benefit-location">
-        <strong>우리 집 지역</strong>
+        <strong>내 돌봄 정보 검색 지역</strong>
         <div className="benefit-location-fields">
-          <label><span>시·도</span><input className="form-control" aria-label="혜택 지역 시·도" value={city} onChange={event => onCity(event.target.value)} placeholder="서울특별시" /></label>
-          <label><span>시·군·구</span><input className="form-control" aria-label="혜택 지역 시·군·구" value={district} onChange={event => onDistrict(event.target.value)} placeholder="은평구" /></label>
+          <label><span>시·도</span><input className="form-control" aria-label="혜택 지역 시·도" value={city} onChange={event => onCity(event.target.value)} /></label>
+          <label><span>시·군·구</span><input className="form-control" aria-label="혜택 지역 시·군·구" value={district} onChange={event => onDistrict(event.target.value)} /></label>
         </div>
         <button className="outline-button wide-button" disabled={locationBusy || !city.trim() || !district.trim()} onClick={onSaveLocation}>{locationBusy ? '지역 확인 중…' : hasLocation ? '지역 변경하고 다시 찾기' : '이 지역으로 찾기'}</button>
-        <small>상세 주소는 입력하거나 저장하지 않아요.</small>
+        <small>가족 구성원마다 각자의 검색 지역을 저장할 수 있고, 상세 주소는 저장하지 않아요.</small>
       </Card>
       {hasLocation && <>
         <Section>지역 아이돌봄 연결기관</Section>
@@ -126,12 +130,14 @@ function ProgramsPage({ plan, keyword, city, district, savedLocation, busy, loca
 }
 
 function App() {
-  const invitationFromUrl = new URLSearchParams(location.search).get('invite')?.trim().toUpperCase() ?? ''
-  const roleFromUrl = new URLSearchParams(location.search).get('role')?.trim().toUpperCase() ?? ''
+  const initialQuery = new URLSearchParams(location.search)
+  const invitationFromUrl = initialQuery.get('invite')?.trim().toUpperCase() ?? ''
+  const roleFromUrl = initialQuery.get('role')?.trim().toUpperCase() ?? ''
+  const billingResultFromUrl = initialQuery.get('billing') ?? ''
   const invitedRole = ['PARENT', 'GRANDPARENT', 'CAREGIVER'].includes(roleFromUrl) ? roleFromUrl : 'CAREGIVER'
   const [boot, setBoot] = useState<Bootstrap | null>(null)
   const [me, setMe] = useState<FamilyMe | null>(null)
-  const [screen, setScreen] = useState<Screen>(() => invitationFromUrl ? 'onboarding' : hasFamilyToken() ? (new URLSearchParams(location.search).has('calendar') ? 'calendar' : 'home') : 'onboarding')
+  const [screen, setScreen] = useState<Screen>(() => invitationFromUrl ? 'onboarding' : hasFamilyToken() ? (billingResultFromUrl ? 'plan' : initialQuery.has('calendar') ? 'calendar' : 'home') : 'onboarding')
   const [error, setError] = useState('')
   const [toast, setToast] = useState('')
   const [filter, setFilter] = useState('all')
@@ -188,7 +194,7 @@ function App() {
   const [childNameInput, setChildNameInput] = useState('')
   const [childAgeInput, setChildAgeInput] = useState('')
   const [chatDraft, setChatDraft] = useState('')
-  const [chatMessages, setChatMessages] = useState<{ from: 'me' | 'agent'; text: string }[]>([])
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatUsedToday, setChatUsedToday] = useState(0)
   const [chatBusy, setChatBusy] = useState(false)
   const [recording, setRecording] = useState(false)
@@ -199,9 +205,9 @@ function App() {
   const [emergencyItem, setEmergencyItem] = useState('')
   const [emergencyReason, setEmergencyReason] = useState('긴급 돌봄 도움이 필요합니다')
   const [emergencyRequests, setEmergencyRequests] = useState<EmergencyRequest[]>([])
-  const [subscription, setSubscription] = useState<{ plan: string; status: string; developer_preview: boolean; dev_switch_available: boolean } | null>(null)
+  const [subscription, setSubscription] = useState<{ plan: string; status: string; developer_preview: boolean; dev_switch_available: boolean; current_period_end?: string | null; next_billing_at?: string | null } | null>(null)
   const [planBusy, setPlanBusy] = useState(false)
-  const [plans, setPlans] = useState<{ id: string; status: string }[]>([])
+  const [billingBusy, setBillingBusy] = useState(false)
   const [features, setFeatures] = useState<{ id: string; available: boolean; backend_state: string }[]>([])
   const [albumPhotos, setAlbumPhotos] = useState<AlbumPhoto[]>([])
   const [albumBusy, setAlbumBusy] = useState(false)
@@ -229,6 +235,7 @@ function App() {
   const initialScreenRef = useRef(screen)
   const seenNoticeIdsRef = useRef<Set<string>>(new Set())
   const benefitsLoadedRef = useRef(false)
+  const billingHandledRef = useRef(false)
 
   const reportError = (failure: unknown) => {
     if (failure instanceof ApiError && failure.status === 401) {
@@ -265,6 +272,27 @@ function App() {
     if (!invitationFromUrl) void Promise.resolve().then(load).catch(reportError)
   }, [invitationFromUrl])
   useEffect(() => {
+    if (!billingResultFromUrl || billingHandledRef.current || !hasFamilyToken()) return
+    billingHandledRef.current = true
+    const query = new URLSearchParams(location.search)
+    const cleanPaymentQuery = () => {
+      for (const key of ['billing', 'authKey', 'customerKey', 'code', 'message']) query.delete(key)
+      history.replaceState({ ...history.state, lgdxScreen: 'plan' }, '', location.pathname + (query.size ? '?' + query : ''))
+    }
+    if (billingResultFromUrl === 'success') {
+      const authKey = query.get('authKey'); const customerKey = query.get('customerKey')
+      if (!authKey || !customerKey) { void Promise.resolve().then(() => setError('결제 인증 결과가 올바르지 않아요. 다시 시도해주세요.')); cleanPaymentQuery(); return }
+      void Promise.resolve().then(() => setBillingBusy(true))
+      send<{ plan: string; status: string; next_billing_at: string }>('/billing/activate', 'POST', { auth_key: authKey, customer_key: customerKey })
+        .then(async result => { cleanPaymentQuery(); await load(); setToast(`Family Care Pro 구독이 시작됐어요. 다음 결제일: ${formatDate(result.next_billing_at)}`) })
+        .catch(error => { cleanPaymentQuery(); reportError(error) })
+        .finally(() => setBillingBusy(false))
+    } else {
+      void Promise.resolve().then(() => setError(query.get('message') || '결제가 취소되었어요.'))
+      cleanPaymentQuery()
+    }
+  }, [billingResultFromUrl])
+  useEffect(() => {
     history.replaceState({ ...history.state, lgdxScreen: initialScreenRef.current }, '')
     const handleBack = (event: PopStateEvent) => {
       setScheduleSheet('NONE'); setShowSheet(false); setSelectedAlbumPhoto(null)
@@ -298,10 +326,9 @@ function App() {
       setChatUsedToday(available.usage.chat_tokens_today)
     }).catch(reportError)
     if ((screen === 'plan' || screen === 'more') && activeFamilyId) Promise.all([
-      api<{ plan: string; status: string; developer_preview: boolean; dev_switch_available: boolean }>('/subscription'),
+      api<{ plan: string; status: string; developer_preview: boolean; dev_switch_available: boolean; current_period_end?: string | null; next_billing_at?: string | null }>('/subscription'),
       api<{ features: { id: string; available: boolean; backend_state: string }[] }>('/features'),
-      api<{ plans: { id: string; status: string }[] }>('/plans'),
-    ]).then(([current, available, products]) => { setSubscription(current); setFeatures(available.features); setPlans(products.plans) }).catch(reportError)
+    ]).then(([current, available]) => { setSubscription(current); setFeatures(available.features) }).catch(reportError)
     if (screen === 'emergency' && activeFamilyId) api<{ requests: EmergencyRequest[] }>('/emergency-requests')
       .then(result => setEmergencyRequests(result.requests)).catch(reportError)
     if (screen === 'calendar' && activeFamilyId) api<{ connections: CalendarConnection[] }>('/calendar-connections')
@@ -554,8 +581,9 @@ function App() {
     setChatBusy(true); setError('')
     try {
       const result = await send<ChatAnswer>('/assistant/chat', 'POST', { message: text })
-      setChatMessages(previous => [...previous, { from: 'me', text: result.message }, { from: 'agent', text: result.answer }])
+      setChatMessages(previous => [...previous, { from: 'me', text: result.message }, { from: 'agent', text: result.answer, cards: result.cards }])
       setChatUsedToday(result.usage.used_today); setChatDraft('')
+      if (result.schedule_changes.length) await load()
     } catch (e) { reportError(e) }
     finally { setChatBusy(false) }
   }
@@ -566,8 +594,9 @@ function App() {
     try {
       const form = new FormData(); form.append('file', file)
       const result = await upload<ChatAnswer & { transcript: string }>('/assistant/voice', form)
-      setChatMessages(previous => [...previous, { from: 'me', text: result.transcript }, { from: 'agent', text: result.answer }])
+      setChatMessages(previous => [...previous, { from: 'me', text: result.transcript }, { from: 'agent', text: result.answer, cards: result.cards }])
       setChatUsedToday(result.usage.used_today)
+      if (result.schedule_changes.length) await load()
     } catch (e) { reportError(e) }
     finally { setChatBusy(false) }
   }
@@ -739,6 +768,23 @@ function App() {
       }, `개발용 플랜을 ${next}로 바꿨어요`)
     } finally { setPlanBusy(false) }
   }
+  const startBilling = async () => {
+    if (billingBusy) return
+    setBillingBusy(true); setError('')
+    try {
+      const config = await api<BillingConfig>('/billing/config')
+      if (!config.configured || !config.client_key) throw new Error('토스페이먼츠 자동결제 키가 아직 설정되지 않았어요. backend/.env 설정을 확인해주세요.')
+      const tossFactory = (window as unknown as { TossPayments?: TossFactory }).TossPayments
+      if (!tossFactory) throw new Error('토스페이먼츠 결제창을 불러오지 못했어요. 네트워크 연결을 확인해주세요.')
+      const successUrl = new URL(location.origin + location.pathname); successUrl.searchParams.set('billing', 'success')
+      const failUrl = new URL(location.origin + location.pathname); failUrl.searchParams.set('billing', 'fail')
+      const payment = tossFactory(config.client_key).payment({ customerKey: config.customer_key })
+      await payment.requestBillingAuth({
+        method: 'CARD', successUrl: successUrl.toString(), failUrl: failUrl.toString(),
+        customerName: me?.member.name, windowTarget: 'self',
+      })
+    } catch (e) { reportError(e); setBillingBusy(false) }
+  }
   const complete = () => run(async () => {
     if (!activeAssignment) return
     const form = new FormData(); form.append('note', note)
@@ -864,7 +910,7 @@ function App() {
     <Section>가족 구성원</Section>{boot.members.filter(m => m.status !== 'REMOVED').map(m => <Card key={m.id} className="member-card"><div className="person-avatar">{m.name.slice(0, 1)}</div><div><strong>{m.name}{m.is_owner ? ' · 주돌봄자' : ''}</strong><p>{m.role === 'GRANDPARENT' ? '조부모' : m.role === 'CAREGIVER' ? '돌봄 참여자' : '부모'} · {m.status === 'ACTIVE' ? '참여 중' : '초대 대기'}</p></div>{m.status === 'PENDING' && !me?.authenticated && <button className="text-link" onClick={() => run(() => send('/members/' + m.id + '/accept', 'POST'), '가족에 합류했어요')}>합류</button>}{me?.authenticated && !!me.member.is_owner && !m.is_owner && <div className="member-actions">{m.status === 'ACTIVE' && <button className="member-owner-transfer" onClick={() => transferOwnership(m.id, m.name)}>주돌봄자 지정</button>}<button className="member-remove" onClick={() => { if (confirm(m.name + '님을 가족방에서 퇴장시킬까요?')) void run(() => send('/members/' + m.id + '/remove', 'POST'), m.name + '님을 가족방에서 퇴장시켰어요') }}>퇴장</button></div>}</Card>)}
     <Section>아이</Section>{boot.children.map(c => <Card key={c.id} className="member-card"><div className="child-avatar">{c.name.slice(0, 1)}</div><div><strong>{c.name}</strong><p>{c.age_label}</p></div></Card>)}
     {(!me?.authenticated || me.member.is_owner) && <Card className="form-card"><strong>아이 등록</strong><label className="form-label">이름</label><input className="form-control" aria-label="아이 이름" value={childNameInput} onChange={e => setChildNameInput(e.target.value)} placeholder="아이 이름" /><label className="form-label">나이·학교</label><input className="form-control" aria-label="아이 나이·학교" value={childAgeInput} onChange={e => setChildAgeInput(e.target.value)} placeholder="예: 7세 · 초등학교" /><button className="primary-button wide-button" onClick={() => run(async () => { if (!childNameInput.trim() || !childAgeInput.trim()) throw new Error('아이 이름과 나이·학교를 입력해주세요'); await send('/children', 'POST', { name: childNameInput.trim(), age_label: childAgeInput.trim() }); setChildNameInput(''); setChildAgeInput('') }, '아이를 등록했어요')}>아이 등록</button></Card>}
-    {me?.authenticated && me.member.is_owner && <><Section>가족 초대</Section><Card className="form-card invite-share-card"><p>초대 링크를 카카오톡으로 보내면 가족이 안내를 확인하고 참가할 수 있어요. Free는 구성원 3명까지예요.</p>{inviteCode && <><div className="invite-code"><strong>{inviteCode}</strong><small>만료: {formatDate(inviteExpiresAt)}</small></div><label className="form-label">초대할 가족의 역할</label><select className="form-control" value={inviteRole} onChange={e => setInviteRole(e.target.value)}><option value="PARENT">부모</option><option value="GRANDPARENT">조부모</option><option value="CAREGIVER">돌봄 참여자</option></select><input className="invite-link" aria-label="가족방 초대 링크" value={inviteLink} readOnly /><button className="kakao-share wide-button" onClick={shareInvite}>카카오톡 등으로 초대 링크 공유</button></>}<button className="outline-button wide-button" onClick={() => run(async () => { const result = await send<{ invite_code: string; invite_expires_at: string }>('/families/invite-code/rotate', 'POST'); setInviteCode(result.invite_code); setInviteExpiresAt(result.invite_expires_at) }, '새 초대 링크를 만들었어요')}>{inviteCode ? '초대 링크 새로 만들기' : '초대 링크 만들기'}</button></Card></>}
+    {me?.authenticated && me.member.is_owner && <><Section>가족 초대</Section><Card className="form-card invite-share-card"><p>같은 초대 링크로 만료 전까지 여러 가족이 참가할 수 있어요. Free는 구성원 3명까지예요.</p>{inviteCode && <><div className="invite-code"><strong>{inviteCode}</strong><small>만료: {formatDate(inviteExpiresAt)}</small></div><label className="form-label">초대할 가족의 역할</label><select className="form-control" value={inviteRole} onChange={e => setInviteRole(e.target.value)}><option value="PARENT">부모</option><option value="GRANDPARENT">조부모</option><option value="CAREGIVER">돌봄 참여자</option></select><input className="invite-link" aria-label="가족방 초대 링크" value={inviteLink} readOnly /><button className="kakao-share wide-button" onClick={shareInvite}>카카오톡 등으로 초대 링크 공유</button></>}<button className="outline-button wide-button" onClick={() => run(async () => { const result = await send<{ invite_code: string; invite_expires_at: string }>('/families/invite-code/rotate', 'POST'); setInviteCode(result.invite_code); setInviteExpiresAt(result.invite_expires_at) }, '새 초대 링크를 만들었어요')}>{inviteCode ? '초대 링크 새로 만들기' : '초대 링크 만들기'}</button></Card></>}
     {!me?.authenticated && <><Section>데모 구성원 추가</Section><Card className="form-card"><label className="form-label">이름</label><input className="form-control" value={memberNameInput} onChange={e => setMemberNameInput(e.target.value)} placeholder="가족 이름" /><label className="form-label">역할</label><select className="form-control" value={memberRole} onChange={e => setMemberRole(e.target.value)}><option value="PARENT">부모</option><option value="GRANDPARENT">조부모</option><option value="CAREGIVER">돌봄 참여자</option></select><button className="primary-button wide-button" onClick={() => run(async () => { if (!memberNameInput.trim()) throw new Error('이름을 입력해주세요'); await send('/members', 'POST', { name: memberNameInput.trim(), role: memberRole }); setMemberNameInput('') }, '초대 대기 구성원을 추가했어요')}>구성원 추가</button></Card></>}
     <button className="text-link centered" onClick={() => go('permissions')}>정보 공개 권한 관리</button>{me?.authenticated && !me.member.is_owner ? <button className="danger-link centered" onClick={() => void leaveFamily()}>가족방 나가기</button> : !me?.authenticated ? <button className="text-link centered" onClick={() => void leaveFamily()}>다른 가족방 만들기·참가</button> : <p className="helper-text centered">다른 구성원에게 주돌봄자 권한을 넘긴 뒤 가족방을 나갈 수 있어요.</p>}
   </>
@@ -875,8 +921,8 @@ function App() {
   if (boot && screen === 'calendar') page = <><div className="eyebrow">업무 캘린더 연결</div><h2 className="hero-title">업무 일정 다음엔<br />개인 루틴도 알려주세요</h2><p className="hero-copy">Google 또는 Outlook의 일정은 내 계정에 연결됩니다. 연결 뒤 운동·정기 모임 같은 개인 루틴도 일정 탭에서 추가할 수 있어요.</p>{calendarConnections.map(connection => { const label = connection.provider === 'google' ? 'Google Calendar' : 'Outlook Calendar'; return <Card key={connection.provider} className="calendar-provider"><img className="provider-icon" src={connection.provider === 'google' ? googleIcon : outlookIcon} alt="" /><div><strong>{label}</strong><p>{connection.connected ? `연결됨${connection.synced_at ? ' · 최근 동기화 ' + formatDate(connection.synced_at) : ''}` : connection.configured ? '계정을 연결할 수 있어요' : 'OAuth 앱 설정이 필요해요'}</p></div>{connection.connected ? <button className="text-link" onClick={() => syncCalendar(connection.provider)}>동기화</button> : <button className="text-link" disabled={!connection.configured} onClick={() => connectCalendar(connection.provider)}>{connection.configured ? '연결' : '설정 전'}</button>}</Card> })}<Card className="info-note">{calendarsReady ? 'Google·Outlook OAuth 설정을 모두 확인했어요. 연결 버튼을 누르고 각 계정에서 일정 읽기 권한을 허용하면 동기화할 수 있어요.' : '사용할 캘린더의 OAuth Client ID와 Secret을 backend/.env에 설정하면 연결 버튼이 활성화돼요.'}</Card><button className="primary-button wide-button" onClick={() => { setScheduleForm('PERSONAL'); setScheduleKind('ROUTINE'); go('schedule') }}>개인 루틴 직접 등록</button></>
   if (boot && screen === 'permissions') { const targetMember = me?.member.id ?? viewer; page = <><div className="eyebrow">내 정보 공개 범위</div><h2 className="hero-title">보여주고 싶은 정보만<br />직접 선택해요</h2><p className="hero-copy">각 구성원이 자신의 정보 공개 범위를 직접 관리해요. 다른 가족의 설정은 변경할 수 없어요.</p><Section>{member(targetMember)}님의 공개 범위</Section>{[['SCHEDULE_DETAIL', '개인 일정 내용', '켜면 제목까지, 끄면 시간과 바쁨 여부만 표시'], ['CHILD_DETAIL', '아이 정보', '이름과 돌봄 일정'], ['LOCATION', '위치', '이동과 인수인계 위치'], ['HEALTH', '건강 정보', '복약과 건강 관련 내용'], ['NOTE', '특이사항', '돌봄 완료 메모'], ['PHOTO', '사진', '완료 사진과 앨범']].map(([scope, name, detail]) => { const allowed = !!boot.permissions.find(p => p.member_id === targetMember && p.scope === scope)?.is_allowed; return <Card key={scope} className="permission-row"><div><strong>{name}</strong><p>{detail}</p></div><button className={'switch ' + (allowed ? 'on' : '')} role="switch" aria-checked={allowed} aria-label={name + ' 공개'} onClick={() => run(() => send('/members/' + targetMember + '/permissions', 'PATCH', { scope, is_allowed: !allowed }), '내 공개 범위를 변경했어요')}><span /></button></Card> })}<Card className="info-note">개인 일정 내용은 기본 비공개예요. 꺼두면 다른 가족에게 일정 제목 대신 ‘바쁨’으로 보여요.</Card></> }
   if (boot && screen === 'settings') page = <><div className="eyebrow">알림 설정</div><h2 className="hero-title">조용하지만<br />놓치지 않게</h2><p className="hero-copy">돌봄 요청이 오면 앱 알림함과 허용된 브라우저 알림으로 알려드려요.</p><Section>앱 알림</Section><Card className="permission-row"><div><strong>돌봄 알림 받기</strong><p>등록, 배정, 인수인계, 완료</p></div><button className={'switch ' + (appNotices ? 'on' : '')} role="switch" aria-checked={appNotices} aria-label="돌봄 알림 받기" onClick={() => run(() => send('/members/' + viewer + '/notification-preferences', 'PATCH', { app_enabled: !appNotices }), '알림 설정을 변경했어요')}><span /></button></Card><Card className="permission-row"><div><strong>이 기기 시스템 알림</strong><p>앱이 열려 있을 때 새 요청을 브라우저 알림으로 표시</p></div><button className="text-link" onClick={() => void enableBrowserNotifications()}>{'Notification' in window && Notification.permission === 'granted' ? '허용됨' : '허용하기'}</button></Card><Card className="permission-row"><div><strong>하루 1회 모아보기</strong><p>21:00에 확인할 정보만 요약</p></div><button className={'switch ' + (dailyDigest ? 'on' : '')} role="switch" aria-checked={dailyDigest} aria-label="하루 1회 모아보기" onClick={() => run(() => send('/members/' + viewer + '/notification-preferences', 'PATCH', { daily_digest_enabled: !dailyDigest }), '모아보기 설정을 변경했어요')}><span /></button></Card><Section>가전 알림 <Pro /></Section><Card className="permission-row"><div><strong>ThinQ 가전으로 알림</strong><p>{plan === 'PRO' ? 'Pro 화면 설정 체험 · 실제 ThinQ 가전 연결 없음' : 'Pro 구독이 필요해요 · 가전 연결은 아직 없음'}</p></div><button className={'switch ' + (deviceNoticeDemo ? 'on' : '')} role="switch" aria-checked={deviceNoticeDemo} aria-label="가전 알림 화면 체험" onClick={() => plan === 'PRO' ? setDeviceNoticeDemo(value => !value) : go('plan')}><span /></button></Card></>
-  if (boot && screen === 'plan') page = <><div className="eyebrow">플랜·결제</div><h2 className="hero-title">우리 가족에게<br />맞는 돌봄</h2><p className="hero-copy">서버 요금제: {subscription?.plan ?? plan} · {subscription?.status === 'DEV_PREVIEW' ? '개발자 미리보기' : subscription?.status === 'ACTIVE' ? '구독 중' : '미구독'}. 결제·구독 신청은 아직 연결되지 않았어요.</p>{subscription?.dev_switch_available && <Card className="dev-plan-card"><strong>개발용 플랜 테스트</strong><p>결제 없이 이 가족방의 기능 권한을 바꿔 확인해요. 가족방 관리자에게만 보여요.</p><div className="dev-plan-switch"><button aria-pressed={plan === "FREE"} disabled={planBusy || plan === "FREE"} onClick={() => previewPlan("FREE")}>Free</button><button aria-pressed={plan === "PRO"} disabled={planBusy || plan === "PRO"} onClick={() => previewPlan("PRO")}>Pro</button></div></Card>}<Card className="plan-card current"><span className="small-badge ok">{plan === 'FREE' ? '현재 플랜' : '무료 플랜'}</span><h3>Family Care Free</h3><strong className="price">무료</strong><p>구성원 3명 · 자녀 2명</p><p>Family Inbox · Role Match · 완료 확인 · 하루 2회 OCR · 기본 AI 채팅</p></Card><Card className="plan-card pro"><Pro /><h3>Family Care Pro</h3><strong className="price">{plan === 'PRO' ? '현재 플랜' : plans.find(p => p.id === 'PRO')?.status === 'AVAILABLE' ? 'Pro 상품 제공 · 결제 연결 전' : '상태 조회 중'}</strong><p>긴급 요청 · OCR/채팅 한도 확장 · 음성 입력</p><p>패밀리 앨범과 돌봄 제도 검색은 API 연결 완료, 돌봄 공백 예측은 화면 데모예요.</p></Card><Section>기능 준비 상태</Section>{features.filter(f => ['chat_daily_10000_tokens', 'ocr_daily_2', 'emergency_request', 'family_album', 'care_programs', 'device_alerts'].includes(f.id)).map(f => <Card key={f.id} className="simple-list-card"><strong>{f.id}</strong><p>{f.available ? '사용 권한 있음' : 'Pro 필요'} · {f.backend_state === 'READY' ? 'API 준비됨' : '서버 미연결'}</p></Card>)}<Section>기능 화면 둘러보기</Section><div className="family-menu-list">{([['chat', '케어 어시스턴트'], ['emergency', '긴급 도움 요청'], ['gap', '돌봄 공백 예측'], ['album', '패밀리 앨범'], ['programs', '돌봄 제도 안내']] as [Screen, string][]).map(([target, label]) => <button key={target} onClick={() => go(target)}>{label}<span>›</span></button>)}</div></>
-  if (boot && screen === 'chat') page = <><div className="eyebrow">케어 어시스턴트 · {plan === 'PRO' ? 'PRO' : 'FREE'}</div><Card className="chat-intro"><img className="voice-mark" src={voiceIcon} alt="" /><strong>무엇을 도와드릴까요?</strong><p>가족방의 일정·돌봄 정보·배정을 바탕으로 서버 AI가 답해요. 배정 변경은 확인 없이 실행하지 않아요.</p>{plan === 'FREE' && <small>오늘 사용: {chatUsedToday.toLocaleString()} / 10,000 토큰</small>}</Card><div className="chat-thread">{!chatMessages.length && <div className="chat-bubble agent">일정이나 배정에 대해 물어보세요.</div>}{chatMessages.map((m, index) => <div key={index} className={'chat-bubble ' + m.from}>{m.text}</div>)}</div><div className="chat-prompts">{['확인할 알림 알려줘', '오늘 담당 배정은?', '등록된 일정은?'].map(text => <button key={text} disabled={chatBusy} onClick={() => sendChat(text)}>{text}</button>)}</div><form className="chat-composer" onSubmit={e => { e.preventDefault(); sendChat() }}><input aria-label="케어 어시스턴트에게 질문" value={chatDraft} onChange={e => setChatDraft(e.target.value)} placeholder="일정이나 배정을 물어보세요" /><button type="submit" disabled={chatBusy || !chatDraft.trim()}>{chatBusy ? '답변 중…' : '보내기'}</button></form><div className="voice-actions"><button className="outline-button" disabled={chatBusy} onClick={toggleRecording}>{recording ? '■ 녹음 끝내고 보내기' : chatBusy ? '음성 처리 중…' : '● 음성 녹음'}</button></div><p className="helper-text">{window.isSecureContext ? '녹음을 끝내면 Whisper가 채팅으로 옮기고 AI가 이어서 답해요.' : '휴대폰 음성 녹음은 HTTPS 접속이 필요해요. 일반 Wi-Fi 주소에서는 파일이나 카메라를 열지 않아요.'}</p></>
+  if (boot && screen === 'plan') page = <><div className="eyebrow">플랜·결제</div><h2 className="hero-title">우리 가족에게<br />맞는 돌봄</h2><p className="hero-copy">가족방 하나를 구독하면 초대한 가족이 함께 사용해요. 현재 상태는 {subscription?.status === 'DEV_PREVIEW' ? '개발자 미리보기' : subscription?.status === 'ACTIVE' ? 'Pro 구독 중' : 'Free 이용 중'}이에요.</p>{subscription?.dev_switch_available && <Card className="dev-plan-card"><strong>개발용 플랜 테스트</strong><p>결제 없이 이 가족방의 기능 권한을 바꿔 확인해요. 가족방 관리자에게만 보여요.</p><div className="dev-plan-switch"><button aria-pressed={plan === "FREE"} disabled={planBusy || plan === "FREE"} onClick={() => previewPlan("FREE")}>Free</button><button aria-pressed={plan === "PRO"} disabled={planBusy || plan === "PRO"} onClick={() => previewPlan("PRO")}>Pro</button></div></Card>}<Card className="plan-card current"><span className="small-badge ok">{plan === 'FREE' ? '현재 플랜' : '무료 플랜'}</span><h3>Family Care Free</h3><strong className="price">무료</strong><p>구성원 3명 · 자녀 2명</p><p>일정 공유 · 돌봄 요청 · 완료 확인 · 하루 2회 OCR · 기본 AI 채팅</p></Card><Card className="plan-card pro"><Pro /><h3>Family Care Pro</h3><strong className="price">월 5,900원</strong><p>긴급 요청 · OCR/채팅 한도 확장 · 음성 입력</p><p>캘린더 연동 · 패밀리 앨범 · 맞춤 돌봄 제도 검색을 가족 전체가 함께 사용해요.</p>{subscription?.status === 'ACTIVE' && !subscription.developer_preview ? <div className="subscription-active"><strong>구독 중</strong><small>다음 결제 예정일 {formatDate(subscription.next_billing_at)}</small></div> : me?.authenticated && me.member.is_owner ? <button className="primary-button wide-button payment-button" disabled={billingBusy} onClick={() => void startBilling()}>{billingBusy ? '결제 준비 중…' : 'Pro 월 구독 시작하기'}</button> : <p className="payment-owner-note">주돌봄자가 가족방 구독을 시작할 수 있어요.</p>}</Card><p className="payment-help">토스페이먼츠 카드 등록창에서 결제수단을 인증한 뒤 첫 달 결제가 승인됩니다.</p><Section>기능 준비 상태</Section>{features.filter(f => ['chat_daily_10000_tokens', 'ocr_daily_2', 'emergency_request', 'family_album', 'care_programs', 'device_alerts'].includes(f.id)).map(f => <Card key={f.id} className="simple-list-card"><strong>{f.id}</strong><p>{f.available ? '사용 권한 있음' : 'Pro 필요'} · {f.backend_state === 'READY' ? 'API 준비됨' : '서버 미연결'}</p></Card>)}<Section>기능 화면 둘러보기</Section><div className="family-menu-list">{([['chat', '케어 어시스턴트'], ['emergency', '긴급 도움 요청'], ['gap', '돌봄 공백 예측'], ['album', '패밀리 앨범'], ['programs', '돌봄 제도 안내']] as [Screen, string][]).map(([target, label]) => <button key={target} onClick={() => go(target)}>{label}<span>›</span></button>)}</div></>
+  if (boot && screen === 'chat') page = <><div className="eyebrow">케어 어시스턴트 · {plan === 'PRO' ? 'PRO' : 'FREE'}</div><Card className="chat-intro"><img className="voice-mark" src={voiceIcon} alt="" /><strong>무엇을 도와드릴까요?</strong><p>가족방의 일정·돌봄·배정·알림·혜택 정보를 읽고 요약해요. 대상을 정확히 말해 일정 변경을 요청하면 DB에도 반영해요.</p>{plan === 'FREE' && <small>오늘 사용: {chatUsedToday.toLocaleString()} / 10,000 토큰</small>}</Card><div className="chat-thread">{!chatMessages.length && <div className="chat-bubble agent"><div className="chat-copy">일정, 담당 배정, 준비물이나 우리 지역 돌봄 혜택을 물어보세요.</div></div>}{chatMessages.map((m, index) => <div key={index} className={'chat-bubble ' + m.from}><div className="chat-copy">{m.text}</div>{m.from === 'agent' && m.cards?.map((card, cardIndex) => <article className="chat-summary-card" key={card.title + cardIndex}><small>{card.eyebrow}</small><strong>{card.title}</strong><p>{card.description}</p>{card.screen && <button onClick={() => go(card.screen as Screen)}>{chatScreenLabel[card.screen as Screen] ?? '관련 화면 보기'}</button>}</article>)}</div>)}</div><div className="chat-prompts">{['오늘 일정 요약해줘', '오늘 담당 배정은?', '우리 지역 돌봄 혜택 알려줘'].map(text => <button key={text} disabled={chatBusy} onClick={() => sendChat(text)}>{text}</button>)}</div><form className="chat-composer" onSubmit={e => { e.preventDefault(); sendChat() }}><input aria-label="케어 어시스턴트에게 질문" value={chatDraft} onChange={e => setChatDraft(e.target.value)} placeholder="일정이나 돌봄 정보를 물어보세요" /><button type="submit" disabled={chatBusy || !chatDraft.trim()}>{chatBusy ? '답변 중…' : '보내기'}</button></form><div className="voice-actions"><button className="outline-button" disabled={chatBusy} onClick={toggleRecording}>{recording ? '■ 녹음 끝내고 보내기' : chatBusy ? '음성 처리 중…' : '● 음성 녹음'}</button></div><p className="helper-text">{window.isSecureContext ? '녹음을 끝내면 Whisper가 채팅으로 옮기고 AI가 이어서 답해요.' : '휴대폰 음성 녹음은 HTTPS 주소 또는 이 PC의 localhost에서 사용할 수 있어요.'}</p></>
   if (boot && screen === 'emergency') page = <><div className="eyebrow urgent">긴급 도움 요청 <Pro /></div><h2 className="hero-title">갑자기 돌봄이<br />어려워졌나요?</h2><p className="hero-copy">Pro 부모가 가족에게 요청할 수 있어요. 서버 알림 기록은 남지만 ThinQ 푸시는 아직 연결되지 않았어요.</p><Card className="form-card"><label className="form-label">도움이 필요한 돌봄</label><select className="form-control" value={emergencyItem} onChange={e => setEmergencyItem(e.target.value)}><option value="">선택하세요</option>{assignments.filter(a => ['PROPOSED', 'ACCEPTED'].includes(a.status)).map(a => <option key={a.id} value={a.id}>{itemFor(a)?.title ?? '돌봄'} · {member(a.assignee_id)}</option>)}</select><label className="form-label">요청 사유</label><input className="form-control" value={emergencyReason} onChange={e => setEmergencyReason(e.target.value)} /><Section>요청을 받을 가족</Section><p>{members.filter(m => m.id !== me?.member.id).map(m => m.name).join(' · ') || '참여 중인 다른 가족이 없어요'}</p></Card><button className="primary-button wide-button" disabled={!emergencyItem || plan !== 'PRO' || (me?.authenticated && me.member.role !== 'PARENT')} onClick={() => run(async () => { await send('/emergency-requests', 'POST', { assignment_id: emergencyItem, reason: emergencyReason.trim() }); const result = await api<{ requests: EmergencyRequest[] }>('/emergency-requests'); setEmergencyRequests(result.requests); setEmergencyItem('') }, '가족에게 긴급 요청을 보냈어요')}>{plan !== 'PRO' ? 'Pro 구독 필요' : '가족 전체에 실제 요청'}</button>{plan !== 'PRO' && <button className="text-link centered" onClick={() => go('plan')}>플랜 확인하기</button>}
     <Section>요청 현황</Section>{emergencyRequests.length ? emergencyRequests.map(r => { const original = boot.assignments.find(a => a.id === r.assignment_id); const canClaim = r.status === 'OPEN' && me?.member.id !== r.requested_by_member_id && me?.member.id !== original?.assignee_id; const canCancel = r.status === 'OPEN' && (me?.member.id === r.requested_by_member_id || !!me?.member.is_owner); return <Card key={r.id} className="urgent-card"><span className={'small-badge ' + (r.status === 'OPEN' ? 'danger' : 'ok')}>{r.status === 'OPEN' ? '도움 대기' : r.status === 'CLAIMED' ? '담당 확정' : '취소됨'}</span><strong>{r.item_title}</strong><p>{r.reason}</p>{r.claimed_by_member_id && <p>새 담당 · {member(r.claimed_by_member_id)}</p>}{canClaim && <button className="primary-button wide-button" onClick={() => run(async () => { await send('/emergency-requests/' + r.id + '/claim', 'POST'); setEmergencyRequests((await api<{ requests: EmergencyRequest[] }>('/emergency-requests')).requests) }, '새 담당자로 확정됐어요')}>제가 맡을게요</button>}{canCancel && <button className="outline-button wide-button" onClick={() => run(async () => { await send('/emergency-requests/' + r.id + '/cancel', 'POST'); setEmergencyRequests((await api<{ requests: EmergencyRequest[] }>('/emergency-requests')).requests) }, '긴급 요청을 취소했어요')}>요청 취소</button>}</Card> }) : <Empty title="진행 중인 긴급 요청이 없어요" text="요청이 생기면 이곳에서 응답할 수 있어요" />}</>
   if (boot && screen === 'location') page = <><div className="eyebrow">돌봄 동선</div><h2 className="hero-title">지금 어디쯤<br />오고 있나요?</h2><p className="hero-copy">인수인계된 위치와 이동 시간을 한눈에 확인해요.</p><div className="map-panel"><div className="map-road one" /><div className="map-road two" /><span className="map-pin school">학교</span><span className="map-pin academy">태권도</span><span className="map-pin home">집</span><span className="map-route" /></div><Card className="route-card"><strong>학교 → 태권도</strong><p>할머니와 이동 중 · 10분 후 도착 예정</p><div className="route-progress"><span /></div></Card></>
@@ -885,7 +931,7 @@ function App() {
   if (boot && screen === 'programs') page = <ProgramsPage plan={plan} keyword={benefitKeyword} city={benefitCity} district={benefitDistrict} savedLocation={benefitLocation} busy={benefitsBusy} locationBusy={benefitLocationBusy} programs={benefits} institutions={careInstitutions} eligibility={eligibilityCriteria} active={activeBenefit} onKeyword={setBenefitKeyword} onCity={setBenefitCity} onDistrict={setBenefitDistrict} onSaveLocation={() => void saveBenefitLocation()} onSearch={() => void searchBenefits()} onSelect={setProgramSelected} onPlan={() => go('plan')} />
 
   if (screen === 'onboarding' && !invitationFromUrl && devLoginOptions.length > 0) page = <>{page}<Card className="dev-login-card"><span className="small-badge danger">TEST LOGIN</span><strong>테스트 사용자로 바로 입장</strong><p>개발 중에만 표시되며 원하는 가족 구성원 권한으로 확인할 수 있어요.</p><div className="dev-login-list">{devLoginOptions.map(option => <button key={option.member_id} disabled={onboardBusy} onClick={() => void loginForTest(option.member_id)}><span>{option.family_name}</span><strong>{option.member_name}{option.is_owner ? ' · 주돌봄자' : ''}</strong></button>)}</div></Card></>
-  if (boot && screen === 'members' && me?.authenticated && !me.member.is_owner) page = <>{page}<Section>가족 초대</Section><Card className="form-card invite-share-card"><p>모든 가족 구성원이 초대 링크를 만들어 공유할 수 있어요. Free는 구성원 3명까지예요.</p>{inviteCode && <><div className="invite-code"><strong>{inviteCode}</strong><small>만료: {formatDate(inviteExpiresAt)}</small></div><label className="form-label">초대할 가족의 역할</label><select className="form-control" value={inviteRole} onChange={e => setInviteRole(e.target.value)}><option value="PARENT">부모</option><option value="GRANDPARENT">조부모</option><option value="CAREGIVER">돌봄 참여자</option></select><input className="invite-link" aria-label="가족방 초대 링크" value={inviteLink} readOnly /><button className="kakao-share wide-button" onClick={shareInvite}>링크 복사·공유하기</button></>}<button className="outline-button wide-button" onClick={() => run(async () => { const result = await send<{ invite_code: string; invite_expires_at: string }>('/families/invite-code/rotate', 'POST'); setInviteCode(result.invite_code); setInviteExpiresAt(result.invite_expires_at) }, '새 초대 링크를 만들었어요')}>{inviteCode ? '초대 링크 새로 만들기' : '초대 링크 만들기'}</button></Card></>
+  if (boot && screen === 'members' && me?.authenticated && !me.member.is_owner) page = <>{page}<Section>가족 초대</Section><Card className="form-card invite-share-card"><p>모든 가족 구성원이 여러 번 사용할 수 있는 초대 링크를 만들어 공유할 수 있어요. Free는 구성원 3명까지예요.</p>{inviteCode && <><div className="invite-code"><strong>{inviteCode}</strong><small>만료: {formatDate(inviteExpiresAt)}</small></div><label className="form-label">초대할 가족의 역할</label><select className="form-control" value={inviteRole} onChange={e => setInviteRole(e.target.value)}><option value="PARENT">부모</option><option value="GRANDPARENT">조부모</option><option value="CAREGIVER">돌봄 참여자</option></select><input className="invite-link" aria-label="가족방 초대 링크" value={inviteLink} readOnly /><button className="kakao-share wide-button" onClick={shareInvite}>링크 복사·공유하기</button></>}<button className="outline-button wide-button" onClick={() => run(async () => { const result = await send<{ invite_code: string; invite_expires_at: string }>('/families/invite-code/rotate', 'POST'); setInviteCode(result.invite_code); setInviteExpiresAt(result.invite_expires_at) }, '새 초대 링크를 만들었어요')}>{inviteCode ? '초대 링크 새로 만들기' : '초대 링크 만들기'}</button></Card></>
 
   const isRoot = rootScreens.includes(screen)
   const showChrome = !!boot && screen !== 'onboarding'
