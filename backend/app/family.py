@@ -105,9 +105,10 @@ def _active_invitation(invitation) -> bool:
 
 def _new_session(db, target_family: str, target_member: str) -> str:
     token = secrets.token_urlsafe(32)
+    now = _now()
     db.execute(
-        "INSERT INTO family_session VALUES (?, ?, ?, ?)",
-        (_hash(token), target_family, target_member, (_now() + timedelta(days=30)).isoformat()),
+        "INSERT INTO family_session(token_hash, family_id, member_id, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)",
+        (_hash(token), target_family, target_member, (now + timedelta(days=30)).isoformat(), now.isoformat()),
     )
     return token
 
@@ -133,9 +134,10 @@ def resolve_bearer(authorization: str | None) -> tuple[str, str, bool]:
                JOIN family_member m ON m.id = s.member_id AND m.family_id = s.family_id
                WHERE s.token_hash = ? AND m.status = 'ACTIVE'""", (_hash(token),),
         ).fetchone()
-    if row is None or datetime.fromisoformat(row["expires_at"]) <= _now():
-        raise HTTPException(401, "가족방 로그인 토큰이 유효하지 않습니다")
-    return row["family_id"], row["member_id"], True
+        if row is None or datetime.fromisoformat(row["expires_at"]) <= _now():
+            raise HTTPException(401, "가족방 로그인 토큰이 유효하지 않습니다")
+        db.execute("UPDATE family_session SET last_seen_at = ? WHERE token_hash = ?", (_now().isoformat(), _hash(token)))
+        return row["family_id"], row["member_id"], True
 
 
 class FamilyCreate(BaseModel):
@@ -209,9 +211,9 @@ def create_family(payload: FamilyCreate):
     with database() as db:
         db.execute("INSERT INTO family_group VALUES (?, ?, 'FREE', ?)", (target_family, payload.name, _now().isoformat()))
         db.execute(
-            """INSERT INTO family_member(id, family_id, name, role, status, is_owner)
-               VALUES (?, ?, ?, 'PARENT', 'ACTIVE', 1)""",
-            (target_member, target_family, payload.owner_name),
+            """INSERT INTO family_member(id, family_id, name, role, status, is_owner, created_at)
+               VALUES (?, ?, ?, 'PARENT', 'ACTIVE', 1, ?)""",
+            (target_member, target_family, payload.owner_name, _now().isoformat()),
         )
         _seed_member_settings(db, target_member, True)
         code, expires_at = _new_code(db, target_family)
@@ -233,8 +235,8 @@ def join_family(payload: FamilyJoin):
         if family["plan"] == "FREE" and count >= 3:
             raise HTTPException(403, detail={"code": "PLAN_LIMIT", "message": "무료 플랜은 돌봄 구성원 3명까지 입장할 수 있습니다"})
         target_member = str(uuid4())
-        db.execute("INSERT INTO family_member(id, family_id, name, role, status) VALUES (?, ?, ?, ?, 'ACTIVE')",
-                   (target_member, target_family, payload.name, payload.role))
+        db.execute("INSERT INTO family_member(id, family_id, name, role, status, created_at) VALUES (?, ?, ?, ?, 'ACTIVE', ?)",
+                   (target_member, target_family, payload.name, payload.role, _now().isoformat()))
         _seed_member_settings(db, target_member, False)
         token = _new_session(db, target_family, target_member)
         if reusable:

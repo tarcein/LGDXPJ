@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -273,10 +273,18 @@ def health():
 
 @app.get("/api/bootstrap")
 def bootstrap():
+    utc_now = datetime.now(timezone.utc)
+    online_cutoff = (utc_now - timedelta(minutes=2)).isoformat()
     with database() as db:
         return {
             "family": one(db, "SELECT * FROM family_group WHERE id = ?", (family_id(),)),
-            "members": rows(db, "SELECT * FROM family_member WHERE family_id = ? ORDER BY is_owner DESC, name", (family_id(),)),
+            "members": rows(db, """SELECT m.*, CASE WHEN EXISTS (
+                SELECT 1 FROM family_session s WHERE s.family_id = m.family_id AND s.member_id = m.id
+                AND s.expires_at > ? AND s.last_seen_at >= ?
+              ) THEN 1 ELSE 0 END AS is_online
+              FROM family_member m WHERE m.family_id = ?
+              ORDER BY CASE WHEN m.created_at = '' THEN 1 ELSE 0 END, m.created_at, m.is_owner DESC, m.name""",
+              (utc_now.isoformat(), online_cutoff, family_id())),
             "children": rows(db, "SELECT * FROM child WHERE family_id = ?", (family_id(),)),
             "schedules": rows(
                 db,
@@ -335,8 +343,8 @@ def create_member(payload: MemberCreate):
             raise HTTPException(403, detail={"code": "PLAN_LIMIT", "message": "무료 플랜은 돌봄 구성원 3명까지 등록할 수 있습니다"})
         member_id = str(uuid4())
         db.execute(
-            "INSERT INTO family_member(id, family_id, name, role, status) VALUES (?, ?, ?, ?, 'PENDING')",
-            (member_id, family_id(), payload.name, payload.role),
+            "INSERT INTO family_member(id, family_id, name, role, status, created_at) VALUES (?, ?, ?, ?, 'PENDING', ?)",
+            (member_id, family_id(), payload.name, payload.role, now_iso()),
         )
         notify(db, owner_id(db), "구성원 초대 대기", f"{payload.name}님의 초대 수락이 필요합니다")
         return one(db, "SELECT * FROM family_member WHERE id = ?", (member_id,))

@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS family_location (
 CREATE TABLE IF NOT EXISTS family_member (
   id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
   name TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ACTIVE',
-  is_owner INTEGER NOT NULL DEFAULT 0
+  is_owner INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS child (
   id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
@@ -188,7 +188,8 @@ CREATE TABLE IF NOT EXISTS family_invite_link (
 );
 CREATE TABLE IF NOT EXISTS family_session (
   token_hash TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
-  member_id TEXT NOT NULL REFERENCES family_member(id), expires_at TEXT NOT NULL
+  member_id TEXT NOT NULL REFERENCES family_member(id), expires_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS daily_usage (
   family_id TEXT NOT NULL REFERENCES family_group(id), day TEXT NOT NULL,
@@ -295,6 +296,8 @@ def initialize() -> None:
                 ("family_subscription", "canceled_at", "TEXT"),
                 ("family_subscription", "renewal_failure_count", "INTEGER NOT NULL DEFAULT 0"),
                 ("family_subscription", "last_renewal_error", "TEXT"),
+                ("family_member", "created_at", "TEXT NOT NULL DEFAULT ''"),
+                ("family_session", "last_seen_at", "TEXT NOT NULL DEFAULT ''"),
             ):
                 db.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {definition}")
         else:
@@ -309,11 +312,30 @@ def initialize() -> None:
                 ("calendar_oauth_state", (("return_url", "TEXT"),)),
                 ("media_asset", (("storage_path", "TEXT"), ("date_folder", "TEXT"))),
                 ("family_subscription", (("cancel_at_period_end", "INTEGER NOT NULL DEFAULT 0"), ("canceled_at", "TEXT"), ("renewal_failure_count", "INTEGER NOT NULL DEFAULT 0"), ("last_renewal_error", "TEXT"))),
+                ("family_member", (("created_at", "TEXT NOT NULL DEFAULT ''"),)),
+                ("family_session", (("last_seen_at", "TEXT NOT NULL DEFAULT ''"),)),
             ):
                 columns = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
                 for name, definition in additions:
                     if name not in columns:
                         db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+        families = db.execute("SELECT id, created_at FROM family_group").fetchall()
+        for family in families:
+            missing_members = db.execute(
+                "SELECT id FROM family_member WHERE family_id = ? AND created_at = '' ORDER BY is_owner DESC, name"
+                if is_postgres(db) else
+                "SELECT id FROM family_member WHERE family_id = ? AND created_at = '' ORDER BY rowid",
+                (family["id"],),
+            ).fetchall()
+            try:
+                registered_at = datetime.fromisoformat(family["created_at"])
+            except (TypeError, ValueError):
+                registered_at = datetime.now(ZoneInfo("Asia/Seoul"))
+            for index, member in enumerate(missing_members):
+                db.execute(
+                    "UPDATE family_member SET created_at = ? WHERE id = ?",
+                    ((registered_at + timedelta(microseconds=index)).isoformat(), member["id"]),
+                )
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_external_schedule ON personal_schedule(family_id, member_id, external_source, external_id) WHERE external_id IS NOT NULL")
         db.execute("INSERT INTO notification_preference(member_id) SELECT id FROM family_member WHERE 1=1 ON CONFLICT(member_id) DO NOTHING")
         db.execute("""INSERT INTO family_data_permission(member_id, scope, is_allowed)
@@ -335,10 +357,10 @@ def initialize() -> None:
             ("dad", "아빠", "PARENT", 0),
             ("grandma", "할머니", "GRANDPARENT", 0),
         ]
-        for member_id, name, role, owner in members:
+        for index, (member_id, name, role, owner) in enumerate(members):
             db.execute(
-                "INSERT INTO family_member(id, family_id, name, role, is_owner) VALUES (?, ?, ?, ?, ?)",
-                (member_id, family_id, name, role, owner),
+                "INSERT INTO family_member(id, family_id, name, role, is_owner, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (member_id, family_id, name, role, owner, (now + timedelta(seconds=index)).isoformat()),
             )
         for child_id, name, age in [("jiu", "지우", "초2"), ("hayun", "하윤", "5세")]:
             db.execute(

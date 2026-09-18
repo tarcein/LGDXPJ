@@ -2,10 +2,10 @@ export type Screen =
   | 'thinq' | 'serviceLoading' | 'lockscreen' | 'home' | 'careHub' | 'familyHub' | 'more' | 'family' | 'capture' | 'review' | 'assignments' | 'suggestion'
   | 'schedule' | 'exception' | 'tasks' | 'notifications'
   | 'members' | 'permissions' | 'plan' | 'chat' | 'emergency'
-  | 'location' | 'album' | 'programs' | 'settings' | 'onboarding' | 'calendar' | 'gap'
+  | 'location' | 'album' | 'programs' | 'settings' | 'onboarding' | 'scheduleOnboarding' | 'calendar' | 'gap'
 
 export interface Family { id: string; name: string; plan: string }
-export interface Member { id: string; name: string; role: string; status: string; is_owner: boolean }
+export interface Member { id: string; name: string; role: string; status: string; is_owner: boolean; created_at?: string; is_online?: boolean | number }
 export interface Child { id: string; name: string; age_label: string }
 export interface Schedule { id: string; member_id: string; title: string; starts_at: string; ends_at: string; has_end_time?: number | boolean; kind: 'WORK' | 'ROUTINE'; external_source: string | null }
 export interface ChildSchedule { id: string; child_id: string; title: string; category: string; starts_at: string; ends_at: string; has_end_time?: number | boolean; source: string }

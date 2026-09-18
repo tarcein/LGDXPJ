@@ -5,12 +5,15 @@ import careTabIcon from '../../../bar_asset/baseline-child-care.png'
 import homeTabIcon from '../../../bar_asset/Vector.png'
 import familyTabIcon from '../../../bar_asset/Group 19.png'
 import moreTabIcon from '../../../bar_asset/Vector-1.png'
-import bellIcon from '../../../asset/bell.png'
+import bellIcon from '../../../asset/알림아이콘.png'
+import serviceSwitchIcon from '../../../asset/서비스이동토글.png'
 
 type ChromeProps = {
   screen: Screen
   familyName: string
   memberName: string
+  profileImage: string
+  profileOnline?: boolean
   contextLine?: string
   unread: number
   onNavigate: (screen: Screen) => void
@@ -18,17 +21,16 @@ type ChromeProps = {
 }
 
 export function MobileStatusBar() {
-  const time = new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date())
-  return <div className="mobile-status" aria-hidden="true"><strong>{time}</strong><span>5G&nbsp;&nbsp;58%</span></div>
+  return <div className="mobile-status" aria-hidden="true" />
 }
 
-export function AppHeader({ familyName, memberName, contextLine, unread, onNavigate, onOpenThinQHomes }: ChromeProps) {
+export function AppHeader({ familyName, memberName, profileImage, profileOnline = true, contextLine, unread, onNavigate, onOpenThinQHomes }: ChromeProps) {
   return <header className="app-header">
     <button className="family-switcher" aria-label={`${familyName} 홈 선택`} onClick={onOpenThinQHomes}>
-      <strong>{familyName}</strong><span aria-hidden="true">⌄</span><small>{contextLine || 'Family Care'}</small>
+      <strong>{familyName}</strong><img className="service-switch-icon" src={serviceSwitchIcon} alt="" /><small>{contextLine || 'Family Care'}</small>
     </button>
     <button className="header-bell" aria-label="알림함" onClick={() => onNavigate('notifications')}><img src={bellIcon} alt="" />{unread > 0 && <i>{unread}</i>}</button>
-    <button className="header-profile" aria-label={`${memberName || '내'} 프로필과 가족 설정`} onClick={() => onNavigate('members')}>{memberName.trim().slice(0, 1) || '나'}</button>
+    <button className="header-profile" aria-label={`${memberName || '내'} 프로필과 가족 설정`} onClick={() => onNavigate('members')}><img src={profileImage} alt="" />{profileOnline && <i />}</button>
   </header>
 }
 
