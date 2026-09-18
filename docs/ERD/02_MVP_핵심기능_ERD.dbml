@@ -1,0 +1,128 @@
+// MVP 핵심 기능만 추린 ERD
+// 가족 운영의 중심 흐름: 일정 -> 돌봄 입력 -> 항목화 -> 담당 배정 -> 예외/인수인계 -> 알림
+
+Table family_group {
+  id text [pk]
+  name text [not null]
+  plan text [not null, default: 'FREE']
+  created_at datetime [not null]
+}
+
+Table family_member {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  name text [not null]
+  role text [not null]
+  status text [not null, default: 'ACTIVE']
+  is_owner boolean [not null, default: false]
+  created_at datetime [not null]
+}
+
+Table child {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  name text [not null]
+  age_label text [not null]
+}
+
+Table personal_schedule {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  member_id text [not null, ref: > family_member.id]
+  title text [not null]
+  starts_at datetime [not null]
+  ends_at datetime [not null]
+  kind text [not null, default: 'ROUTINE']
+}
+
+Table child_schedule {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  child_id text [not null, ref: > child.id]
+  title text [not null]
+  category text [not null]
+  starts_at datetime [not null]
+  ends_at datetime [not null]
+  source text [not null, default: 'MANUAL']
+}
+
+Table care_intake {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  child_id text [ref: > child.id]
+  raw_content text [not null]
+  input_type text [not null]
+  created_at datetime [not null]
+}
+
+Table care_item {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  intake_id text [ref: > care_intake.id]
+  child_id text [ref: > child.id]
+  child_schedule_id text [ref: > child_schedule.id]
+  item_type text [not null]
+  title text [not null]
+  detail text [not null, default: '']
+  confidence text [not null, default: 'LOW']
+  status text [not null, default: 'NEEDS_REVIEW']
+  starts_at datetime
+}
+
+Table care_assignment {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  item_id text [not null, ref: > care_item.id]
+  assignee_id text [not null, ref: > family_member.id]
+  requested_by_member_id text [ref: > family_member.id]
+  status text [not null, default: 'PROPOSED']
+  source text [not null]
+  completed_at datetime
+}
+
+Table care_exception {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  assignment_id text [not null, ref: > care_assignment.id]
+  alternative_member_id text [not null, ref: > family_member.id]
+  reason text [not null]
+  status text [not null, default: 'PENDING']
+  created_at datetime [not null]
+}
+
+Table care_handoff {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  assignment_id text [not null, ref: > care_assignment.id]
+  from_member_id text [ref: > family_member.id]
+  to_member_id text [not null, ref: > family_member.id]
+  special_note text [not null, default: '']
+  status text [not null, default: 'PENDING']
+  acknowledged_at datetime
+}
+
+Table emergency_request {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  assignment_id text [not null, ref: > care_assignment.id]
+  requested_by_member_id text [not null, ref: > family_member.id]
+  claimed_by_member_id text [ref: > family_member.id]
+  reason text [not null]
+  status text [not null, default: 'OPEN']
+  resolved_at datetime
+}
+
+Table notification {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  member_id text [ref: > family_member.id]
+  title text [not null]
+  body text [not null]
+  level text [not null, default: 'NORMAL']
+  is_read boolean [not null, default: false]
+  action_type text
+  action_id text
+  created_at datetime [not null]
+}
+
+// notification.action_type/action_id is intentionally polymorphic and has no FK.

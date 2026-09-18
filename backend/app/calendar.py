@@ -29,6 +29,11 @@ def _credentials(provider: str) -> tuple[str, str]:
 
 
 def _redirect_uri(provider: str) -> str:
+    # Prefer the exact URI registered in the provider console. This matters
+    # for Google: host, path, and scheme must match byte-for-byte.
+    configured_uri = setting(("GOOGLE" if provider == "google" else "MICROSOFT") + "_REDIRECT_URI")
+    if configured_uri:
+        return configured_uri.rstrip("/")
     configured = setting("CALENDAR_REDIRECT_BASE", "http://127.0.0.1:8000")
     return configured.rstrip("/") + f"/api/calendar-connections/{provider}/callback"
 
