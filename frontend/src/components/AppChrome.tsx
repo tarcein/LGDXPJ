@@ -12,8 +12,7 @@ type ChromeProps = {
   screen: Screen
   familyName: string
   memberName: string
-  profileImage: string
-  profileOnline?: boolean
+  profileColor: string
   contextLine?: string
   unread: number
   onNavigate: (screen: Screen) => void
@@ -24,13 +23,13 @@ export function MobileStatusBar() {
   return <div className="mobile-status" aria-hidden="true" />
 }
 
-export function AppHeader({ familyName, memberName, profileImage, profileOnline = true, contextLine, unread, onNavigate, onOpenThinQHomes }: ChromeProps) {
+export function AppHeader({ familyName, memberName, profileColor, contextLine, unread, onNavigate, onOpenThinQHomes }: ChromeProps) {
   return <header className="app-header">
     <button className="family-switcher" aria-label={`${familyName} 홈 선택`} onClick={onOpenThinQHomes}>
       <strong>{familyName}</strong><img className="service-switch-icon" src={serviceSwitchIcon} alt="" /><small>{contextLine || 'Family Care'}</small>
     </button>
     <button className="header-bell" aria-label="알림함" onClick={() => onNavigate('notifications')}><img src={bellIcon} alt="" />{unread > 0 && <i>{unread}</i>}</button>
-    <button className="header-profile" aria-label={`${memberName || '내'} 프로필과 가족 설정`} onClick={() => onNavigate('members')}><img src={profileImage} alt="" />{profileOnline && <i />}</button>
+    <button className="header-profile" aria-label={`${memberName || '내'} 프로필과 가족 설정`} onClick={() => onNavigate('members')}><span style={{ background: profileColor }}>{(memberName || '나').trim().slice(0, 1)}</span></button>
   </header>
 }
 

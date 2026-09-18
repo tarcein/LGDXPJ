@@ -70,11 +70,6 @@ def create_emergency_request(payload: EmergencyCreate):
             raise HTTPException(404, "배정을 찾을 수 없습니다")
         if assignment["status"] not in {"PROPOSED", "ACCEPTED"}:
             raise HTTPException(409, "진행 중인 배정만 긴급 요청할 수 있습니다")
-        if db.execute(
-            "SELECT 1 FROM emergency_request WHERE assignment_id = ? AND status = 'OPEN'",
-            (payload.assignment_id,),
-        ).fetchone():
-            raise HTTPException(409, "이미 진행 중인 긴급 요청이 있습니다")
         request_id = str(uuid4())
         db.execute(
             """INSERT INTO emergency_request(id, family_id, assignment_id,
@@ -138,6 +133,11 @@ def claim_emergency_request(request_id: str):
             """UPDATE emergency_request SET status = 'CLAIMED', claimed_by_member_id = ?,
                resolved_at = ? WHERE id = ?""",
             (member["id"], timestamp, request_id),
+        )
+        db.execute(
+            """UPDATE emergency_request SET status = 'CANCELLED', resolved_at = ?
+               WHERE family_id = ? AND assignment_id = ? AND status = 'OPEN' AND id != ?""",
+            (timestamp, family_id(), assignment["id"], request_id),
         )
         for target in db.execute(
             "SELECT id FROM family_member WHERE family_id = ? AND status = 'ACTIVE'", (family_id(),)

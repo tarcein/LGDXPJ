@@ -23,13 +23,14 @@ class ExtendedFlowTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         os.environ["LGDX_DB_PATH"] = str(Path(self.temp.name) / "test.db")
+        os.environ["LGDX_SEED_DEMO"] = "1"
         self.client_context = TestClient(app)
         self.client = self.client_context.__enter__()
 
     def tearDown(self):
         self.client_context.__exit__(None, None, None)
         for key in (
-            "LGDX_DB_PATH", "LGDX_DEV_MODE", "LGDX_DEV_TOKEN", "LGDX_REQUIRE_AUTH", "SUBSIDY24_SERVICE_KEY",
+            "LGDX_DB_PATH", "LGDX_SEED_DEMO", "LGDX_DEV_MODE", "LGDX_DEV_TOKEN", "LGDX_REQUIRE_AUTH", "SUBSIDY24_SERVICE_KEY",
             "IDOL_CARE_INSTITUTION_SERVICE_KEY", "IDOL_CARE_HOUSEHOLD_INCOME_SERVICE_KEY",
             "IDOL_CARE_HEALTH_INSURANCE_SERVICE_KEY", "TOSS_BILLING_CLIENT_KEY",
             "TOSS_BILLING_SECRET_KEY", "TOSS_BILLING_AMOUNT",
@@ -379,6 +380,44 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual(body["schedules"][0]["recurrence_rule"],
                          "DATES:2026-09-14,2026-09-17,2026-10-01")
 
+    def test_recurring_schedule_update_can_apply_only_to_future_occurrences(self):
+        created = self.client.post("/api/schedules", json={
+            "member_id": "mom", "title": "저녁 운동", "kind": "ROUTINE",
+            "starts_at": "2026-09-14T19:00:00+09:00", "ends_at": "2026-09-14T20:00:00+09:00",
+            "repeat_days": [0, 2, 4], "repeat_until": "2026-09-18",
+        }).json()["schedules"]
+        changed = self.client.patch(f"/api/schedules/{created[1]['id']}", json={
+            "title": "저녁 운동", "kind": "ROUTINE",
+            "starts_at": "2026-09-16T20:00:00+09:00", "ends_at": "2026-09-16T21:00:00+09:00",
+            "update_scope": "FUTURE",
+        })
+        self.assertEqual(changed.status_code, 200)
+        self.assertEqual(changed.json()["updated_count"], 2)
+        schedules = [row for row in self.client.get("/api/bootstrap").json()["schedules"]
+                     if row.get("recurrence_id") == created[0]["recurrence_id"]]
+        self.assertEqual([row["starts_at"][11:16] for row in schedules], ["19:00", "20:00", "20:00"])
+        self.assertFalse(changed.json()["recurring_instance_only"])
+
+        child_created = self.client.post("/api/child-schedules", json={
+            "child_id": "jiu", "title": "태권도", "category": "ACADEMY",
+            "starts_at": "2026-09-14T15:00:00+09:00", "ends_at": "2026-09-14T16:00:00+09:00",
+            "repeat_days": [0, 2, 4], "repeat_until": "2026-09-18",
+        }).json()["schedules"]
+        child_changed = self.client.patch(f"/api/child-schedules/{child_created[1]['id']}", json={
+            "child_id": "jiu", "title": "태권도", "category": "ACADEMY",
+            "starts_at": "2026-09-16T16:00:00+09:00", "ends_at": "2026-09-16T17:00:00+09:00",
+            "update_scope": "FUTURE",
+        })
+        self.assertEqual(child_changed.status_code, 200)
+        self.assertEqual(child_changed.json()["updated_count"], 2)
+        snapshot = self.client.get("/api/bootstrap").json()
+        child_schedules = [row for row in snapshot["child_schedules"]
+                           if row.get("recurrence_id") == child_created[0]["recurrence_id"]]
+        self.assertEqual([row["starts_at"][11:16] for row in child_schedules], ["15:00", "16:00", "16:00"])
+        changed_ids = {row["id"] for row in child_schedules[1:]}
+        changed_items = [row for row in snapshot["items"] if row.get("child_schedule_id") in changed_ids]
+        self.assertEqual({row["starts_at"][11:16] for row in changed_items}, {"16:00"})
+
     def test_registered_schedules_can_be_updated_and_deleted_with_role_permissions(self):
         room = self.client.post("/api/families", json={"name": "일정 가족", "owner_name": "엄마"}).json()
         caregiver = self.client.post("/api/families/join", json={
@@ -721,6 +760,10 @@ class ExtendedFlowTest(unittest.TestCase):
             "assignment_id": assignment["id"], "reason": "갑자기 일정이 바뀌었어요"})
         self.assertEqual(created.status_code, 201)
         request_id = created.json()["request"]["id"]
+        additional = self.client.post(path, headers=headers(owner), json={
+            "assignment_id": assignment["id"], "reason": "추가로 다른 가족에게도 요청해요"})
+        self.assertEqual(additional.status_code, 201)
+        additional_id = additional.json()["request"]["id"]
         self.assertEqual(set(created.json()["recipient_member_ids"]),
                          {current["member_id"], replacement["member_id"]})
         owner_notices = self.client.get("/api/bootstrap", headers=headers(owner)).json()["notifications"]
@@ -735,6 +778,8 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual(claimed.json()["assignment"]["status"], "ACCEPTED")
         self.assertEqual(claimed.json()["handoff"]["to_member_id"], replacement["member_id"])
         self.assertEqual(self.client.post(f"{path}/{request_id}/claim", headers=headers(owner)).status_code, 409)
+        requests = self.client.get(path, headers=headers(owner)).json()["requests"]
+        self.assertEqual(next(request for request in requests if request["id"] == additional_id)["status"], "CANCELLED")
         snapshot = self.client.get("/api/bootstrap", headers=headers(owner)).json()
         old = next(a for a in snapshot["assignments"] if a["id"] == assignment["id"])
         self.assertEqual(old["status"], "CANCELED")

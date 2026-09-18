@@ -21,12 +21,14 @@ class CoreScenarioTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         os.environ["LGDX_DB_PATH"] = str(Path(self.temp.name) / "scenario.db")
+        os.environ["LGDX_SEED_DEMO"] = "1"
         self.client_context = TestClient(app)
         self.client = self.client_context.__enter__()
 
     def tearDown(self) -> None:
         self.client_context.__exit__(None, None, None)
         os.environ.pop("LGDX_DB_PATH", None)
+        os.environ.pop("LGDX_SEED_DEMO", None)
         self.temp.cleanup()
 
     def test_point_in_time_schedule_does_not_require_an_end(self):

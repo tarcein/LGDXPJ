@@ -133,6 +133,7 @@ class ScheduleUpdate(BaseModel):
     starts_at: datetime
     ends_at: datetime | None = None
     kind: str = Field(default="ROUTINE", pattern="^(WORK|ROUTINE)$")
+    update_scope: str = Field(default="SINGLE", pattern="^(SINGLE|FUTURE)$")
 
 
 class ChildScheduleUpdate(BaseModel):
@@ -141,6 +142,7 @@ class ChildScheduleUpdate(BaseModel):
     category: str = Field(default="ACADEMY", pattern="^(ACADEMY|SCHOOL|AFTER_SCHOOL|ACTIVITY|OTHER)$")
     starts_at: datetime
     ends_at: datetime | None = None
+    update_scope: str = Field(default="SINGLE", pattern="^(SINGLE|FUTURE)$")
 
 
 def recurring_occurrences(starts_at: datetime, ends_at: datetime, repeat_days: list[int], repeat_until: date | None,
@@ -293,7 +295,8 @@ def bootstrap():
                      SELECT 1 FROM family_data_permission p
                      WHERE p.member_id = s.member_id AND p.scope = 'SCHEDULE_DETAIL' AND p.is_allowed = 1
                    ) THEN s.title ELSE '바쁨' END AS title,
-                   s.starts_at, s.ends_at, s.kind, s.external_source, s.external_id
+                   s.starts_at, s.ends_at, s.has_end_time, s.kind, s.external_source, s.external_id,
+                   s.recurrence_id, s.recurrence_rule
                    FROM personal_schedule s WHERE s.family_id = ? ORDER BY s.starts_at"""
                 if authenticated() else
                 "SELECT * FROM personal_schedule WHERE family_id = ? ORDER BY starts_at",
@@ -344,7 +347,7 @@ def create_member(payload: MemberCreate):
         member_id = str(uuid4())
         db.execute(
             "INSERT INTO family_member(id, family_id, name, role, status, created_at) VALUES (?, ?, ?, ?, 'PENDING', ?)",
-            (member_id, family_id(), payload.name, payload.role, now_iso()),
+            (member_id, family_id(), payload.name, payload.role, now()),
         )
         notify(db, owner_id(db), "구성원 초대 대기", f"{payload.name}님의 초대 수락이 필요합니다")
         return one(db, "SELECT * FROM family_member WHERE id = ?", (member_id,))
@@ -465,16 +468,29 @@ def update_schedule(schedule_id: str, payload: ScheduleUpdate):
             raise HTTPException(403, "본인의 일정만 수정할 수 있습니다")
         if schedule.get("external_source"):
             raise HTTPException(409, "연동된 일정은 Google 또는 Outlook에서 수정해주세요")
-        starts_at, ends_at = payload.starts_at.isoformat(), normalized_end.isoformat()
-        db.execute(
-            """UPDATE personal_schedule SET title = ?, starts_at = ?, ends_at = ?, has_end_time = ?, kind = ?
-               WHERE id = ? AND family_id = ?""",
-            (payload.title, starts_at, ends_at, int(has_end_time), payload.kind, schedule_id, family_id()),
-        )
-        collisions = find_schedule_collisions(db, schedule["member_id"], starts_at, ends_at)
+        targets = [schedule]
+        if payload.update_scope == "FUTURE" and schedule.get("recurrence_id"):
+            targets = rows(db, """SELECT * FROM personal_schedule
+                WHERE family_id = ? AND recurrence_id = ? AND starts_at >= ? ORDER BY starts_at""",
+                (family_id(), schedule["recurrence_id"], schedule["starts_at"]))
+        original_start = datetime.fromisoformat(schedule["starts_at"])
+        time_shift = payload.starts_at - original_start
+        duration = normalized_end - payload.starts_at
+        collisions = []
+        for target in targets:
+            target_start = datetime.fromisoformat(target["starts_at"]) + time_shift
+            target_end = target_start + duration
+            starts_at, ends_at = target_start.isoformat(), target_end.isoformat()
+            db.execute(
+                """UPDATE personal_schedule SET title = ?, starts_at = ?, ends_at = ?, has_end_time = ?, kind = ?
+                   WHERE id = ? AND family_id = ?""",
+                (payload.title, starts_at, ends_at, int(has_end_time), payload.kind, target["id"], family_id()),
+            )
+            collisions.extend(find_schedule_collisions(db, schedule["member_id"], starts_at, ends_at))
         flag_schedule_collisions(db, payload.title, collisions)
         return {"schedule": one(db, "SELECT * FROM personal_schedule WHERE id = ?", (schedule_id,)),
-                "collisions": collisions, "recurring_instance_only": bool(schedule.get("recurrence_id"))}
+                "collisions": collisions, "updated_count": len(targets),
+                "recurring_instance_only": bool(schedule.get("recurrence_id")) and payload.update_scope == "SINGLE"}
 
 
 @app.delete("/api/schedules/{schedule_id}")
@@ -539,32 +555,46 @@ def update_child_schedule(schedule_id: str, payload: ChildScheduleUpdate):
         one(db, "SELECT id FROM family_member WHERE id = ? AND family_id = ? AND status = 'ACTIVE'", (actor_id, family_id()))
         schedule = one(db, "SELECT * FROM child_schedule WHERE id = ? AND family_id = ?", (schedule_id, family_id()))
         one(db, "SELECT id FROM child WHERE id = ? AND family_id = ?", (payload.child_id, family_id()))
-        starts_at, ends_at = payload.starts_at.isoformat(), normalized_end.isoformat()
-        db.execute(
-            """UPDATE child_schedule SET child_id = ?, title = ?, category = ?, starts_at = ?, ends_at = ?, has_end_time = ?
-               WHERE id = ? AND family_id = ?""",
-            (payload.child_id, payload.title, payload.category, starts_at, ends_at, int(has_end_time), schedule_id, family_id()),
-        )
-        care_items = rows(db, "SELECT id FROM care_item WHERE child_schedule_id = ? AND family_id = ?", (schedule_id, family_id()))
-        for care_item in care_items:
+        targets = [schedule]
+        if payload.update_scope == "FUTURE" and schedule.get("recurrence_id"):
+            targets = rows(db, """SELECT * FROM child_schedule
+                WHERE family_id = ? AND recurrence_id = ? AND starts_at >= ? ORDER BY starts_at""",
+                (family_id(), schedule["recurrence_id"], schedule["starts_at"]))
+        original_start = datetime.fromisoformat(schedule["starts_at"])
+        time_shift = payload.starts_at - original_start
+        duration = normalized_end - payload.starts_at
+        care_item_id = None
+        all_suggestions = []
+        for target in targets:
+            target_start = datetime.fromisoformat(target["starts_at"]) + time_shift
+            target_end = target_start + duration
+            starts_at, ends_at = target_start.isoformat(), target_end.isoformat()
             db.execute(
-                """UPDATE care_item SET child_id = ?, title = ?, detail = ?, starts_at = ?
+                """UPDATE child_schedule SET child_id = ?, title = ?, category = ?, starts_at = ?, ends_at = ?, has_end_time = ?
                    WHERE id = ? AND family_id = ?""",
-                (payload.child_id, payload.title, schedule_detail(payload.category, starts_at, ends_at, has_end_time),
-                 starts_at, care_item["id"], family_id()),
+                (payload.child_id, payload.title, payload.category, starts_at, ends_at, int(has_end_time), target["id"], family_id()),
             )
-            assignments = rows(db, """SELECT id, assignee_id, status FROM care_assignment
-                WHERE item_id = ? AND family_id = ? AND status IN ('PROPOSED', 'CANDIDATE_ACCEPTED', 'ACCEPTED')""",
-                (care_item["id"], family_id()))
-            for assignment in assignments:
-                replacement_status = "RECONFIRMATION_REQUIRED" if assignment["status"] == "ACCEPTED" else "CANCELED"
-                db.execute("UPDATE care_assignment SET status = ? WHERE id = ?", (replacement_status, assignment["id"]))
-                notify(db, assignment["assignee_id"], "담당 일정이 변경됐어요",
-                       f"{payload.title} · {starts_at}", "IMPORTANT", "ASSIGNMENT_REQUEST", assignment["id"])
-            if assignments:
-                db.execute("UPDATE care_item SET status = 'CONFIRMED' WHERE id = ?", (care_item["id"],))
-        suggestions = rank_members(db, family_id(), starts_at, target_child_id=payload.child_id)
-        care_item_id = care_items[0]["id"] if care_items else None
+            care_items = rows(db, "SELECT id FROM care_item WHERE child_schedule_id = ? AND family_id = ?", (target["id"], family_id()))
+            for care_item in care_items:
+                care_item_id = care_item_id or care_item["id"]
+                db.execute(
+                    """UPDATE care_item SET child_id = ?, title = ?, detail = ?, starts_at = ?
+                       WHERE id = ? AND family_id = ?""",
+                    (payload.child_id, payload.title, schedule_detail(payload.category, starts_at, ends_at, has_end_time),
+                     starts_at, care_item["id"], family_id()),
+                )
+                assignments = rows(db, """SELECT id, assignee_id, status FROM care_assignment
+                    WHERE item_id = ? AND family_id = ? AND status IN ('PROPOSED', 'CANDIDATE_ACCEPTED', 'ACCEPTED')""",
+                    (care_item["id"], family_id()))
+                for assignment in assignments:
+                    replacement_status = "RECONFIRMATION_REQUIRED" if assignment["status"] == "ACCEPTED" else "CANCELED"
+                    db.execute("UPDATE care_assignment SET status = ? WHERE id = ?", (replacement_status, assignment["id"]))
+                    notify(db, assignment["assignee_id"], "담당 일정이 변경됐어요",
+                           f"{payload.title} · {starts_at}", "IMPORTANT", "ASSIGNMENT_REQUEST", assignment["id"])
+                if assignments:
+                    db.execute("UPDATE care_item SET status = 'CONFIRMED' WHERE id = ?", (care_item["id"],))
+            all_suggestions = rank_members(db, family_id(), starts_at, target_child_id=payload.child_id)
+        suggestions = all_suggestions
         owner = owner_id(db)
         if actor_id != owner:
             actor = one(db, "SELECT name FROM family_member WHERE id = ?", (actor_id,))
@@ -576,7 +606,8 @@ def update_child_schedule(schedule_id: str, payload: ChildScheduleUpdate):
                    "IMPORTANT", "CARE_SUGGESTION", care_item_id)
         return {"schedule": one(db, "SELECT * FROM child_schedule WHERE id = ?", (schedule_id,)),
                 "care_item_id": care_item_id, "suggestions": suggestions,
-                "recurring_instance_only": bool(schedule.get("recurrence_id"))}
+                "updated_count": len(targets),
+                "recurring_instance_only": bool(schedule.get("recurrence_id")) and payload.update_scope == "SINGLE"}
 
 
 @app.delete("/api/child-schedules/{schedule_id}")

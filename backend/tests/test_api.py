@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from app.db import database
 from app.main import app
 
 
@@ -17,12 +18,14 @@ class CareFlowTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         os.environ["LGDX_DB_PATH"] = str(Path(self.temp.name) / "test.db")
+        os.environ["LGDX_SEED_DEMO"] = "1"
         self.client_context = TestClient(app)
         self.client = self.client_context.__enter__()
 
     def tearDown(self) -> None:
         self.client_context.__exit__(None, None, None)
         os.environ.pop("LGDX_DB_PATH", None)
+        os.environ.pop("LGDX_SEED_DEMO", None)
         self.temp.cleanup()
 
     def test_free_plan_rejects_extra_family_members(self) -> None:
@@ -79,6 +82,38 @@ class CareFlowTest(unittest.TestCase):
         self.assertEqual(len(snapshot["exceptions"]), 1)
         self.assertEqual(snapshot["exceptions"][0]["assignment_id"], "assignment-pickup")
         self.assertIn("병원 방문", snapshot["exceptions"][0]["reason"])
+
+
+class EmptyDatabaseOnboardingTest(unittest.TestCase):
+    def test_first_family_can_be_created_without_demo_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            os.environ["LGDX_DB_PATH"] = str(Path(temp) / "empty.db")
+            os.environ["LGDX_SEED_DEMO"] = "0"
+            try:
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/api/families",
+                        json={"name": "새 가족", "owner_name": "정희원"},
+                    )
+                    self.assertEqual(response.status_code, 201)
+                    payload = response.json()
+                    member_response = client.post(
+                        "/api/members",
+                        headers={"Authorization": f"Bearer {payload['access_token']}"},
+                        json={"name": "김태준", "role": "PARENT"},
+                    )
+                    self.assertEqual(member_response.status_code, 201)
+                    with database() as db:
+                        family_count = db.execute("SELECT COUNT(*) FROM family_group").fetchone()[0]
+                        invitation = db.execute(
+                            "SELECT created_by_member_id FROM family_invite_link WHERE family_id = ?",
+                            (payload["family_id"],),
+                        ).fetchone()
+                    self.assertEqual(family_count, 1)
+                    self.assertEqual(invitation["created_by_member_id"], payload["member_id"])
+            finally:
+                os.environ.pop("LGDX_DB_PATH", None)
+                os.environ.pop("LGDX_SEED_DEMO", None)
 
 
 if __name__ == "__main__":

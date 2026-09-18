@@ -6,7 +6,7 @@ Copy `.env.example` to `.env` and enter `OPENAI_API_KEY` in `.env`. The same Ope
 
 ## Database
 
-The backend uses PostgreSQL when `DATABASE_URL` is present in `backend/.env`; otherwise it falls back to `backend/lgdx.db` for local development and isolated tests. The current PostgreSQL schema is created automatically when the app starts. Keep the connection string in `.env`, never in committed source.
+The backend uses PostgreSQL when `DATABASE_URL` is present in `backend/.env`; otherwise it falls back to `backend/lgdx.db` for local development and isolated tests. The current PostgreSQL schema is created automatically when the app starts. `LGDX_SEED_DEMO=0` keeps a cleared database empty so the first-run family-room onboarding can be tested; use `1` only when the demo family is explicitly needed. Keep the connection string in `.env`, never in committed source.
 
 To copy an existing local SQLite database into an empty or initialized PostgreSQL database, stop write traffic and run once from `backend/`:
 
@@ -51,7 +51,7 @@ Replace `C:\path\voice.wav` with an existing PC recording. WAV, MP3, M4A, OGG, a
 | Search care benefits | `GET /api/benefits?keyword=돌봄&city=서울특별시&district=은평구` | Pro; returns child-related district, city, and central-government matches in `DISTRICT`, `CITY`, `NATIONAL` order, excluding other municipalities and adult-only care programs |
 | Find local care institutions | `GET /api/benefits/institutions?city=서울특별시&district=은평구` | Pro; calls the official 아이돌봄 service-institution API and normalizes province names such as `서울특별시` to `서울` |
 | Read official eligibility references | `GET /api/benefits/eligibility-criteria` | Pro; returns the latest criterion year present in the public household-income and health-insurance datasets, plus the dataset update date |
-| Ask the family for urgent help | `POST /api/emergency-requests` | PRO parent only; JSON `assignment_id`, optional `reason`; creates per-member DB notifications |
+| Ask the family for urgent help | `POST /api/emergency-requests` | PRO parent only; JSON `assignment_id`, optional `reason`; requests are unlimited and multiple open requests for the same assignment are allowed; creates per-member DB notifications |
 | See, claim, or cancel an urgent request | `GET /api/emergency-requests`, `POST /api/emergency-requests/{id}/claim`, `POST /api/emergency-requests/{id}/cancel` | First eligible caregiver claim atomically replaces the assignment and closes the request |
 | Get plan and available feature list | `GET /api/plans`, `/api/subscription`, `/api/features` | Current family bearer token for a new room |
 | Buy a one-month Toss Pro period | `GET /api/billing/config`, `POST /api/billing/orders`, `POST /api/billing/confirm` | Owner only; creates the server-side 7,900 KRW order used by the inline payment widget, verifies the callback amount/order with Toss, and activates Pro for one calendar month. Secret keys and payment keys remain on the backend |
@@ -68,7 +68,7 @@ For local Free/Pro testing, set `LGDX_DEV_MODE=1` in `backend/.env` and restart 
 
 The frontend is organized as `홈 · 케어 · 일정 · 가족 · 더보기`. It uses bearer family sessions, sends photo files for OCR, calls the AI chat/voice APIs, and reads server plan and emergency-request state. `/api/bootstrap` now includes `child_schedules`; confirmed OCR care items remain categorized as `SCHEDULE`, `SUPPLY`, `TODO`, or `CHANGE`, so the UI can separate child schedules and supplies.
 
-For recurring schedules, `repeat_days` uses Monday `0` through Sunday `6`, and `repeat_until` is an inclusive `YYYY-MM-DD` date. Both fields must be provided together. Alternatively, `repeat_dates` accepts explicit `YYYY-MM-DD` dates for interval, monthly, and selected-date rules. The server expands either form into individual calendar rows, returns them in `schedules`, records a common `recurrence_id`, and limits one request to a one-year range. The current edit/delete UI changes the selected occurrence only.
+For recurring schedules, `repeat_days` uses Monday `0` through Sunday `6`, and `repeat_until` is an inclusive `YYYY-MM-DD` date. Both fields must be provided together. Alternatively, `repeat_dates` accepts explicit `YYYY-MM-DD` dates for interval, monthly, and selected-date rules. The server expands either form into individual calendar rows, returns them in `schedules`, records a common `recurrence_id`, and limits one request to a one-year range. Schedule edits accept `update_scope=SINGLE` for the selected occurrence or `update_scope=FUTURE` for that occurrence and the later rows in the same recurrence. Deletion still applies to the selected occurrence only.
 
 Google and Outlook require OAuth application credentials rather than a simple API key. Put `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `MICROSOFT_CLIENT_ID`, and `MICROSOFT_CLIENT_SECRET` in `.env`; register `{CALENDAR_REDIRECT_BASE}/api/calendar-connections/google/callback` and `{CALENDAR_REDIRECT_BASE}/api/calendar-connections/microsoft/callback` as web redirect URIs in the provider consoles. `GOOGLE_CALENDAR_API_KEY` alone leaves Google `configured=false`. The frontend reports each provider independently and allows both accounts to be connected and synchronized. Tokens are stored only for this local prototype; production needs encrypted token storage, revocation handling, and a reviewed HTTPS redirect URL.
 

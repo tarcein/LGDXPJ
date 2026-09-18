@@ -65,7 +65,7 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _new_code(db, target_family: str) -> tuple[str, str]:
+def _new_code(db, target_family: str, created_by_member_id: str | None = None) -> tuple[str, str]:
     code = "".join(secrets.choice(ALPHABET) for _ in range(10))
     while db.execute("SELECT 1 FROM family_invite_link WHERE code_hash = ?", (_hash(code),)).fetchone():
         code = "".join(secrets.choice(ALPHABET) for _ in range(10))
@@ -74,7 +74,7 @@ def _new_code(db, target_family: str) -> tuple[str, str]:
         """INSERT INTO family_invite_link(code_hash, family_id, expires_at,
               created_by_member_id, created_at, join_count)
            VALUES (?, ?, ?, ?, ?, 0)""",
-        (_hash(code), target_family, expires_at, member_id(), _now().isoformat()),
+        (_hash(code), target_family, expires_at, created_by_member_id or member_id(), _now().isoformat()),
     )
     return code, expires_at
 
@@ -216,7 +216,7 @@ def create_family(payload: FamilyCreate):
             (target_member, target_family, payload.owner_name, _now().isoformat()),
         )
         _seed_member_settings(db, target_member, True)
-        code, expires_at = _new_code(db, target_family)
+        code, expires_at = _new_code(db, target_family, target_member)
         token = _new_session(db, target_family, target_member)
     return {"family_id": target_family, "member_id": target_member, "invite_code": code,
             "invite_expires_at": expires_at, "access_token": token, "plan": "FREE"}

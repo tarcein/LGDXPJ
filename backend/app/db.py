@@ -265,13 +265,15 @@ CREATE INDEX IF NOT EXISTS idx_emergency_family_status ON emergency_request(fami
 CREATE INDEX IF NOT EXISTS idx_media_family_created ON media_asset(family_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_invite_link_family ON family_invite_link(family_id, expires_at);
 CREATE INDEX IF NOT EXISTS idx_payment_family_created ON payment_transaction(family_id, created_at);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_emergency_open_assignment ON emergency_request(assignment_id) WHERE status = 'OPEN';
 """
 
 
 def initialize() -> None:
     with database() as db:
         db.executescript(SCHEMA)
+        # Emergency requests are intentionally unlimited. Older databases used a
+        # partial unique index that allowed only one open request per assignment.
+        db.execute("DROP INDEX IF EXISTS idx_emergency_open_assignment")
         if is_postgres(db):
             db.execute("ALTER TABLE care_handoff ADD COLUMN IF NOT EXISTS special_note TEXT NOT NULL DEFAULT ''")
             for table, name, definition in (
@@ -342,6 +344,9 @@ def initialize() -> None:
                       SELECT id, 'SCHEDULE_DETAIL', 0 FROM family_member WHERE 1=1
                       ON CONFLICT(member_id, scope) DO NOTHING""")
         if db.execute("SELECT 1 FROM family_group WHERE id = 'demo-family'").fetchone():
+            return
+
+        if os.environ.get("LGDX_SEED_DEMO", "1").lower() not in {"1", "true", "yes", "on"}:
             return
 
         now = datetime.now(ZoneInfo("Asia/Seoul"))

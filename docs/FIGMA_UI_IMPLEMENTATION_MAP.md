@@ -16,7 +16,7 @@
 | 케어 기본 | `644:1081` | `careHub` | 하단 탭 케어 | bootstrap의 실제 배정·예외·완료 이력 |
 | 케어 예외 | `662:1717`, `662:4935` | `exception` | 케어 → 예외 상황 | `/exceptions`, 승인 API |
 | 역할 배정/요청/수락 | `653:2717`, `658:3289`, `658:3847`, `658:4149`, `658:4417`, `660:1177` | `assignments`, `suggestion`, `tasks` | 케어 → 오늘의 배정/내 돌봄 | `/items/:id/suggestions`, `/assignments` |
-| 긴급 도움 요청 | `646:298` | `emergency` | 케어 → 긴급 도움 요청 | `/emergency-requests` |
+| 긴급 도움 요청 | `646:298`, `681:220` 화면군 | `emergency` | 케어 → 긴급 도움 요청 | `/emergency-requests`, 동일 배정에도 횟수 제한 없이 요청 |
 | 일정 달력 | `557:1917`, `557:1795` | `schedule` | 하단 탭 일정 | `/schedules`, `/child-schedules` |
 | 반복 루틴 등록 | `557:1551` | `schedule`의 전체 화면 등록 레이어 | 일정 → `반복 일정 추가` 또는 날짜 일정 → `+` | `/schedules`, `/child-schedules` 반복 생성 |
 | 알림장 촬영 | `421:6400`, `418:4625` | `capture` | 일정 → 알림장 등록 | `/intakes/photo` |
@@ -28,11 +28,13 @@
 | 알림/알림 설정 | `421:5289`, `418:3471` | `notifications`, `settings` | 더보기 → 알림함/알림 설정 | bootstrap notifications, preference API |
 | AI 어시스턴트 | `670:10092`, `670:10377` | `chat` | 모든 서비스 화면의 플로팅 버튼 | `/assistant/chat`, `/assistant/voice` |
 | 이동/인수인계/완료 | `662:2335`, `662:2586`, `662:2729`, `662:5846`, `662:6130`, `662:6409` | `location`, `tasks`, `lockscreen` | 홈/케어 → 이동 현황 또는 완료 | 배정 완료·인수인계 API |
-| 돌봄 공백/제도/앨범/플랜 | Figma 더보기 확장 화면군 | `gap`, `programs`, `album`, `plan` | 더보기 또는 가족 탭 | 실제 API 또는 플랜 제한 적용 |
+| 돌봄 공백 예측 | `681:1173` | `gap` | 더보기 → 혜택·부가서비스 → 돌봄 공백 예측 | 실제 미배정 일정과 배정 후보 데이터, Pro 제한 적용 |
+| 돌봄 제도 | `681:913` | `programs` | 더보기 → 혜택·부가서비스 → 돌봄 제도 안내 | 실제 공공 돌봄 제도·기관 API, 지역 필터, Pro 제한 적용 |
+| 패밀리 앨범/플랜 | Figma 더보기 확장 화면군 | `album`, `plan` | 가족 또는 더보기 → 혜택·부가서비스 | 실제 API와 결제 화면 연결 |
 
 ## 공통 UI
 
-- `MobileStatusBar`, `AppHeader`, `BottomNav`, `FloatingAssistant`: 393px 모바일 셸, 공통 상태바, 가족방 헤더, 5탭 하단바, 전역 AI 버튼.
+- `MobileStatusBar`, `AppHeader`, `BottomNav`, `FloatingAssistant`: 393px 모바일 셸, 공통 상태바, 모든 서비스 화면의 알림·내 프로필 헤더, 5탭 하단바, 전역 AI 버튼.
 - `Card`, `Section`, `Empty`, `BottomSheet`, `Pro`: 카드, 섹션 제목, 빈 상태, 모달/바텀시트, 플랜 배지.
 - 색상은 Figma 최신 화면의 `#F4F6FC`, `#1A181C`, `#606C80`, `#C4123F`, `#B91C1C`, `#008236`을 토큰으로 사용한다.
 - 데스크톱에서는 393×852 디바이스 프레임과 화면 인덱스를 제공하고, 모바일에서는 안전 영역을 포함한 전체 화면으로 전환한다.
