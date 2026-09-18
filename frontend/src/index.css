@@ -2,6 +2,7 @@
 
 :root { font-family: 'Noto Sans KR', Arial, sans-serif; color: #1a181c; background: #eceef3; font-synthesis: none; }
 * { box-sizing: border-box; }
+html, body, #root { width: 100%; min-height: 100%; }
 body { margin: 0; min-width: 320px; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; border: 0; }
@@ -722,11 +723,12 @@ strong { font-weight: 700; }
 .invite-share-options button { display: grid; justify-items: center; gap: 8px; min-height: 66px; padding: 11px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; font-size: 8px; }
 .invite-share-options img { width: 25px; height: 25px; object-fit: contain; }
 
-@media (max-width: 1000px), (pointer: coarse) {
-  .app-shell { padding: 0; gap: 0; min-height: 100dvh; background: #f4f6fc; }
+@media (max-width: 1000px) {
+  html, body, #root { height: 100%; min-height: 100%; overflow: hidden; background: #f4f6fc; }
+  .app-shell { width: 100%; height: 100dvh; min-height: 100svh; overflow: hidden; padding: 0; gap: 0; background: #f4f6fc; }
   .screen-index { display: none; }
-  .phone-wrap { width: 100%; }
-  .phone { width: 100%; height: 100dvh; max-height: none; border: 0; border-radius: 0; box-shadow: none; }
+  .phone-wrap { width: 100%; height: 100%; align-self: stretch; }
+  .phone { width: 100%; height: 100%; min-height: 100%; max-height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }
   .phone-content { padding: max(16px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) calc(104px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); font-size: 14px; }
   .phone-content.edge-to-edge { padding: 0; }
   .bottom-nav { padding-bottom: env(safe-area-inset-bottom); height: calc(71px + env(safe-area-inset-bottom)); }
@@ -908,6 +910,9 @@ strong { font-weight: 700; }
 .more-list button > i img { width: 26px; height: 26px; object-fit: contain; }
 .more-list button > span { display: grid; min-width: 0; flex: 1; gap: 3px; }
 .more-list button > span strong { font-size: 11px; }.more-list button > span small { color: var(--fc-subtle); font-size: 8px; }.more-list button > em { font-style: normal; }.more-list button > b { color: var(--fc-subtle); }
+.more-list.pro-active button, .more-list.pro-active button > span strong { color: var(--fc-ink); }
+.more-list.pro-active button > span small { color: var(--fc-muted); }
+.more-list.pro-active button > b { color: #747b87; }
 
 .figma-home { display: flex; flex-direction: column; }
 .figma-home .section-heading { margin: 22px 0 8px; color: rgba(26,24,28,.45); font-size: 11.5px; }
@@ -976,7 +981,7 @@ strong { font-weight: 700; }
 .notification-settings-link { align-self: center; margin-top: 18px; color: var(--fc-brand); background: transparent; font-size: 12px; font-weight: 700; }
 .notification-note { margin: auto 0 0; padding: 13px 16px; border-radius: 16px; color: #6b6b72; background: #efeee9; font-size: 11px; text-align: center; }
 
-@media (max-width: 1000px), (pointer: coarse) {
+@media (max-width: 1000px) {
   .phone { border-radius: 0; }
   .mobile-status { display: flex; flex-basis: 58px; }
   .app-header { min-height: calc(78px + env(safe-area-inset-top)); padding-top: max(8px, env(safe-area-inset-top)); padding-left: max(20px, env(safe-area-inset-left)); padding-right: max(20px, env(safe-area-inset-right)); }
@@ -1178,7 +1183,7 @@ strong { font-weight: 700; }
 .pattern-secondary { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 8px; }
 .pattern-secondary button { min-height: 42px; border-radius: 10px; color: #747983; background: #f2f3f6; font-size: 9px; }
 
-@media (max-width: 1000px), (pointer: coarse) {
+@media (max-width: 1000px) {
   .phone-content.chat-content { padding: 0; }
   .app-shell .assistant-chat-header > strong { font-size: 14px; }
   .app-shell .assistant-token-bar strong { font-size: 12px; }
@@ -1235,28 +1240,56 @@ strong { font-weight: 700; }
 .pro-gate-dialog p { margin: 0 0 19px; color: #737983; font-size: 12px; line-height: 1.7; }
 .pro-gate-dialog .text-link { margin-top: 12px; color: #7d828b; }
 
-.figma-benefits-page { display: grid; gap: 12px; }
-.benefit-filter-pills { display: flex; gap: 7px; overflow-x: auto; }
+.invite-quick-sheet { max-height: min(650px, calc(100dvh - 20px)); overflow-y: auto; }
+.invite-quick-sheet > h2 { margin-bottom: 7px; }
+.invite-quick-sheet > p { margin-bottom: 17px; color: #747a84; line-height: 1.55; }
+.invite-quick-sheet .kakao-share { display: flex; min-height: 48px; align-items: center; justify-content: center; gap: 8px; color: #221f17; background: #f4d600; font-weight: 800; }
+.invite-quick-sheet .kakao-share img { width: 20px; height: 20px; object-fit: contain; }
+.invite-quick-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.invite-quick-options button { display: grid; min-width: 0; min-height: 62px; justify-items: center; gap: 5px; padding: 9px 5px; border: 1px solid #e7e8ec; border-radius: 11px; color: #5f6570; background: #fff; font-size: 9px; }
+.invite-quick-options img { width: 24px; height: 24px; object-fit: contain; }
+.invite-preparing { display: grid; min-height: 120px; place-items: center; color: #747a84; font-size: 12px; }
+
+.figma-benefits-page { display: grid; width: 100%; min-width: 0; gap: 12px; overflow-x: hidden; padding-bottom: 72px; }
+.benefit-filter-pills { display: flex; min-width: 0; gap: 7px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.benefit-filter-pills::-webkit-scrollbar { display: none; }
 .benefit-filter-pills button { flex: none; padding: 9px 15px; border: 1px solid #e1e3e8; border-radius: 999px; color: #666c76; background: #fff; font-size: 10px; }
-.benefit-filter-pills button:first-child { border-color: #c4123f; color: #fff; background: #c4123f; }
+.benefit-filter-pills button.active { border-color: #c4123f; color: #fff; background: #c4123f; }
+.benefit-location-editor { width: 100%; min-width: 0; margin: 0; padding: 14px; }
+.benefit-location-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.benefit-location-fields label, .benefit-location-fields input { min-width: 0; width: 100%; }
 .benefit-deadline { display: flex; align-items: center; gap: 11px; min-height: 53px; padding: 11px 14px; border-radius: 13px; color: #8e1b34; background: #fff8fa; box-shadow: 0 0 15px rgba(196,18,63,.13); }
 .benefit-deadline b { padding: 6px 9px; border-radius: 6px; color: #fff; background: #c4123f; font-size: 10px; }
 .benefit-deadline strong { font-size: 11px; }
-.featured-benefit { display: grid; gap: 11px; margin: 0; padding: 17px; }
+.featured-benefit { display: grid; min-width: 0; gap: 11px; margin: 0; padding: 17px; }
 .featured-benefit header, .featured-institution header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .featured-benefit header strong, .featured-institution header strong { font-size: 14px; }
 .featured-benefit header em { padding: 5px 7px; border-radius: 5px; color: #8a6206; background: #f7efd9; font-size: 9px; font-style: normal; }
 .featured-benefit h2 { margin: 0; color: #c4123f; font-size: 20px; }
-.featured-benefit p, .featured-institution p { margin: 0; color: #717781; font-size: 10px; line-height: 1.6; }
+.featured-benefit p, .featured-institution p { margin: 0; overflow-wrap: anywhere; color: #717781; font-size: 10px; line-height: 1.6; }
 .benefit-share-button { min-height: 42px; border-radius: 11px; color: #24272e; background: #eceaec; font-size: 11px; font-weight: 750; }
 .featured-institution { display: grid; gap: 8px; margin: 0; padding: 16px; }
 .featured-institution header small { color: #8d929a; }
 .featured-institution h3 { margin: 0; font-size: 16px; }
 .featured-institution a { color: #c4123f; font-size: 10px; font-weight: 750; text-decoration: none; }
-.benefit-more { border-radius: 14px; background: #fff; }
+.benefit-detail { display: grid; width: 100%; min-width: 0; gap: 13px; overflow: hidden; margin-bottom: 64px; padding: 17px; }
+.benefit-detail h3 { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 17px; line-height: 1.45; }
+.benefit-detail p, .benefit-detail a { min-width: 0; max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
+.benefit-detail .benefit-summary { margin: 0; }
+.benefit-copy-block { display: grid; min-width: 0; gap: 5px; }
+.benefit-copy-block > strong { font-size: 11px; }
+.benefit-copy-block > p { margin: 0; line-height: 1.65; white-space: pre-line; }
+.benefit-official-link { display: flex; width: 100%; min-height: 43px; align-items: center; justify-content: center; text-decoration: none; }
+.benefit-more { width: 100%; min-width: 0; max-width: 100%; overflow: hidden; border-radius: 14px; background: #fff; }
 .benefit-more > summary { padding: 14px 16px; color: #5f6570; font-size: 11px; font-weight: 750; cursor: pointer; }
 .benefit-more[open] { padding: 0 12px 12px; }
 .benefit-more[open] > summary { margin: 0 -12px 12px; border-bottom: 1px solid #eceef2; }
+.benefit-more[open] > *:not(summary) { min-width: 0; max-width: 100%; }
+.benefit-search { grid-template-columns: minmax(0, 1fr) auto; }
+.program-choice { min-width: 0; }
+.program-choice > span, .program-choice strong, .program-choice small { min-width: 0; overflow-wrap: anywhere; }
+.criteria-scroll { width: 100%; max-width: 100%; overflow-x: auto; }
+.criteria-scroll table { width: max-content; min-width: 100%; }
 .benefit-bottom-note { margin: auto 0 0; padding: 13px 15px; border-radius: 12px; color: #7f848c; background: #efeee9; font-size: 10px; }
 
 .figma-gap-page { display: flex; min-height: 610px; flex-direction: column; }
@@ -1279,7 +1312,7 @@ strong { font-weight: 700; }
 .gap-alternatives strong { font-size: 12px; }.gap-alternatives small, .gap-alternatives p { margin: 0; color: #858b95; font-size: 9px; }
 .gap-detail-button { margin-top: auto; }
 
-@media (max-width: 1000px), (pointer: coarse) {
+@media (max-width: 1000px) {
   .app-shell .more-policy-list button { font-size: 14px; }
   .app-shell .care-subscreen-title > strong, .app-shell .care-feature-heading > strong { font-size: 16px; }
   .app-shell .assignment-child-grid strong, .app-shell .gap-alternatives strong { font-size: 14px; }
