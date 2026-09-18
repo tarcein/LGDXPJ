@@ -1,0 +1,300 @@
+erDiagram
+    %% Source of truth: backend/app/db.py :: SCHEMA + initialize() migrations
+    %% This diagram describes the currently implemented SQLite/PostgreSQL-compatible schema.
+    direction LR
+
+    familyGroup["Family Group"] {
+        string id PK
+        string name
+        string plan
+        datetime created_at
+    }
+    familyLocation["Family Location"] {
+        string family_id PK, FK
+        string city
+        string district
+        datetime updated_at
+    }
+    familyMember["Family Member"] {
+        string id PK
+        string family_id FK
+        string name
+        string role
+        string status
+        bool is_owner
+        datetime created_at
+    }
+    child["Child"] {
+        string id PK
+        string family_id FK
+        string name
+        string age_label
+    }
+    personalSchedule["Personal Schedule"] {
+        string id PK
+        string family_id FK
+        string member_id FK
+        string title
+        datetime starts_at
+        datetime ends_at
+        string kind
+        string external_source
+        string external_id
+        string recurrence_id
+        string recurrence_rule
+    }
+    childSchedule["Child Schedule"] {
+        string id PK
+        string family_id FK
+        string child_id FK
+        string title
+        string category
+        datetime starts_at
+        datetime ends_at
+        string source
+        string recurrence_id
+        string recurrence_rule
+    }
+    careIntake["Care Intake"] {
+        string id PK
+        string family_id FK
+        string child_id FK
+        string raw_content
+        string input_type
+        datetime created_at
+    }
+    careItem["Care Item"] {
+        string id PK
+        string family_id FK
+        string intake_id FK
+        string child_id FK
+        string child_schedule_id FK
+        string item_type
+        string title
+        string confidence
+        string status
+        datetime starts_at
+    }
+    careAssignment["Care Assignment"] {
+        string id PK
+        string family_id FK
+        string item_id FK
+        string assignee_id FK
+        string requested_by_member_id FK
+        string status
+        string source
+        datetime completed_at
+    }
+    careException["Care Exception"] {
+        string id PK
+        string family_id FK
+        string assignment_id FK
+        string alternative_member_id FK
+        string reason
+        string status
+        datetime created_at
+    }
+    careHandoff["Care Handoff"] {
+        string id PK
+        string family_id FK
+        string assignment_id FK
+        string from_member_id FK
+        string to_member_id FK
+        string special_note
+        string status
+        datetime acknowledged_at
+    }
+    notification["Notification"] {
+        string id PK
+        string family_id FK
+        string member_id FK
+        string title
+        string level
+        bool is_read
+        string action_type
+        string action_id
+        datetime created_at
+    }
+    familyDataPermission["Family Data Permission"] {
+        string member_id PK, FK
+        string scope PK
+        bool is_allowed
+    }
+    notificationPreference["Notification Preference"] {
+        string member_id PK, FK
+        bool app_enabled
+        bool daily_digest_enabled
+    }
+    familyInviteCode["Family Invite Code"] {
+        string family_id PK, FK
+        string code_hash UK
+        datetime expires_at
+    }
+    familyInviteLink["Family Invite Link"] {
+        string code_hash PK
+        string family_id FK
+        string created_by_member_id FK
+        datetime expires_at
+        int join_count
+        int max_uses
+        datetime revoked_at
+    }
+    familySession["Family Session"] {
+        string token_hash PK
+        string family_id FK
+        string member_id FK
+        datetime expires_at
+        datetime last_seen_at
+    }
+    dailyUsage["Daily Usage"] {
+        string family_id PK, FK
+        date day PK
+        string feature PK
+        int amount
+    }
+    assistantMessage["Assistant Message"] {
+        string id PK
+        string family_id FK
+        string member_id FK
+        string role
+        string content
+        datetime created_at
+    }
+    planPreview["Plan Preview"] {
+        string family_id PK, FK
+        bool enabled
+    }
+    emergencyRequest["Emergency Request"] {
+        string id PK
+        string family_id FK
+        string assignment_id FK
+        string requested_by_member_id FK
+        string claimed_by_member_id FK
+        string reason
+        string status
+        datetime resolved_at
+    }
+    mediaAsset["Media Asset"] {
+        string id PK
+        string family_id FK
+        string child_id FK
+        string assignment_id FK
+        string uploaded_by_member_id FK
+        string kind
+        string file_name
+        string mime_type
+        string storage_path
+        string date_folder
+        datetime created_at
+    }
+    deviceAlertOutbox["Device Alert Outbox"] {
+        string id PK
+        string family_id FK
+        string member_id FK
+        string assignment_id FK
+        string title
+        string status
+        datetime created_at
+    }
+    memberBenefitLocation["Member Benefit Location"] {
+        string family_id PK, FK
+        string member_id PK, FK
+        string city
+        string district
+        datetime updated_at
+    }
+    familySubscription["Family Subscription"] {
+        string family_id PK, FK
+        string provider
+        string customer_key UK
+        string billing_key
+        string status
+        int amount
+        datetime current_period_end
+        datetime next_billing_at
+    }
+    paymentTransaction["Payment Transaction"] {
+        string order_id PK
+        string family_id FK
+        string provider
+        int amount
+        string status
+        string payment_key
+        datetime approved_at
+        datetime created_at
+    }
+    calendarOauthState["Calendar OAuth State"] {
+        string state PK
+        string family_id FK
+        string member_id FK
+        string provider
+        datetime expires_at
+        string return_url
+    }
+    calendarConnection["Calendar Connection"] {
+        string family_id PK, FK
+        string member_id PK, FK
+        string provider PK
+        string access_token
+        string refresh_token
+        datetime expires_at
+        datetime synced_at
+    }
+
+    familyGroup ||--o| familyLocation : "has"
+    familyGroup ||--o{ familyMember : "contains"
+    familyGroup ||--o{ child : "cares_for"
+    familyGroup ||--o{ personalSchedule : "scopes"
+    familyGroup ||--o{ childSchedule : "scopes"
+    familyGroup ||--o{ careIntake : "receives"
+    familyGroup ||--o{ careItem : "owns"
+    familyGroup ||--o{ careAssignment : "owns"
+    familyGroup ||--o{ careException : "owns"
+    familyGroup ||--o{ careHandoff : "owns"
+    familyGroup ||--o{ notification : "emits"
+    familyGroup ||--o| familyInviteCode : "issues"
+    familyGroup ||--o{ familyInviteLink : "issues"
+    familyGroup ||--o{ familySession : "scopes"
+    familyGroup ||--o{ dailyUsage : "tracks"
+    familyGroup ||--o{ assistantMessage : "contains"
+    familyGroup ||--o| planPreview : "previews"
+    familyGroup ||--o{ emergencyRequest : "raises"
+    familyGroup ||--o{ mediaAsset : "owns"
+    familyGroup ||--o{ deviceAlertOutbox : "queues"
+    familyGroup ||--o{ memberBenefitLocation : "has"
+    familyGroup ||--o| familySubscription : "subscribes"
+    familyGroup ||--o{ paymentTransaction : "records"
+    familyGroup ||--o{ calendarOauthState : "authorizes"
+    familyGroup ||--o{ calendarConnection : "connects"
+
+    familyMember ||--o{ personalSchedule : "creates"
+    child ||--o{ childSchedule : "has"
+    child o|--o{ careIntake : "concerns"
+    child o|--o{ careItem : "concerns"
+    childSchedule o|--o{ careItem : "informs"
+    careIntake o|--o{ careItem : "extracts"
+    careItem ||--o{ careAssignment : "assigned_as"
+    familyMember ||--o{ careAssignment : "assigned_to"
+    familyMember o|--o{ careAssignment : "requests"
+    careAssignment ||--o{ careException : "triggers"
+    familyMember ||--o{ careException : "may_replace"
+    careAssignment ||--o{ careHandoff : "transfers"
+    familyMember ||--o{ careHandoff : "hands_off"
+    familyMember ||--o{ careHandoff : "receives"
+    familyMember o|--o{ notification : "receives"
+    familyMember ||--o{ familyDataPermission : "configures"
+    familyMember ||--o| notificationPreference : "configures"
+    familyMember o|--o{ familyInviteLink : "creates"
+    familyMember ||--o{ familySession : "authenticates"
+    familyMember o|--o{ assistantMessage : "sends"
+    familyMember ||--o{ emergencyRequest : "requests"
+    familyMember o|--o{ emergencyRequest : "claims"
+    familyMember o|--o{ mediaAsset : "uploads"
+    familyMember ||--o{ deviceAlertOutbox : "targets"
+    familyMember ||--o{ memberBenefitLocation : "locates"
+    familyMember ||--o{ calendarOauthState : "authorizes"
+    familyMember ||--o{ calendarConnection : "connects"
+    careAssignment ||--o{ emergencyRequest : "escalates"
+    careAssignment o|--o{ mediaAsset : "proves"
+    careAssignment o|--o{ deviceAlertOutbox : "alerts"
+    child o|--o{ mediaAsset : "appears_in"

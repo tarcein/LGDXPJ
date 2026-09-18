@@ -1,0 +1,273 @@
+// Source of truth: backend/app/db.py (SCHEMA + initialize migrations)
+// Paste this file directly into https://dbdiagram.io/
+
+Table family_group {
+  id text [pk]
+  name text [not null]
+  plan text [not null, default: 'FREE']
+  created_at datetime [not null]
+}
+
+Table family_location {
+  family_id text [pk, ref: > family_group.id]
+  city text [not null]
+  district text [not null]
+  updated_at datetime [not null]
+}
+
+Table family_member {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  name text [not null]
+  role text [not null]
+  status text [not null, default: 'ACTIVE']
+  is_owner boolean [not null, default: false]
+  created_at datetime [not null]
+}
+
+Table child {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  name text [not null]
+  age_label text [not null]
+}
+
+Table personal_schedule {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  member_id text [not null, ref: > family_member.id]
+  title text [not null]
+  starts_at datetime [not null]
+  ends_at datetime [not null]
+  kind text [not null, default: 'ROUTINE']
+  external_source text
+  external_id text
+  recurrence_id text
+  recurrence_rule text
+}
+
+Table child_schedule {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  child_id text [not null, ref: > child.id]
+  title text [not null]
+  category text [not null]
+  starts_at datetime [not null]
+  ends_at datetime [not null]
+  source text [not null, default: 'MANUAL']
+  recurrence_id text
+  recurrence_rule text
+}
+
+Table care_intake {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  child_id text [ref: > child.id]
+  raw_content text [not null]
+  input_type text [not null]
+  created_at datetime [not null]
+}
+
+Table care_item {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  intake_id text [ref: > care_intake.id]
+  child_id text [ref: > child.id]
+  child_schedule_id text [ref: > child_schedule.id]
+  item_type text [not null]
+  title text [not null]
+  detail text [not null, default: '']
+  confidence text [not null, default: 'LOW']
+  status text [not null, default: 'NEEDS_REVIEW']
+  starts_at datetime
+}
+
+Table care_assignment {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  item_id text [not null, ref: > care_item.id]
+  assignee_id text [not null, ref: > family_member.id]
+  requested_by_member_id text [ref: > family_member.id]
+  status text [not null, default: 'PROPOSED']
+  source text [not null]
+  completed_at datetime
+}
+
+Table care_exception {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  assignment_id text [not null, ref: > care_assignment.id]
+  alternative_member_id text [not null, ref: > family_member.id]
+  reason text [not null]
+  status text [not null, default: 'PENDING']
+  created_at datetime [not null]
+}
+
+Table care_handoff {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  assignment_id text [not null, ref: > care_assignment.id]
+  from_member_id text [ref: > family_member.id]
+  to_member_id text [not null, ref: > family_member.id]
+  special_note text [not null, default: '']
+  status text [not null, default: 'PENDING']
+  acknowledged_at datetime
+}
+
+Table notification {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  member_id text [ref: > family_member.id]
+  title text [not null]
+  body text [not null]
+  level text [not null, default: 'NORMAL']
+  is_read boolean [not null, default: false]
+  action_type text
+  action_id text
+  created_at datetime [not null]
+}
+
+Table family_data_permission {
+  member_id text [pk, ref: > family_member.id]
+  scope text [pk]
+  is_allowed boolean [not null]
+}
+
+Table notification_preference {
+  member_id text [pk, ref: > family_member.id]
+  app_enabled boolean [not null, default: true]
+  daily_digest_enabled boolean [not null, default: true]
+}
+
+Table family_invite_code {
+  family_id text [pk, ref: > family_group.id]
+  code_hash text [not null, unique]
+  expires_at datetime [not null]
+}
+
+Table family_invite_link {
+  code_hash text [pk]
+  family_id text [not null, ref: > family_group.id]
+  created_by_member_id text [ref: > family_member.id]
+  expires_at datetime [not null]
+  join_count int [not null, default: 0]
+  max_uses int
+  revoked_at datetime
+}
+
+Table family_session {
+  token_hash text [pk]
+  family_id text [not null, ref: > family_group.id]
+  member_id text [not null, ref: > family_member.id]
+  expires_at datetime [not null]
+  last_seen_at datetime [not null]
+}
+
+Table daily_usage {
+  family_id text [pk, ref: > family_group.id]
+  day date [pk]
+  feature text [pk]
+  amount int [not null, default: 0]
+}
+
+Table assistant_message {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  member_id text [ref: > family_member.id]
+  role text [not null]
+  content text [not null]
+  created_at datetime [not null]
+}
+
+Table plan_preview {
+  family_id text [pk, ref: > family_group.id]
+  enabled boolean [not null, default: false]
+}
+
+Table emergency_request {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  assignment_id text [not null, ref: > care_assignment.id]
+  requested_by_member_id text [not null, ref: > family_member.id]
+  claimed_by_member_id text [ref: > family_member.id]
+  reason text [not null]
+  status text [not null, default: 'OPEN']
+  resolved_at datetime
+}
+
+Table media_asset {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  child_id text [ref: > child.id]
+  assignment_id text [ref: > care_assignment.id]
+  uploaded_by_member_id text [ref: > family_member.id]
+  kind text [not null, default: 'ALBUM']
+  file_name text [not null]
+  mime_type text [not null]
+  storage_path text
+  date_folder text
+  created_at datetime [not null]
+}
+
+Table device_alert_outbox {
+  id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  member_id text [not null, ref: > family_member.id]
+  assignment_id text [ref: > care_assignment.id]
+  title text [not null]
+  body text [not null]
+  status text [not null, default: 'NOT_CONNECTED']
+  created_at datetime [not null]
+}
+
+Table member_benefit_location {
+  family_id text [pk, ref: > family_group.id]
+  member_id text [pk, ref: > family_member.id]
+  city text [not null]
+  district text [not null]
+  updated_at datetime [not null]
+}
+
+Table family_subscription {
+  family_id text [pk, ref: > family_group.id]
+  provider text [not null, default: 'TOSS']
+  customer_key text [not null, unique]
+  billing_key text
+  status text [not null, default: 'PENDING']
+  amount int [not null, default: 7900]
+  current_period_end datetime
+  next_billing_at datetime
+}
+
+Table payment_transaction {
+  order_id text [pk]
+  family_id text [not null, ref: > family_group.id]
+  provider text [not null, default: 'TOSS']
+  amount int [not null]
+  status text [not null]
+  payment_key text
+  approved_at datetime
+  created_at datetime [not null]
+}
+
+Table calendar_oauth_state {
+  state text [pk]
+  family_id text [not null, ref: > family_group.id]
+  member_id text [not null, ref: > family_member.id]
+  provider text [not null]
+  expires_at datetime [not null]
+  return_url text
+}
+
+Table calendar_connection {
+  family_id text [pk, ref: > family_group.id]
+  member_id text [pk, ref: > family_member.id]
+  provider text [pk]
+  access_token text [not null]
+  refresh_token text
+  expires_at datetime
+  connected_at datetime [not null]
+  synced_at datetime
+}
+
+// Polymorphic notification.action_type/action_id intentionally has no FK.

@@ -242,14 +242,17 @@ function ProgramsPage({ plan, keyword, city, district, savedLocation, busy, loca
 
 function App() {
   const initialQuery = new URLSearchParams(location.search)
+  const requestedScreen = initialQuery.get('screen')
+  const debugScreen = groups.flatMap(group => group.pages).find(([id]) => id === requestedScreen)?.[0]
   const invitationFromUrl = initialQuery.get('invite')?.trim().toUpperCase() ?? ''
   const roleFromUrl = initialQuery.get('role')?.trim().toUpperCase() ?? ''
   const billingResultFromUrl = initialQuery.get('payment') ?? initialQuery.get('billing') ?? ''
+  const calendarResultFromUrl = initialQuery.get('calendar') ?? ''
   const scheduleCalendarReturn = sessionStorage.getItem('family-care-schedule-calendar-return') === '1'
   const invitedRole = ['PARENT', 'GRANDPARENT', 'CAREGIVER'].includes(roleFromUrl) ? roleFromUrl : 'CAREGIVER'
   const [boot, setBoot] = useState<Bootstrap | null>(null)
   const [me, setMe] = useState<FamilyMe | null>(null)
-  const [screen, setScreen] = useState<Screen>(() => invitationFromUrl ? 'onboarding' : hasFamilyToken() && billingResultFromUrl ? 'plan' : hasFamilyToken() && initialQuery.has('calendar') ? (scheduleCalendarReturn ? 'scheduleOnboarding' : 'calendar') : 'thinq')
+  const [screen, setScreen] = useState<Screen>(() => invitationFromUrl ? 'onboarding' : debugScreen ?? (hasFamilyToken() && billingResultFromUrl ? 'plan' : hasFamilyToken() && initialQuery.has('calendar') ? (scheduleCalendarReturn ? 'scheduleOnboarding' : 'calendar') : 'thinq'))
   const [error, setError] = useState('')
   const [toast, setToast] = useState('')
   const [noticeScope, setNoticeScope] = useState<'mine' | 'family'>('mine')
@@ -373,6 +376,7 @@ function App() {
   const seenNoticeIdsRef = useRef<Set<string>>(new Set())
   const benefitsLoadedRef = useRef(false)
   const billingHandledRef = useRef(false)
+  const calendarSyncHandledRef = useRef(false)
   const tossWidgetsRef = useRef<TossWidgets | null>(null)
 
   const reportError = (failure: unknown) => {
@@ -439,6 +443,21 @@ function App() {
       cleanPaymentQuery()
     }
   }, [billingResultFromUrl])
+  useEffect(() => {
+    const provider = calendarResultFromUrl.replace(/-connected$/, '')
+    if (!activeFamilyId || calendarSyncHandledRef.current || !['google', 'microsoft'].includes(provider)) return
+    calendarSyncHandledRef.current = true
+    send<{ imported: number }>(`/calendar-connections/${provider}/sync`, 'POST')
+      .then(async result => {
+        await load()
+        setCalendarConnections((await api<{ connections: CalendarConnection[] }>('/calendar-connections')).connections)
+        const query = new URLSearchParams(location.search)
+        query.delete('calendar')
+        history.replaceState(history.state, '', location.pathname + (query.size ? '?' + query : '') + location.hash)
+        setToast(`${provider === 'google' ? 'Google' : 'Outlook'} 일정 ${result.imported}건을 동기화했어요`)
+      })
+      .catch(reportError)
+  }, [activeFamilyId, calendarResultFromUrl])
   useEffect(() => {
     if (!billingOpen || screen !== 'plan' || subscription?.status === 'ACTIVE') return
     let cancelled = false
@@ -1607,11 +1626,12 @@ function App() {
   const showTabHeader = showChrome && isRoot
   const showStatus = !['thinq', 'serviceLoading', 'lockscreen', 'plan'].includes(screen)
   const showBack = showChrome && !isRoot && screen !== 'chat' && screen !== 'plan'
+  const showScreenIndex = import.meta.env.DEV && initialQuery.get('devtools') === '1'
   const backTarget: Screen = ['capture', 'review', 'family', 'calendar'].includes(screen) ? 'schedule'
     : ['assignments', 'suggestion', 'tasks', 'exception', 'emergency', 'location'].includes(screen) ? 'careHub'
       : ['members', 'permissions', 'album'].includes(screen) ? 'familyHub'
         : ['notifications', 'settings', 'gap', 'album', 'programs', 'plan'].includes(screen) ? 'more' : 'home'
-  return <div className="app-shell"><aside className="screen-index"><div className="brand"><span className="brand-mark">LG</span><div><strong>Family Care</strong><small>기능 목업 개발 버전</small></div></div><p className="index-intro">Figma 기능 페이지의 주요 흐름을 화면별로 확인할 수 있어요.</p>{groups.map(g => <div key={g.title} className="index-group"><h2>{g.title}</h2>{g.pages.map(([id, label]) => <button key={id} className={screen === id ? 'active' : ''} onClick={() => go(id)}>{label}</button>)}</div>)}</aside>
+  return <div className="app-shell">{showScreenIndex && <aside className="screen-index"><div className="brand"><span className="brand-mark">LG</span><div><strong>Family Care</strong><small>기능 목업 개발 버전</small></div></div><p className="index-intro">Figma 기능 페이지의 주요 흐름을 화면별로 확인할 수 있어요.</p>{groups.map(g => <div key={g.title} className="index-group"><h2>{g.title}</h2>{g.pages.map(([id, label]) => <button key={id} className={screen === id ? 'active' : ''} onClick={() => go(id)}>{label}</button>)}</div>)}</aside>}
     <div className="phone-wrap"><div className="phone">
       {showStatus && <MobileStatusBar />}
       {showTabHeader && <AppHeader screen={screen} familyName={boot.family.name} memberName={me?.member.name ?? ''} profileImage={profileForMember(me?.member.id ?? viewer)} profileOnline={memberIsOnline(me?.member.id ?? viewer)} contextLine={`${today} · ${boot.children.map(c => c.name).join(' · ') || '아이 등록 전'}`} unread={unread} onNavigate={go} onOpenThinQHomes={openThinQHomes} />}
