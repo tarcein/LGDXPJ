@@ -16,6 +16,7 @@ from .family import family_id, member_id
 
 
 router = APIRouter(prefix="/api/calendar-connections", tags=["calendar connections"])
+legacy_router = APIRouter(tags=["calendar connections"])
 PROVIDERS = {"google", "microsoft"}
 
 
@@ -143,6 +144,12 @@ def callback(provider: str, code: str = Query(min_length=1), state: str = Query(
         db.execute("DELETE FROM calendar_oauth_state WHERE state = ?", (state,))
     frontend = return_url or setting("FRONTEND_URL", "http://127.0.0.1:5173")
     return RedirectResponse(frontend.rstrip("/") + f"/?calendar={provider}-connected")
+
+
+@legacy_router.get("/auth/{provider}/callback")
+def legacy_callback(provider: str, code: str = Query(min_length=1), state: str = Query(min_length=1)):
+    """Accept callback URLs already registered in the OAuth provider consoles."""
+    return callback(provider, code, state)
 
 
 def _refresh(provider: str, connection: dict) -> str:

@@ -776,26 +776,36 @@ function App() {
         location.href = `sms:?&body=${encodeURIComponent(`${text}\n${inviteLink}`)}`
         return
       }
-      if (target === 'kakao' && kakaoJavaScriptKey && window.Kakao) {
-        if (!window.Kakao.isInitialized()) window.Kakao.init(kakaoJavaScriptKey)
-        await window.Kakao.Share.sendDefault({
-          objectType: 'text',
-          text,
-          link: { mobileWebUrl: inviteLink, webUrl: inviteLink },
-          buttonTitle: '가족방 참여하기',
-        })
-        setToast('카카오톡 공유창을 열었어요.')
-        return
+      if (target === 'kakao') {
+        if (kakaoJavaScriptKey && window.Kakao) {
+          if (!window.Kakao.isInitialized()) window.Kakao.init(kakaoJavaScriptKey)
+          await window.Kakao.Share.sendDefault({
+            objectType: 'text',
+            text,
+            link: { mobileWebUrl: inviteLink, webUrl: inviteLink },
+            buttonTitle: '가족방 참여하기',
+          })
+          setToast('카카오톡 공유창을 열었어요.')
+          return
+        }
+        if (navigator.share) {
+          await navigator.share({ title: boot?.family.name ?? 'Family Care 가족방', text, url: inviteLink })
+          setToast('공유할 앱에서 카카오톡을 선택해주세요.')
+          return
+        }
+        throw new Error('카카오톡 공유 설정이 필요해요')
       }
       if (navigator.share) {
         await navigator.share({ title: boot?.family.name ?? 'Family Care 가족방', text, url: inviteLink })
-        setToast(target === 'kakao' ? '공유창에서 카카오톡을 선택해주세요.' : '공유창을 열었어요.')
+        setToast('공유창을 열었어요.')
       } else {
         await copyInvite()
       }
     } catch (failure) {
       if (failure instanceof DOMException && failure.name === 'AbortError') return
-      setError('공유창을 열지 못했어요. 잠시 후 다시 시도해주세요.')
+      setError(target === 'kakao' && !kakaoJavaScriptKey
+        ? '카카오톡 공유 키가 설정되지 않았어요. 모바일에서는 기기 공유창을 사용해주세요.'
+        : '공유창을 열지 못했어요. 잠시 후 다시 시도해주세요.')
     }
   }
   const openInviteShare = async () => {
@@ -1557,7 +1567,7 @@ function App() {
     <div className="pro-guide-hero">
       <button className="pro-guide-close" aria-label="플랜 화면 닫기" onClick={() => go('more')}>× <span>플랜</span></button>
       <img className="pro-plan-badge" src={proPlanBadge} alt="PRO 플랜" />
-      <div className="pro-guide-title"><div><h2>Pro로 할 수 있는 것</h2><p>가족의 돌봄을 더 넉넉하게 이어가세요.</p></div><img src={proCharacter} alt="Family Care Pro 캐릭터" /></div>
+      <div className="pro-guide-title"><div><h2>Pro로 할 수 있는 것</h2><p>가족의 돌봄을 넉넉하게 이어가세요.</p></div><img src={proCharacter} alt="Family Care Pro 캐릭터" /></div>
       <div className="pro-cycle-tabs"><button className={billingCycle === 'MONTHLY' ? 'active' : ''} aria-pressed={billingCycle === 'MONTHLY'} onClick={() => setBillingCycle('MONTHLY')}>월간</button><button className={billingCycle === 'ANNUAL' ? 'active' : ''} aria-pressed={billingCycle === 'ANNUAL'} onClick={() => setBillingCycle('ANNUAL')}>연간 <small>-20%</small></button></div>
     </div>
     <div className="pro-guide-body">
@@ -1566,7 +1576,7 @@ function App() {
       {subscription?.status === 'ACTIVE' && !subscription.developer_preview
         ? <div className="subscription-active pro-guide-subscription"><div><strong>{subscription.cancel_at_period_end ? '구독 취소 예약됨' : 'Pro 이용 중'}</strong><small>{formatDate(subscription.current_period_end ?? subscription.next_billing_at)}까지 Pro 이용 가능</small><small>{subscription.cancel_at_period_end ? '다음 결제는 진행되지 않아요.' : subscription.auto_renew_available ? '취소 전까지 매월 자동으로 갱신돼요.' : '현재 결제는 1개월 이용권이에요.'}</small></div>{subscription.cancel_at_period_end && subscription.auto_renew_available ? <button className="subscription-resume-button" disabled={billingBusy} onClick={() => void resumeSubscription()}>자동 갱신 다시 켜기</button> : !subscription.cancel_at_period_end ? <button className="subscription-cancel-button" disabled={billingBusy || !me?.authenticated || !me.member.is_owner} onClick={() => void cancelSubscription()}>구독 취소</button> : null}</div>
         : <div className="pro-subscribe-area"><button className="pro-start-asset" aria-label={billingOpen ? '결제창 접기' : 'Pro 시작하기'} aria-expanded={billingOpen} disabled={billingBusy || !me?.authenticated || !me.member.is_owner} onClick={() => void toggleBilling()}><img src={proStartButton} alt="Pro 시작하기" /></button>{billingBusy && !billingOpen && <small className="payment-progress">결제 준비 중…</small>}{(!me?.authenticated || !me.member.is_owner) && <small className="payment-owner-note">플랜 결제는 주돌봄자 계정에서 진행할 수 있어요.</small>}{billingOpen && <div className="toss-inline-checkout"><div className="toss-heading"><span className="toss-mark">T</span><div><strong>토스페이먼츠 테스트 결제</strong><p>아래에서 결제수단과 약관을 확인해주세요.</p></div><b>{(billingOrder?.amount ?? 7900).toLocaleString()}원</b></div><div id="toss-payment-methods" className="toss-widget-slot" /><div id="toss-agreement" className="toss-widget-slot agreement" /><button className="toss-pay-button" disabled={billingBusy || !billingWidgetReady} onClick={() => void startWidgetPayment()}>{billingBusy || !billingWidgetReady ? '결제수단 불러오는 중…' : `${(billingOrder?.amount ?? 7900).toLocaleString()}원 결제하고 시작하기`}</button><small className="payment-caption">결제가 완료되면 Pro가 바로 활성화됩니다.</small></div>}</div>}
-      <small className="pro-trial-note">첫 7일 무료 체험 · 언제든 해지 가능</small>
+      <small className="pro-trial-note">첫 한달 무료체험 · 언제든 해지 가능</small>
       {subscription?.dev_switch_available && <Card className="dev-plan-card pro-dev-card"><span className="small-badge danger">DEVELOPER MODE</span><strong>Free / Pro 화면 전환</strong><p>결제 없이 현재 가족방의 기능 권한을 바꿔 확인해요.</p><div className="dev-plan-switch"><button aria-pressed={plan === 'FREE'} disabled={planBusy || plan === 'FREE'} onClick={() => previewPlan('FREE')}>Free</button><button aria-pressed={plan === 'PRO'} disabled={planBusy || plan === 'PRO'} onClick={() => previewPlan('PRO')}>Pro</button></div></Card>}
     </div>
   </section>
@@ -1583,7 +1593,7 @@ function App() {
   </section>
   if (boot && screen === 'emergency') page = <section className="emergency-request-page">
     <div className="care-subscreen-title"><strong>긴급 도움 요청 <Pro /></strong></div>
-    <Card className="emergency-form-card"><label className="form-label">도움이 필요한 돌봄</label><select className="form-control" value={emergencyItem} onChange={e => setEmergencyItem(e.target.value)}><option value="">선택하세요</option>{assignments.filter(a => ['PROPOSED', 'ACCEPTED'].includes(a.status)).map(a => <option key={a.id} value={a.id}>{itemFor(a)?.title ?? '돌봄'} · {member(a.assignee_id)}</option>)}</select><label className="form-label">요청 사유</label><textarea className="text-area" rows={3} value={emergencyReason} onChange={e => setEmergencyReason(e.target.value)} /><button className="outline-button wide-button emergency-voice" disabled={emergencyVoiceBusy} onClick={toggleEmergencyRecording}>{emergencyRecording ? '■ 음성 인식 끝내기' : emergencyVoiceBusy ? '음성 인식 중…' : '● 음성 인식'}</button><label className="form-label">요청을 받을 가족</label><div className="emergency-recipients">{members.filter(m => m.id !== me?.member.id).map(m => <span key={m.id} style={{ background: profileColorForMember(m.id) }}>{m.name.slice(0, 1)}<small>{m.name}</small></span>)}</div></Card>
+    <Card className="emergency-form-card"><label className="form-label">도움이 필요한 돌봄</label><select className="form-control" value={emergencyItem} onChange={e => setEmergencyItem(e.target.value)}><option value="">선택하세요</option>{assignments.filter(a => ['PROPOSED', 'ACCEPTED'].includes(a.status)).map(a => <option key={a.id} value={a.id}>{itemFor(a)?.title ?? '돌봄'} · {member(a.assignee_id)}</option>)}</select><label className="form-label">요청 사유</label><textarea className="text-area" rows={3} value={emergencyReason} onChange={e => setEmergencyReason(e.target.value)} /><button className="outline-button wide-button emergency-voice" disabled={emergencyVoiceBusy} onClick={toggleEmergencyRecording}>{emergencyRecording ? '■ 음성 인식 끝내기' : emergencyVoiceBusy ? '음성 인식 중…' : '● 음성 인식'}</button><label className="form-label">요청을 받을 가족</label><div className="emergency-recipients">{members.filter(m => m.id !== me?.member.id).map(m => <span className="emergency-recipient" key={m.id}><i style={{ background: profileColorForMember(m.id) }}>{m.name.trim().slice(0, 1)}</i><small>{m.name}</small></span>)}</div></Card>
     <button className="primary-button wide-button emergency-submit" disabled={!emergencyItem || (me?.authenticated && me.member.role !== 'PARENT')} onClick={() => run(async () => { await send('/emergency-requests', 'POST', { assignment_id: emergencyItem, reason: emergencyReason.trim() }); const result = await api<{ requests: EmergencyRequest[] }>('/emergency-requests'); setEmergencyRequests(result.requests); setEmergencyItem('') }, '가족에게 긴급 요청을 보냈어요')}>긴급 도움 요청 보내기</button>
     <Section>요청 현황</Section>{emergencyRequests.length ? emergencyRequests.map(r => { const original = boot.assignments.find(a => a.id === r.assignment_id); const canClaim = r.status === 'OPEN' && me?.member.id !== r.requested_by_member_id && me?.member.id !== original?.assignee_id; const canCancel = r.status === 'OPEN' && (me?.member.id === r.requested_by_member_id || !!me?.member.is_owner); return <Card key={r.id} className="urgent-card"><span className={'small-badge ' + (r.status === 'OPEN' ? 'danger' : 'ok')}>{r.status === 'OPEN' ? '응답 대기 중' : r.status === 'CLAIMED' ? '담당 확정' : '취소됨'}</span><strong>{r.item_title}</strong><p>{r.reason}</p>{r.claimed_by_member_id && <p>새 담당 · {member(r.claimed_by_member_id)}</p>}{canClaim && <button className="primary-button wide-button" onClick={() => run(async () => { await send('/emergency-requests/' + r.id + '/claim', 'POST'); setEmergencyRequests((await api<{ requests: EmergencyRequest[] }>('/emergency-requests')).requests) }, '새 담당자로 확정됐어요')}>제가 맡을게요</button>}{canCancel && <button className="outline-button wide-button" onClick={() => run(async () => { await send('/emergency-requests/' + r.id + '/cancel', 'POST'); setEmergencyRequests((await api<{ requests: EmergencyRequest[] }>('/emergency-requests')).requests) }, '긴급 요청을 취소했어요')}>요청 취소</button>}</Card> }) : <Empty title="진행 중인 긴급 요청이 없어요" text="요청이 생기면 이곳에서 응답할 수 있어요" />}
   </section>

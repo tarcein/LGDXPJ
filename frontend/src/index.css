@@ -884,8 +884,8 @@ strong { font-weight: 700; }
 .family-people .invite-person i { border: 1.5px dashed #c9ccd2; color: #a7abb4; background: transparent; }
 .family-children { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .family-children button { display: grid; justify-items: start; min-height: 116px; padding: 14px; border: 1px solid #1a181c0b; border-radius: 16px; background: #fff; box-shadow: var(--fc-shadow); text-align: left; }
-.family-children i { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: #f7f7fa; font-style: normal; }
-.family-children i img { width: 28px; height: 28px; object-fit: contain; }
+.family-children i { display: grid; overflow: hidden; place-items: center; width: 40px; height: 40px; border-radius: 10px; background: #f7f7fa; font-style: normal; }
+.family-children i img { width: 62px; height: 62px; max-width: none; transform: translateY(-2px); object-fit: contain; }
 .family-children strong { align-self: end; font-size: 13px; }
 .family-children small { color: var(--fc-subtle); font-size: 9px; }
 .family-actions { margin-top: 17px; }
@@ -983,8 +983,8 @@ strong { font-weight: 700; }
 
 @media (max-width: 1000px) {
   .phone { border-radius: 0; }
-  .mobile-status { display: flex; flex-basis: 58px; }
-  .app-header { min-height: calc(78px + env(safe-area-inset-top)); padding-top: max(8px, env(safe-area-inset-top)); padding-left: max(20px, env(safe-area-inset-left)); padding-right: max(20px, env(safe-area-inset-right)); }
+  .mobile-status { display: none; flex-basis: 0; }
+  .app-header { min-height: calc(78px + env(safe-area-inset-top)); padding-top: calc(8px + env(safe-area-inset-top)); padding-left: max(20px, env(safe-area-inset-left)); padding-right: max(20px, env(safe-area-inset-right)); }
   .phone:not(:has(.app-header)) .phone-content:not(.edge-to-edge) { padding-top: max(18px, env(safe-area-inset-top)); }
   .phone-content { padding: 10px max(18px, env(safe-area-inset-right)) calc(106px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); }
   .bottom-nav { height: calc(80px + env(safe-area-inset-bottom)); }
@@ -1000,6 +1000,8 @@ strong { font-weight: 700; }
   .app-shell .care-duty-card > strong { font-size: 17px; }
   .app-shell .price { font-size: 21px; }
   .app-shell .plan-price strong, .app-shell .invite-code strong { font-size: 19px; }
+  .app-shell .pro-guide-price strong { font-size: 34px; }
+  .app-shell .pro-guide-title p { margin-top: 8px; font-size: clamp(8px, 2.55vw, 10px); line-height: 1.2; white-space: nowrap; }
   .app-shell .stats-card strong { font-size: 18px; }
   .app-shell .more-policy-list button,
   .app-shell .figma-calendar-legend button,
@@ -1075,15 +1077,16 @@ strong { font-weight: 700; }
 .pro-guide-close { display: flex; align-items: center; gap: 7px; padding: 0; color: rgba(255,255,255,.66); background: transparent; font-size: 16px; }
 .pro-guide-close span { font-size: 11px; }
 .pro-plan-badge { width: 76px; height: 23px; margin: 19px 0 7px; object-fit: contain; object-position: left center; }
-.pro-guide-title { display: flex; align-items: center; justify-content: space-between; }
+.pro-guide-title { display: flex; min-width: 0; align-items: center; justify-content: space-between; }
+.pro-guide-title > div { min-width: 0; flex: 1; }
 .pro-guide-title h2 { margin: 0; font-size: 22px; letter-spacing: -.5px; }
-.pro-guide-title p { margin: 8px 0 0; color: rgba(255,255,255,.62); font-size: 10px; }
-.pro-guide-title img { width: 122px; height: 104px; margin: -28px -3px -4px 0; object-fit: contain; }
+.pro-guide-title p { margin: 8px 0 0; color: rgba(255,255,255,.68); font-size: clamp(8px, 2.55vw, 10px); white-space: nowrap; }
+.pro-guide-title img { width: clamp(98px, 31vw, 122px); height: 104px; margin: -28px -3px -4px 0; object-fit: contain; }
 .pro-cycle-tabs { position: absolute; right: 28px; bottom: 24px; left: 28px; display: grid; grid-template-columns: 1fr 1fr; height: 39px; padding: 3px; border-radius: 9px; background: rgba(255,255,255,.12); }
 .pro-cycle-tabs button { border-radius: 7px; color: rgba(255,255,255,.55); background: transparent; font-size: 11px; font-weight: 800; }
 .pro-cycle-tabs button.active { color: #d21d4d; background: #fff; box-shadow: 0 2px 6px rgba(50,45,100,.18); }
 .pro-cycle-tabs small { color: #ff476f; font-size: 8px; }
-.pro-guide-body { display: grid; gap: 13px; padding: 17px 17px 0; }
+.pro-guide-body { display: grid; gap: 8px; padding: 14px 17px 0; }
 .pro-compare-table { overflow: hidden; border: 1px solid #dde1ea; border-radius: 14px; box-shadow: 0 2px 5px rgba(20,24,40,.08); }
 .pro-compare-table > div { display: grid; grid-template-columns: 1.7fr .75fr .9fr; align-items: center; min-height: 43px; padding: 0 15px; border-bottom: 1px solid #eceef3; font-size: 10px; }
 .pro-compare-table > div:last-child { border: 0; }
@@ -1092,15 +1095,16 @@ strong { font-weight: 700; }
 .pro-compare-table .row > strong { font-size: 10px; }
 .pro-compare-table .row > span { color: #317657; text-align: center; }
 .pro-compare-table .row > em { width: fit-content; justify-self: center; padding: 3px 7px; border-radius: 999px; color: #d31d4f; background: #fce8ee; font-style: normal; font-weight: 800; text-align: center; }
-.pro-guide-price { display: flex; align-items: baseline; justify-content: center; gap: 3px; margin-top: 2px; }
-.pro-guide-price strong { font-size: 28px; letter-spacing: -1px; }
+.pro-guide-price { display: flex; align-items: baseline; justify-content: center; gap: 3px; margin-top: 0; }
+.pro-guide-price strong { font-size: 34px; letter-spacing: -1.4px; line-height: 1.05; }
 .pro-guide-price span { color: #9b9ea5; font-size: 9px; }
+.pro-subscribe-area { margin-top: -3px; }
 .pro-start-asset { position: relative; width: 100%; height: 48px; padding: 0; overflow: hidden; border-radius: 13px; color: #fff; background: linear-gradient(90deg, #ed62bd, #815fff); box-shadow: 0 7px 16px rgba(128,81,255,.26); font-weight: 800; }
 .pro-start-asset img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .pro-start-asset span { position: relative; z-index: 1; opacity: 0; }
 .pro-start-asset.dynamic img { opacity: 0; }
 .pro-start-asset.dynamic span { opacity: 1; }
-.pro-trial-note { color: #b0b2b9; font-size: 8px; text-align: center; }
+.pro-trial-note { margin-top: -3px; color: #a5a8b0; font-size: 9px; text-align: center; }
 .pro-guide-subscription { margin: 0; }
 .pro-dev-card { margin-top: 8px; }
 
@@ -1228,9 +1232,10 @@ strong { font-weight: 700; }
 .emergency-form-card .form-label { margin-top: 13px; }
 .emergency-form-card .form-label:first-child { margin-top: 0; }
 .emergency-voice { margin-top: 9px; }
-.emergency-recipients { display: flex; min-height: 54px; gap: 12px; padding-top: 7px; overflow-x: auto; }
-.emergency-recipients > span { display: grid; place-items: center; width: 35px; height: 35px; flex: none; border-radius: 50%; color: #fff; font-size: 11px; font-weight: 800; }
-.emergency-recipients small { margin-top: 43px; color: #6d737d; font-size: 8px; white-space: nowrap; }
+.emergency-recipients { display: flex; min-height: 58px; gap: 12px; padding-top: 7px; overflow-x: auto; }
+.emergency-recipient { display: grid; width: 46px; flex: none; justify-items: center; gap: 4px; }
+.emergency-recipient > i { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 50%; color: #fff; font-size: 12px; font-style: normal; font-weight: 800; line-height: 1; }
+.emergency-recipient small { overflow: hidden; width: 100%; color: #6d737d; font-size: 9px; line-height: 1.2; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .emergency-submit { margin-top: 12px; background: #c91d1d; box-shadow: none; }
 
 .pro-gate-overlay { position: fixed; z-index: 60; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(27,29,35,.54); backdrop-filter: blur(4px); }
@@ -1314,6 +1319,8 @@ strong { font-weight: 700; }
 
 @media (max-width: 1000px) {
   .app-shell .more-policy-list button { font-size: 14px; }
+  .app-shell .phone-content.plan-content .pro-guide-price strong { font-size: 34px; }
+  .app-shell .phone-content.plan-content .pro-guide-title p { margin-top: 8px; font-size: clamp(8px, 2.55vw, 10px); line-height: 1.2; white-space: nowrap; }
   .app-shell .care-subscreen-title > strong, .app-shell .care-feature-heading > strong { font-size: 16px; }
   .app-shell .assignment-child-grid strong, .app-shell .gap-alternatives strong { font-size: 14px; }
   .app-shell .assignment-preview-card > button strong { font-size: 13px; }

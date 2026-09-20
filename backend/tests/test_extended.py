@@ -614,6 +614,28 @@ class ExtendedFlowTest(unittest.TestCase):
             self.assertEqual(callback.status_code, 307)
             self.assertEqual(callback.headers["location"], "http://192.168.0.20:5173/?calendar=google-connected")
 
+    def test_calendar_oauth_accepts_legacy_registered_callback_path(self):
+        with patch.dict(os.environ, {
+            "GOOGLE_CLIENT_ID": "google-client", "GOOGLE_CLIENT_SECRET": "google-secret",
+            "GOOGLE_REDIRECT_URI": "http://localhost:8000/auth/google/callback",
+            "FRONTEND_URL": "http://localhost:5173",
+        }):
+            authorization_url = self.client.post(
+                "/api/calendar-connections/google/authorize",
+                headers={"Origin": "http://127.0.0.1:5173"},
+            ).json()["authorization_url"]
+            state = parse_qs(urlparse(authorization_url).query)["state"][0]
+            token_response = httpx.Response(200, request=httpx.Request("POST", "https://oauth2.googleapis.com/token"), json={
+                "access_token": "access", "refresh_token": "refresh", "expires_in": 3600,
+            })
+            with patch("app.calendar.httpx.post", return_value=token_response):
+                callback = self.client.get(
+                    f"/auth/google/callback?code=demo-code&state={state}",
+                    follow_redirects=False,
+                )
+            self.assertEqual(callback.status_code, 307)
+            self.assertEqual(callback.headers["location"], "http://127.0.0.1:5173/?calendar=google-connected")
+
     def test_free_voice_chat_and_handoff_note(self):
         with patch("app.extended.ai.transcribe_audio", return_value="오늘 하원 누가 맡아?"), patch("app.extended.ai.answer", return_value=("할머니가 담당입니다.", 23)) as answer:
             voice = self.client.post("/api/assistant/voice", files={"file": ("voice.webm", b"demo-voice", "audio/webm")})
