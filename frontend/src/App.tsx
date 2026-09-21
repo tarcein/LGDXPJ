@@ -49,6 +49,7 @@ import memberInactiveIcon from '../../asset/구성원프로필/활동중아님.p
 import { AppHeader, BottomNav, FloatingAssistant, MobileStatusBar } from './components/AppChrome'
 import { LockscreenPreview, ServiceLoading, ThinQEntry, ThinQHomeSelector } from './components/EntryScreens'
 import { BottomSheet, Card, Empty, Pro, Section } from './components/ui'
+import { setupNativeNotifications, showNativeNotice, syncPushToken, updateLiveCareStatus, clearLiveCareStatus } from './nativeNotifications'
 
 const groups: { title: string; pages: [Screen, string][] }[] = [
   { title: 'ThinQ 진입 · 외부 화면', pages: [['thinq', 'ThinQ 홈'], ['lockscreen', '잠금화면 동선']] },
@@ -950,6 +951,62 @@ function App() {
   const appNotices = !!(preference?.app_enabled ?? 1)
   const dailyDigest = !!(preference?.daily_digest_enabled ?? 1)
   useEffect(() => {
+    if (!boot || !me?.authenticated) return
+    const active = boot.assignments.find(item => !['COMPLETED', 'CANCELED', 'CANCELLED'].includes(item.status))
+    if (!active) {
+      void clearLiveCareStatus()
+      return
+    }
+    const careItem = boot.items.find(item => item.id === active.item_id)
+    const child = boot.children.find(item => item.id === careItem?.child_id)
+    const caregiver = boot.members.find(item => item.id === active.assignee_id)
+    const schedule = boot.child_schedules.find(item => item.id === careItem?.child_schedule_id)
+    const statusText = active.status === 'ACCEPTED' ? '돌봄 진행 중' : '돌봄 담당 확인 중'
+    const currentPlace = schedule?.title ?? careItem?.title ?? '돌봄 시작'
+    const route = `${currentPlace} → ${caregiver?.name ?? '담당자'} → 집`
+    const progress = active.status === 'ACCEPTED' ? 1 : 0
+    void updateLiveCareStatus(
+      `${child?.name ?? '아이'} · ${caregiver?.name ?? '담당자'}`,
+      statusText,
+      careItem?.title ?? '현재 돌봄 현황',
+      route,
+      progress,
+    )
+  }, [boot, me?.authenticated])
+  useEffect(() => {
+    void setupNativeNotifications(action => {
+      window.dispatchEvent(new CustomEvent('family-care-notification-action', { detail: action }))
+    })
+  }, [])
+  useEffect(() => {
+    if (me?.authenticated) void syncPushToken()
+  }, [me?.authenticated])
+  useEffect(() => {
+    const onNativeAction = (event: Event) => {
+      const { actionType, actionId } = (event as CustomEvent<{ actionType?: string; actionId?: string }>).detail ?? {}
+      window.focus()
+      if (actionType === 'ASSIGNMENT_REQUEST' && actionId) {
+        setAssignmentId(actionId); setViewer(me?.member.id ?? viewer)
+        history.pushState({ ...history.state, lgdxScreen: 'tasks' }, ''); setScreen('tasks')
+      } else if (actionType === 'ASSIGNMENT_RESULT') {
+        setAssignmentId(actionId ?? null)
+        history.pushState({ ...history.state, lgdxScreen: 'assignments' }, ''); setScreen('assignments')
+      } else if (actionType === 'CARE_SUGGESTION' && actionId) {
+        void api<{ item: CareItem; suggestions: Suggestion[] }>('/items/' + actionId + '/suggestions').then(result => {
+          setItemId(result.item.id); setSuggestions(result.suggestions)
+          history.pushState({ ...history.state, lgdxScreen: 'suggestion' }, ''); setScreen('suggestion')
+        }).catch(reportError)
+      } else if (actionType === 'HANDOFF') {
+        setViewer(me?.member.id ?? viewer)
+        history.pushState({ ...history.state, lgdxScreen: 'tasks' }, ''); setScreen('tasks')
+      } else {
+        history.pushState({ ...history.state, lgdxScreen: 'notifications' }, ''); setScreen('notifications')
+      }
+    }
+    window.addEventListener('family-care-notification-action', onNativeAction)
+    return () => window.removeEventListener('family-care-notification-action', onNativeAction)
+  }, [me?.member.id, viewer])
+  useEffect(() => {
     if (!activeFamilyId || !me?.authenticated) return
     const poll = async () => {
       try {
@@ -957,10 +1014,13 @@ function App() {
         const incoming = next.notifications.filter(notice => !notice.is_read && !seenNoticeIdsRef.current.has(notice.id))
         next.notifications.forEach(notice => seenNoticeIdsRef.current.add(notice.id))
         setBoot(next)
-        if (appNotices && 'Notification' in window && Notification.permission === 'granted') {
+        if (appNotices) {
           incoming.forEach(notice => {
-            const systemNotice = new Notification(notice.title, { body: notice.body, tag: notice.id })
-            systemNotice.onclick = () => { window.focus(); void openNoticeRef.current(notice); systemNotice.close() }
+            void showNativeNotice(notice.id, notice.title, notice.body, notice.action_type, notice.action_id)
+            if ('Notification' in window && Notification.permission === 'granted') {
+              const systemNotice = new Notification(notice.title, { body: notice.body, tag: notice.id })
+              systemNotice.onclick = () => { window.focus(); void openNoticeRef.current(notice); systemNotice.close() }
+            }
           })
         }
       } catch (e) { reportError(e) }

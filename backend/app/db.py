@@ -226,6 +226,11 @@ CREATE TABLE IF NOT EXISTS device_alert_outbox (
   title TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'NOT_CONNECTED',
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS push_device_token (
+  token TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
+  member_id TEXT NOT NULL REFERENCES family_member(id), platform TEXT NOT NULL DEFAULT 'ANDROID',
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS member_benefit_location (
   family_id TEXT NOT NULL REFERENCES family_group(id),
   member_id TEXT NOT NULL REFERENCES family_member(id),

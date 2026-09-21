@@ -8,6 +8,7 @@ backend/__pycache__/
 backend/.pytest_cache/
 backend/*.db
 backend/uploads/
+backend/firebase-service-account*.json
 .tools/
 *.pyc
 .env

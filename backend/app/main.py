@@ -39,11 +39,18 @@ def rows(db, sql: str, args: tuple = ()) -> list[dict]:
 
 def notify(db, member_id: str | None, title: str, body: str, level: str = "NORMAL",
            action_type: str | None = None, action_id: str | None = None) -> None:
+    target_family = family_id()
     db.execute(
         """INSERT INTO notification(id, family_id, member_id, title, body, level, is_read,
            created_at, action_type, action_id) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)""",
-        (str(uuid4()), family_id(), member_id, title[:100], body[:200], level, now(), action_type, action_id),
+        (str(uuid4()), target_family, member_id, title[:100], body[:200], level, now(), action_type, action_id),
     )
+    from .push import send_push
+    token_rows = db.execute(
+        "SELECT token FROM push_device_token WHERE family_id = ? AND (? IS NULL OR member_id = ?)",
+        (target_family, member_id, member_id),
+    ).fetchall()
+    send_push([row[0] for row in token_rows], title[:100], body[:200], action_type, action_id)
 
 
 _CHILD_PHOTO_EXTENSIONS = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
@@ -122,7 +129,10 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="LG 가족 운영 에이전트 데모 API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost", "https://localhost", "capacitor://localhost",
+    ],
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type", "Authorization", "X-Developer-Token"],
 )
@@ -326,6 +336,11 @@ class NotificationPreferenceUpdate(BaseModel):
     daily_digest_enabled: bool | None = None
 
 
+class PushTokenCreate(BaseModel):
+    token: str = Field(min_length=20, max_length=4096)
+    platform: str = Field(default="ANDROID", pattern="^(ANDROID)$")
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "mode": "local-demo"}
@@ -335,6 +350,21 @@ def health():
 def public_config():
     """Return browser-safe integration keys sourced from the backend environment."""
     return {"kakao_javascript_key": setting("KAKAO_JAVASCRIPT_KEY")}
+
+
+@app.post("/api/push-tokens")
+def register_push_token(payload: PushTokenCreate):
+    with database() as db:
+        member = one(db, "SELECT id FROM family_member WHERE id = ? AND family_id = ?", (current_member_id(), family_id()))
+        timestamp = now()
+        db.execute(
+            """INSERT INTO push_device_token(token, family_id, member_id, platform, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(token) DO UPDATE SET family_id = excluded.family_id,
+                 member_id = excluded.member_id, platform = excluded.platform, updated_at = excluded.updated_at""",
+            (payload.token, family_id(), member["id"], payload.platform, timestamp, timestamp),
+        )
+        return {"registered": True}
 
 
 @app.get("/api/bootstrap")
