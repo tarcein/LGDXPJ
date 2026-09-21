@@ -115,8 +115,8 @@ def _new_session(db, target_family: str, target_member: str) -> str:
 
 def _seed_member_settings(db, target_member: str, is_owner: bool) -> None:
     db.execute("INSERT INTO notification_preference(member_id) VALUES (?)", (target_member,))
-    for scope in ("CHILD_DETAIL", "LOCATION", "HEALTH", "NOTE", "PHOTO", "SCHEDULE_DETAIL"):
-        allowed = scope != "SCHEDULE_DETAIL" and (is_owner or scope in ("CHILD_DETAIL", "NOTE"))
+    for scope in ("CHILD_DETAIL", "LOCATION", "HEALTH", "NOTE", "PHOTO", "SCHEDULE_DETAIL", "WORK_DETAIL"):
+        allowed = scope not in ("SCHEDULE_DETAIL", "WORK_DETAIL") and (is_owner or scope in ("CHILD_DETAIL", "NOTE"))
         db.execute("INSERT INTO family_data_permission VALUES (?, ?, ?)", (target_member, scope, int(allowed)))
 
 

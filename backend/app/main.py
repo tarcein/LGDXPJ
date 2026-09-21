@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import re
 from contextlib import asynccontextmanager, suppress
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -16,6 +19,7 @@ from pydantic import BaseModel, Field
 from .db import database, initialize
 from .config import setting
 from .family import authenticated, family_id, member_id as current_member_id, owner_id, require_owner, resolve_bearer, reset_context, router as family_router, set_context
+from .media import image_mime as _child_image_mime, media_root as _child_media_root, read_file as _read_child_file
 from .services import classify_lines, find_schedule_collisions, rank_members
 
 def now() -> str:
@@ -40,6 +44,55 @@ def notify(db, member_id: str | None, title: str, body: str, level: str = "NORMA
            created_at, action_type, action_id) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)""",
         (str(uuid4()), family_id(), member_id, title[:100], body[:200], level, now(), action_type, action_id),
     )
+
+
+_CHILD_PHOTO_EXTENSIONS = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+
+
+def _child_photo_target(child_id: str, mime: str) -> tuple[Path, str]:
+    extension = _CHILD_PHOTO_EXTENSIONS[mime]
+    safe_family = re.sub(r"[^A-Za-z0-9_-]", "_", family_id())
+    relative = Path("children") / safe_family / f"{child_id}{extension}"
+    return _child_media_root() / relative, relative.as_posix()
+
+
+def _stored_child_photo(storage_path: str | None) -> Path | None:
+    if not storage_path:
+        return None
+    root = _child_media_root()
+    candidate = (root / storage_path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate
+
+
+def _child_payload(child: dict) -> dict:
+    child = dict(child)
+    candidate = _stored_child_photo(child.pop("photo_storage_path", None))
+    mime = child.pop("photo_mime_type", None)
+    child.pop("photo_updated_at", None)
+    child["photo_url"] = (
+        f"data:{mime};base64,{base64.b64encode(candidate.read_bytes()).decode('ascii')}"
+        if candidate and candidate.is_file() and mime else None
+    )
+    return child
+
+
+def _delete_child_photo_file(storage_path: str | None) -> None:
+    candidate = _stored_child_photo(storage_path)
+    if not candidate or not candidate.is_file():
+        return
+    candidate.unlink()
+    root = _child_media_root()
+    parent = candidate.parent
+    while parent != root:
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+        parent = parent.parent
 
 
 @asynccontextmanager
@@ -78,8 +131,9 @@ app.include_router(family_router)
 
 @app.middleware("http")
 async def family_context(request: Request, call_next):
-    if (request.url.path in {"/api/families", "/api/families/join", "/api/families/dev-login",
-                            "/api/families/dev-login-options", "/api/health", "/api/public-config"}
+    if ((request.url.path == "/api/families" and request.method == "POST")
+            or request.url.path in {"/api/families/join", "/api/families/dev-login",
+                                    "/api/families/dev-login-options", "/api/health", "/api/public-config"}
             or request.url.path.startswith("/api/families/invitations/")
             or request.url.path.endswith("/callback")
             or not request.url.path.startswith("/api/")):
@@ -103,6 +157,10 @@ class ChildCreate(BaseModel):
 class MemberCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     role: str = Field(pattern="^(PARENT|GRANDPARENT|CAREGIVER)$")
+
+
+class FamilyNameUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
 
 
 class ScheduleCreate(BaseModel):
@@ -259,7 +317,7 @@ class ExceptionCreate(BaseModel):
 
 
 class PermissionUpdate(BaseModel):
-    scope: str = Field(pattern="^(CHILD_DETAIL|LOCATION|HEALTH|NOTE|PHOTO|SCHEDULE_DETAIL)$")
+    scope: str = Field(pattern="^(CHILD_DETAIL|LOCATION|HEALTH|NOTE|PHOTO|SCHEDULE_DETAIL|WORK_DETAIL)$")
     is_allowed: bool
 
 
@@ -293,13 +351,15 @@ def bootstrap():
               FROM family_member m WHERE m.family_id = ?
               ORDER BY CASE WHEN m.created_at = '' THEN 1 ELSE 0 END, m.created_at, m.is_owner DESC, m.name""",
               (utc_now.isoformat(), online_cutoff, family_id())),
-            "children": rows(db, "SELECT * FROM child WHERE family_id = ?", (family_id(),)),
+            "children": [_child_payload(c) for c in rows(db, "SELECT * FROM child WHERE family_id = ?", (family_id(),))],
             "schedules": rows(
                 db,
                 """SELECT s.id, s.family_id, s.member_id,
                    CASE WHEN s.member_id = ? OR EXISTS (
                      SELECT 1 FROM family_data_permission p
-                     WHERE p.member_id = s.member_id AND p.scope = 'SCHEDULE_DETAIL' AND p.is_allowed = 1
+                     WHERE p.member_id = s.member_id
+                       AND p.scope = (CASE WHEN s.kind = 'WORK' THEN 'WORK_DETAIL' ELSE 'SCHEDULE_DETAIL' END)
+                       AND p.is_allowed = 1
                    ) THEN s.title ELSE '바쁨' END AS title,
                    s.starts_at, s.ends_at, s.has_end_time, s.kind, s.external_source, s.external_id,
                    s.recurrence_id, s.recurrence_rule
@@ -338,8 +398,37 @@ def create_child(payload: ChildCreate):
         if family["plan"] == "FREE" and count >= 2:
             raise HTTPException(403, detail={"code": "PLAN_LIMIT", "message": "무료 플랜은 자녀 2명까지 등록할 수 있습니다"})
         child_id = str(uuid4())
-        db.execute("INSERT INTO child VALUES (?, ?, ?, ?)", (child_id, family_id(), payload.name, payload.age_label))
-        return one(db, "SELECT * FROM child WHERE id = ?", (child_id,))
+        db.execute("INSERT INTO child (id, family_id, name, age_label) VALUES (?, ?, ?, ?)", (child_id, family_id(), payload.name, payload.age_label))
+        return _child_payload(one(db, "SELECT * FROM child WHERE id = ?", (child_id,)))
+
+
+@app.post("/api/children/{child_id}/photo")
+def upload_child_photo(child_id: str, file: UploadFile):
+    image = _read_child_file(file, 8 * 1024 * 1024)
+    mime = _child_image_mime(image)
+    with database() as db:
+        child = one(db, "SELECT * FROM child WHERE id = ? AND family_id = ?", (child_id, family_id()))
+        target, relative = _child_photo_target(child_id, mime)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _delete_child_photo_file(child.get("photo_storage_path"))
+        target.write_bytes(image)
+        db.execute(
+            "UPDATE child SET photo_storage_path = ?, photo_mime_type = ?, photo_updated_at = ? WHERE id = ?",
+            (relative, mime, now(), child_id),
+        )
+        return _child_payload(one(db, "SELECT * FROM child WHERE id = ?", (child_id,)))
+
+
+@app.delete("/api/children/{child_id}/photo")
+def delete_child_photo(child_id: str):
+    with database() as db:
+        child = one(db, "SELECT * FROM child WHERE id = ? AND family_id = ?", (child_id, family_id()))
+        _delete_child_photo_file(child.get("photo_storage_path"))
+        db.execute(
+            "UPDATE child SET photo_storage_path = NULL, photo_mime_type = NULL, photo_updated_at = NULL WHERE id = ?",
+            (child_id,),
+        )
+        return _child_payload(one(db, "SELECT * FROM child WHERE id = ?", (child_id,)))
 
 
 @app.post("/api/members", status_code=201)
@@ -355,7 +444,8 @@ def create_member(payload: MemberCreate):
             "INSERT INTO family_member(id, family_id, name, role, status, created_at) VALUES (?, ?, ?, ?, 'PENDING', ?)",
             (member_id, family_id(), payload.name, payload.role, now()),
         )
-        notify(db, owner_id(db), "구성원 초대 대기", f"{payload.name}님의 초대 수락이 필요합니다")
+        notify(db, owner_id(db), "구성원 초대 대기", f"{payload.name}님의 초대 수락이 필요합니다",
+               action_type="MEMBERS", action_id=member_id)
         return one(db, "SELECT * FROM family_member WHERE id = ?", (member_id,))
 
 
@@ -423,7 +513,8 @@ def transfer_family_ownership(target_member_id: str):
             "UPDATE family_member SET is_owner = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE family_id = ?",
             (target_member_id, family_id()),
         )
-        notify(db, target_member_id, "주돌봄자 권한을 받았어요", "이제 가족 구성원과 가족방 설정을 관리할 수 있어요")
+        notify(db, target_member_id, "주돌봄자 권한을 받았어요", "이제 가족 구성원과 가족방 설정을 관리할 수 있어요",
+               action_type="MEMBERS", action_id=target_member_id)
         return {"previous_owner_id": previous_owner_id, "owner": {**target, "is_owner": 1}}
 
 
@@ -434,8 +525,59 @@ def leave_family_room():
     with database() as db:
         current = one(db, "SELECT * FROM family_member WHERE id = ? AND family_id = ?", (current_member_id(), family_id()))
         if current["is_owner"]:
-            raise HTTPException(409, "주돌봄자는 가족방을 나갈 수 없습니다. 먼저 방장 이전 기능이 필요합니다")
+            raise HTTPException(422, "주돌봄자는 가족방 삭제를 이용해주세요")
         return deactivate_family_member(db, current_member_id())
+
+
+@app.patch("/api/families")
+def rename_family_room(payload: FamilyNameUpdate):
+    if not authenticated():
+        raise HTTPException(401, "가족방 로그인 후 이름을 변경할 수 있습니다")
+    next_name = payload.name.strip()
+    if not next_name:
+        raise HTTPException(422, "가족방 이름을 입력해주세요")
+    with database() as db:
+        require_owner(db)
+        db.execute("UPDATE family_group SET name = ? WHERE id = ?", (next_name, family_id()))
+        return one(db, "SELECT * FROM family_group WHERE id = ?", (family_id(),))
+
+
+@app.delete("/api/families")
+def delete_family_room():
+    """Delete an owner's family room and all data that belongs to it."""
+    if not authenticated():
+        raise HTTPException(401, "가족방 로그인 후 삭제할 수 있습니다")
+    target_family_id = family_id()
+    with database() as db:
+        require_owner(db)
+        member_ids = [row["id"] for row in db.execute(
+            "SELECT id FROM family_member WHERE family_id = ?", (target_family_id,),
+        ).fetchall()]
+
+        # Remove children of care assignments and members before their parents.
+        for table in ("emergency_request", "device_alert_outbox", "care_exception", "care_handoff"):
+            db.execute(f"DELETE FROM {table} WHERE family_id = ?", (target_family_id,))
+        db.execute("DELETE FROM media_asset WHERE family_id = ?", (target_family_id,))
+        db.execute("DELETE FROM care_assignment WHERE family_id = ?", (target_family_id,))
+        db.execute("DELETE FROM notification WHERE family_id = ?", (target_family_id,))
+        db.execute("DELETE FROM care_item WHERE family_id = ?", (target_family_id,))
+        db.execute("DELETE FROM child_schedule WHERE family_id = ?", (target_family_id,))
+        db.execute("DELETE FROM personal_schedule WHERE family_id = ?", (target_family_id,))
+        db.execute("DELETE FROM care_intake WHERE family_id = ?", (target_family_id,))
+        db.execute("DELETE FROM calendar_oauth_state WHERE family_id = ?", (target_family_id,))
+        db.execute("DELETE FROM calendar_connection WHERE family_id = ?", (target_family_id,))
+        if member_ids:
+            placeholders = ",".join("?" for _ in member_ids)
+            db.execute(f"DELETE FROM family_data_permission WHERE member_id IN ({placeholders})", member_ids)
+            db.execute(f"DELETE FROM notification_preference WHERE member_id IN ({placeholders})", member_ids)
+        for table in ("family_invite_link", "family_invite_code", "family_session", "assistant_message",
+                      "member_benefit_location", "daily_usage", "plan_preview", "payment_transaction",
+                      "family_subscription", "family_location"):
+            db.execute(f"DELETE FROM {table} WHERE family_id = ?", (target_family_id,))
+        db.execute("DELETE FROM child WHERE family_id = ?", (target_family_id,))
+        db.execute("DELETE FROM family_member WHERE family_id = ?", (target_family_id,))
+        db.execute("DELETE FROM family_group WHERE id = ?", (target_family_id,))
+    return {"deleted": True, "family_id": target_family_id}
 
 
 @app.post("/api/schedules", status_code=201)
@@ -500,16 +642,28 @@ def update_schedule(schedule_id: str, payload: ScheduleUpdate):
 
 
 @app.delete("/api/schedules/{schedule_id}")
-def delete_schedule(schedule_id: str):
+def delete_schedule(schedule_id: str, delete_scope: str = "SINGLE"):
+    if delete_scope not in {"SINGLE", "FUTURE"}:
+        raise HTTPException(422, "삭제 범위는 SINGLE 또는 FUTURE여야 합니다")
     with database() as db:
         schedule = one(db, "SELECT * FROM personal_schedule WHERE id = ? AND family_id = ?", (schedule_id, family_id()))
         if schedule["member_id"] != current_member_id():
             raise HTTPException(403, "본인의 일정만 삭제할 수 있습니다")
         if schedule.get("external_source"):
             raise HTTPException(409, "연동된 일정은 Google 또는 Outlook에서 삭제해주세요")
-        db.execute("DELETE FROM personal_schedule WHERE id = ? AND family_id = ?", (schedule_id, family_id()))
+        targets = [schedule]
+        if delete_scope == "FUTURE" and schedule.get("recurrence_id"):
+            targets = rows(db, """SELECT * FROM personal_schedule
+                WHERE family_id = ? AND recurrence_id = ? AND starts_at >= ? ORDER BY starts_at""",
+                (family_id(), schedule["recurrence_id"], schedule["starts_at"]))
+        for target in targets:
+            if target.get("external_source"):
+                raise HTTPException(409, "연동된 일정은 Google 또는 Outlook에서 삭제해주세요")
+        for target in targets:
+            db.execute("DELETE FROM personal_schedule WHERE id = ? AND family_id = ?", (target["id"], family_id()))
         return {"deleted": True, "schedule_id": schedule_id,
-                "recurring_instance_only": bool(schedule.get("recurrence_id"))}
+                "deleted_count": len(targets),
+                "recurring_instance_only": bool(schedule.get("recurrence_id")) and delete_scope == "SINGLE"}
 
 
 @app.post("/api/child-schedules", status_code=201)
@@ -617,21 +771,35 @@ def update_child_schedule(schedule_id: str, payload: ChildScheduleUpdate):
 
 
 @app.delete("/api/child-schedules/{schedule_id}")
-def delete_child_schedule(schedule_id: str):
+def delete_child_schedule(schedule_id: str, delete_scope: str = "SINGLE"):
+    if delete_scope not in {"SINGLE", "FUTURE"}:
+        raise HTTPException(422, "삭제 범위는 SINGLE 또는 FUTURE여야 합니다")
     with database() as db:
         require_owner(db)
         schedule = one(db, "SELECT * FROM child_schedule WHERE id = ? AND family_id = ?", (schedule_id, family_id()))
-        care_items = rows(db, "SELECT id FROM care_item WHERE child_schedule_id = ? AND family_id = ?", (schedule_id, family_id()))
-        for care_item in care_items:
-            if db.execute("SELECT 1 FROM care_assignment WHERE item_id = ? AND family_id = ?", (care_item["id"], family_id())).fetchone():
-                raise HTTPException(409, "담당자가 배정된 아이 일정은 담당 요청을 먼저 정리해주세요")
-        for care_item in care_items:
-            db.execute("DELETE FROM notification WHERE family_id = ? AND action_type = 'CARE_SUGGESTION' AND action_id = ?",
-                       (family_id(), care_item["id"]))
-            db.execute("DELETE FROM care_item WHERE id = ? AND family_id = ?", (care_item["id"], family_id()))
-        db.execute("DELETE FROM child_schedule WHERE id = ? AND family_id = ?", (schedule_id, family_id()))
+        targets = [schedule]
+        if delete_scope == "FUTURE" and schedule.get("recurrence_id"):
+            targets = rows(db, """SELECT * FROM child_schedule
+                WHERE family_id = ? AND recurrence_id = ? AND starts_at >= ? ORDER BY starts_at""",
+                (family_id(), schedule["recurrence_id"], schedule["starts_at"]))
+        care_items_by_schedule = {
+            target["id"]: rows(db, "SELECT id FROM care_item WHERE child_schedule_id = ? AND family_id = ?",
+                               (target["id"], family_id()))
+            for target in targets
+        }
+        for care_items in care_items_by_schedule.values():
+            for care_item in care_items:
+                if db.execute("SELECT 1 FROM care_assignment WHERE item_id = ? AND family_id = ?", (care_item["id"], family_id())).fetchone():
+                    raise HTTPException(409, "담당자가 배정된 아이 일정은 담당 요청을 먼저 정리해주세요")
+        for target in targets:
+            for care_item in care_items_by_schedule[target["id"]]:
+                db.execute("DELETE FROM notification WHERE family_id = ? AND action_type = 'CARE_SUGGESTION' AND action_id = ?",
+                           (family_id(), care_item["id"]))
+                db.execute("DELETE FROM care_item WHERE id = ? AND family_id = ?", (care_item["id"], family_id()))
+            db.execute("DELETE FROM child_schedule WHERE id = ? AND family_id = ?", (target["id"], family_id()))
         return {"deleted": True, "schedule_id": schedule_id,
-                "recurring_instance_only": bool(schedule.get("recurrence_id"))}
+                "deleted_count": len(targets),
+                "recurring_instance_only": bool(schedule.get("recurrence_id")) and delete_scope == "SINGLE"}
 
 
 def store_intake(payload: IntakeCreate, parsed_items: list[dict]):
@@ -691,7 +859,8 @@ def store_intake(payload: IntakeCreate, parsed_items: list[dict]):
         if created:
             review_count = sum(1 for item in created if item["status"] == "NEEDS_REVIEW")
             if review_count:
-                notify(db, owner_id(db), "새 돌봄 정보 확인", f"{review_count}개 항목을 확인하고 저장해주세요")
+                notify(db, owner_id(db), "새 돌봄 정보 확인", f"{review_count}개 항목을 확인하고 저장해주세요",
+                       action_type="CARE_REVIEW", action_id=intake_id)
         return {"intake_id": intake_id, "items": created,
                 "registered_child_schedules": registered_child_schedules,
                 "requires_review": any(item["status"] == "NEEDS_REVIEW" for item in created)}
@@ -959,7 +1128,8 @@ def create_exception(payload: ExceptionCreate):
             "INSERT INTO care_exception VALUES (?, ?, ?, ?, ?, 'PENDING', ?)",
             (exception_id, family_id(), payload.assignment_id, payload.reason, payload.alternative_member_id, now()),
         )
-        notify(db, owner_id(db), "배정 대안 확인 필요", payload.reason, "IMPORTANT")
+        notify(db, owner_id(db), "배정 대안 확인 필요", payload.reason, "IMPORTANT",
+               "EXCEPTION", exception_id)
         return one(db, "SELECT * FROM care_exception WHERE id = ?", (exception_id,))
 
 

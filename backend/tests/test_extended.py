@@ -418,6 +418,24 @@ class ExtendedFlowTest(unittest.TestCase):
         changed_items = [row for row in snapshot["items"] if row.get("child_schedule_id") in changed_ids]
         self.assertEqual({row["starts_at"][11:16] for row in changed_items}, {"16:00"})
 
+        personal_deleted = self.client.delete(
+            f"/api/schedules/{created[1]['id']}", params={"delete_scope": "FUTURE"},
+        )
+        self.assertEqual(personal_deleted.status_code, 200)
+        self.assertEqual(personal_deleted.json()["deleted_count"], 2)
+        child_deleted = self.client.delete(
+            f"/api/child-schedules/{child_created[1]['id']}", params={"delete_scope": "FUTURE"},
+        )
+        self.assertEqual(child_deleted.status_code, 200)
+        self.assertEqual(child_deleted.json()["deleted_count"], 2)
+        after_delete = self.client.get("/api/bootstrap").json()
+        self.assertEqual(len([row for row in after_delete["schedules"]
+                              if row.get("recurrence_id") == created[0]["recurrence_id"]]), 1)
+        self.assertEqual(len([row for row in after_delete["child_schedules"]
+                              if row.get("recurrence_id") == child_created[0]["recurrence_id"]]), 1)
+        self.assertFalse(any(row.get("child_schedule_id") in {item["id"] for item in child_created[1:]}
+                             for row in after_delete["items"]))
+
     def test_registered_schedules_can_be_updated_and_deleted_with_role_permissions(self):
         room = self.client.post("/api/families", json={"name": "일정 가족", "owner_name": "엄마"}).json()
         caregiver = self.client.post("/api/families/join", json={
@@ -531,7 +549,31 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual(self.client.get("/api/bootstrap", headers=first_headers).status_code, 401)
         self.assertEqual(self.client.post("/api/families/leave", headers=second_headers).status_code, 200)
         self.assertEqual(self.client.get("/api/bootstrap", headers=second_headers).status_code, 401)
-        self.assertEqual(self.client.post("/api/families/leave", headers=owner_headers).status_code, 409)
+        self.assertEqual(self.client.post("/api/families/leave", headers=owner_headers).status_code, 422)
+
+    def test_owner_can_rename_and_delete_the_whole_family_room(self):
+        room = self.client.post("/api/families", json={"name": "우리 가족", "owner_name": "엄마"}).json()
+        owner_headers = {"Authorization": "Bearer " + room["access_token"]}
+        joined = self.client.post("/api/families/join", json={
+            "invite_code": room["invite_code"], "name": "아빠", "role": "PARENT",
+        }).json()
+        member_headers = {"Authorization": "Bearer " + joined["access_token"]}
+
+        self.assertEqual(self.client.patch("/api/families", headers=member_headers, json={"name": "변경 실패"}).status_code, 403)
+        renamed = self.client.patch("/api/families", headers=owner_headers, json={"name": "민솔이네"})
+        self.assertEqual(renamed.status_code, 200)
+        self.assertEqual(renamed.json()["name"], "민솔이네")
+        self.assertEqual(self.client.delete("/api/families", headers=member_headers).status_code, 403)
+
+        deleted = self.client.delete("/api/families", headers=owner_headers)
+        self.assertEqual(deleted.status_code, 200)
+        self.assertTrue(deleted.json()["deleted"])
+        self.assertEqual(self.client.get("/api/bootstrap", headers=owner_headers).status_code, 401)
+        self.assertEqual(self.client.get("/api/bootstrap", headers=member_headers).status_code, 401)
+        with database() as db:
+            self.assertIsNone(db.execute("SELECT id FROM family_group WHERE id = ?", (room["family_id"],)).fetchone())
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM family_member WHERE family_id = ?",
+                                        (room["family_id"],)).fetchone()[0], 0)
 
     def test_owner_can_transfer_ownership_to_an_active_member(self):
         room = self.client.post("/api/families", json={"name": "우리 가족", "owner_name": "엄마"}).json()
@@ -771,9 +813,7 @@ class ExtendedFlowTest(unittest.TestCase):
         item_id = intake["items"][0]["id"]
         self.client.post(f"/api/items/{item_id}/confirm", headers=headers(owner))
         assignment = self.client.post("/api/assignments", headers=headers(owner), json={
-            "item_id": item_id, "assignee_id": current["member_id"]}).json()
-        self.client.post(f"/api/assignments/{assignment['id']}/respond", headers=headers(current),
-                         json={"decision": "ACCEPTED"})
+            "item_id": item_id, "assignee_id": owner["member_id"]}).json()
         path = "/api/emergency-requests"
         self.assertEqual(self.client.post(path, headers=headers(owner), json={"assignment_id": assignment["id"]}).status_code, 403)
         self.client.post("/api/dev/preview-plan", headers={**headers(owner), "X-Developer-Token": "local-test-token"},
@@ -781,6 +821,8 @@ class ExtendedFlowTest(unittest.TestCase):
         created = self.client.post(path, headers=headers(owner), json={
             "assignment_id": assignment["id"], "reason": "갑자기 일정이 바뀌었어요"})
         self.assertEqual(created.status_code, 201)
+        self.assertEqual(self.client.post(path, headers=headers(current), json={
+            "assignment_id": assignment["id"], "reason": "내가 맡지 않은 일정"}).status_code, 403)
         request_id = created.json()["request"]["id"]
         additional = self.client.post(path, headers=headers(owner), json={
             "assignment_id": assignment["id"], "reason": "추가로 다른 가족에게도 요청해요"})
@@ -792,7 +834,6 @@ class ExtendedFlowTest(unittest.TestCase):
         replacement_notices = self.client.get("/api/bootstrap", headers=headers(replacement)).json()["notifications"]
         self.assertFalse(any(n["title"] == "긴급 돌봄 도움 요청" for n in owner_notices))
         self.assertTrue(any(n["title"] == "긴급 돌봄 도움 요청" for n in replacement_notices))
-        self.assertEqual(self.client.post(f"{path}/{request_id}/claim", headers=headers(current)).status_code, 403)
         claimed = self.client.post(f"{path}/{request_id}/claim", headers=headers(replacement))
         self.assertEqual(claimed.status_code, 200)
         self.assertEqual(claimed.json()["request"]["status"], "CLAIMED")
@@ -806,6 +847,37 @@ class ExtendedFlowTest(unittest.TestCase):
         old = next(a for a in snapshot["assignments"] if a["id"] == assignment["id"])
         self.assertEqual(old["status"], "CANCELED")
         self.assertTrue(any(n["title"] == "긴급 요청 마감" for n in snapshot["notifications"]))
+
+    def test_any_assigned_caregiver_role_can_request_emergency_help(self):
+        os.environ["LGDX_DEV_MODE"] = "1"
+        os.environ["LGDX_DEV_TOKEN"] = "local-test-token"
+        owner = self.client.post("/api/families", json={"name": "긴급 가족", "owner_name": "엄마"}).json()
+        caregiver = self.client.post("/api/families/join", json={
+            "invite_code": owner["invite_code"], "name": "할머니", "role": "GRANDPARENT",
+        }).json()
+        owner_headers = {"Authorization": "Bearer " + owner["access_token"]}
+        caregiver_headers = {"Authorization": "Bearer " + caregiver["access_token"]}
+        child = self.client.post("/api/children", headers=owner_headers,
+                                 json={"name": "아이", "age_label": "5세"}).json()
+        intake = self.client.post("/api/intakes", headers=owner_headers, json={
+            "child_id": child["id"], "raw_content": "17:00 하원",
+        }).json()
+        item_id = intake["items"][0]["id"]
+        self.client.post(f"/api/items/{item_id}/confirm", headers=owner_headers)
+        assignment = self.client.post("/api/assignments", headers=owner_headers, json={
+            "item_id": item_id, "assignee_id": caregiver["member_id"],
+        }).json()
+        self.client.post(f"/api/assignments/{assignment['id']}/respond", headers=caregiver_headers,
+                         json={"decision": "ACCEPTED"})
+        self.client.post("/api/dev/preview-plan",
+                         headers={**owner_headers, "X-Developer-Token": "local-test-token"},
+                         json={"plan": "PRO"})
+
+        requested = self.client.post("/api/emergency-requests", headers=caregiver_headers, json={
+            "assignment_id": assignment["id"], "reason": "도움이 필요해요",
+        })
+        self.assertEqual(requested.status_code, 201)
+        self.assertEqual(requested.json()["request"]["requested_by_member_id"], caregiver["member_id"])
 
     def test_chat_thread_is_private_to_each_caregiver_while_usage_is_family_wide(self):
         owner = self.client.post("/api/families", json={"name": "우리 방", "owner_name": "엄마"}).json()

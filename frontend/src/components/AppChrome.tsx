@@ -29,14 +29,14 @@ export function AppHeader({ familyName, memberName, profileColor, contextLine, u
       <strong>{familyName}</strong><img className="service-switch-icon" src={serviceSwitchIcon} alt="" /><small>{contextLine || 'Family Care'}</small>
     </button>
     <button className="header-bell" aria-label="알림함" onClick={() => onNavigate('notifications')}><img src={bellIcon} alt="" />{unread > 0 && <i>{unread}</i>}</button>
-    <button className="header-profile" aria-label={`${memberName || '내'} 프로필과 가족 설정`} onClick={() => onNavigate('members')}><span style={{ background: profileColor }}>{(memberName || '나').trim().slice(0, 1)}</span></button>
+    <button className="header-profile" aria-label={`${memberName || '내'} 정보 공개 설정`} onClick={() => onNavigate('permissions')}><span style={{ background: profileColor }}>{(memberName || '나').trim().slice(0, 1)}</span></button>
   </header>
 }
 
 const navItems: { screen: Screen; label: string; icon: string; className?: string; active: Screen[] }[] = [
   { screen: 'home', label: '홈', icon: homeTabIcon, active: ['home'] },
-  { screen: 'careHub', label: '케어', icon: careTabIcon, active: ['careHub', 'assignments', 'suggestion', 'tasks', 'exception', 'emergency', 'location'] },
-  { screen: 'schedule', label: '일정', icon: calendarTabIcon, active: ['schedule', 'calendar', 'capture', 'review', 'family'] },
+  { screen: 'careHub', label: '케어', icon: careTabIcon, active: ['careHub', 'assignments', 'assignmentDetail', 'suggestion', 'tasks', 'exception', 'emergency'] },
+  { screen: 'schedule', label: '일정', icon: calendarTabIcon, active: ['schedule', 'calendar', 'capture', 'review', 'family', 'supplies'] },
   { screen: 'familyHub', label: '가족', icon: familyTabIcon, className: 'family-icon', active: ['familyHub', 'members', 'permissions', 'album'] },
   { screen: 'more', label: '더보기', icon: moreTabIcon, active: ['more', 'notifications', 'settings', 'gap', 'programs', 'plan'] },
 ]

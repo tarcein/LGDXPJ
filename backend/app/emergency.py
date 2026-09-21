@@ -19,6 +19,7 @@ router = APIRouter(prefix="/api/emergency-requests", tags=["emergency care"])
 class EmergencyCreate(BaseModel):
     assignment_id: str
     reason: str = Field(default="긴급 돌봄 도움이 필요합니다", min_length=1, max_length=500)
+    recipient_member_ids: list[str] | None = None
 
 
 def _request(db, request_id: str) -> dict:
@@ -55,11 +56,11 @@ def create_emergency_request(payload: EmergencyCreate):
         db.execute("BEGIN IMMEDIATE")
         _require_pro(db)
         requester = db.execute(
-            "SELECT role FROM family_member WHERE id = ? AND family_id = ? AND status = 'ACTIVE'",
+            "SELECT id FROM family_member WHERE id = ? AND family_id = ? AND status = 'ACTIVE'",
             (member_id(), family_id()),
         ).fetchone()
-        if requester is None or requester["role"] != "PARENT":
-            raise HTTPException(403, "부모만 긴급 도움을 요청할 수 있습니다")
+        if requester is None:
+            raise HTTPException(403, "활동 중인 가족 구성원만 긴급 도움을 요청할 수 있습니다")
         assignment = db.execute(
             """SELECT a.*, i.title AS item_title, i.starts_at, i.child_id FROM care_assignment a
                JOIN care_item i ON i.id = a.item_id
@@ -68,8 +69,10 @@ def create_emergency_request(payload: EmergencyCreate):
         ).fetchone()
         if assignment is None:
             raise HTTPException(404, "배정을 찾을 수 없습니다")
-        if assignment["status"] not in {"PROPOSED", "ACCEPTED"}:
-            raise HTTPException(409, "진행 중인 배정만 긴급 요청할 수 있습니다")
+        if assignment["assignee_id"] != member_id():
+            raise HTTPException(403, "본인이 맡은 돌봄만 긴급 도움을 요청할 수 있습니다")
+        if assignment["status"] != "ACCEPTED":
+            raise HTTPException(409, "수락해 맡고 있는 돌봄만 긴급 요청할 수 있습니다")
         request_id = str(uuid4())
         db.execute(
             """INSERT INTO emergency_request(id, family_id, assignment_id,
@@ -80,10 +83,17 @@ def create_emergency_request(payload: EmergencyCreate):
         suggestions = rank_members(db, family_id(), assignment["starts_at"], target_child_id=assignment["child_id"])
         eligible = [candidate for candidate in suggestions
                     if candidate["available"] and candidate["member_id"] not in {member_id(), assignment["assignee_id"]}]
-        recipients = [row["id"] for row in db.execute(
+        active_ids = {row["id"] for row in db.execute(
             "SELECT id FROM family_member WHERE family_id = ? AND status = 'ACTIVE' AND id != ?",
             (family_id(), member_id()),
-        )]
+        )}
+        if payload.recipient_member_ids is not None:
+            chosen = {member for member in payload.recipient_member_ids if member in active_ids}
+            if not chosen:
+                raise HTTPException(422, "요청을 받을 가족을 한 명 이상 선택해주세요")
+            recipients = list(chosen)
+        else:
+            recipients = list(active_ids)
         for target in recipients:
             notify(db, target, "긴급 돌봄 도움 요청", f"{assignment['item_title']} · {payload.reason}", "IMPORTANT",
                    "EMERGENCY_REQUEST", request_id)
@@ -142,7 +152,8 @@ def claim_emergency_request(request_id: str):
         for target in db.execute(
             "SELECT id FROM family_member WHERE family_id = ? AND status = 'ACTIVE'", (family_id(),)
         ):
-            notify(db, target["id"], "긴급 요청 마감", f"{item['title']}의 새 담당자가 확정됐습니다", "IMPORTANT")
+            notify(db, target["id"], "긴급 요청 마감", f"{item['title']}의 새 담당자가 확정됐습니다", "IMPORTANT",
+                   "EMERGENCY_REQUEST", request_id)
         return {
             "request": _request(db, request_id),
             "assignment": dict(db.execute("SELECT * FROM care_assignment WHERE id = ?", (new_id,)).fetchone()),
@@ -169,5 +180,6 @@ def cancel_emergency_request(request_id: str):
             "SELECT id FROM family_member WHERE family_id = ? AND status = 'ACTIVE' AND id != ?",
             (family_id(), member_id()),
         ):
-            notify(db, target["id"], "긴급 요청 취소", f"{request['item_title']} 도움 요청이 취소됐습니다")
+            notify(db, target["id"], "긴급 요청 취소", f"{request['item_title']} 도움 요청이 취소됐습니다",
+                   action_type="EMERGENCY_REQUEST", action_id=request_id)
         return {"request": _request(db, request_id)}

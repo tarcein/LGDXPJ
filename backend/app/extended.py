@@ -16,8 +16,9 @@ from pydantic import BaseModel, Field
 
 from . import ai
 from .config import enabled, setting
-from .db import database, db_path
+from .db import database
 from .family import authenticated, family_id, member_id, owner_id, require_owner
+from .media import image_mime as _image_mime, media_root as _media_root, read_file as _read_file
 
 
 router = APIRouter(prefix="/api", tags=["media and assistant"])
@@ -42,7 +43,7 @@ APP_CAPABILITIES = [
     {"screen": "home", "name": "홈", "description": "오늘 일정, 아이 일정 요약, 준비물 요약"},
     {"screen": "schedule", "name": "일정", "description": "가족·아이별 달력, 수기 일정, 반복 루틴"},
     {"screen": "calendar", "name": "외부 캘린더", "description": "Google·Outlook 개인 일정 연결과 동기화"},
-    {"screen": "careHub", "name": "케어", "description": "돌봄 요청, 예외 상황, 긴급 도움, 동선"},
+    {"screen": "careHub", "name": "케어", "description": "돌봄 요청, 역할 배정, 예외 상황, 긴급 도움"},
     {"screen": "tasks", "name": "내 할 일", "description": "받은 돌봄 요청 수락·거절, 완료와 인수인계"},
     {"screen": "assignments", "name": "담당 배정", "description": "아이 일정의 돌봄 담당자와 요청 상태"},
     {"screen": "notifications", "name": "알림함", "description": "배정 요청, 수락 결과, 인수인계 알림"},
@@ -95,28 +96,6 @@ def _chat_usage(db, plan: str) -> dict[str, int]:
     limit = CHAT_TOKEN_LIMITS[plan]
     return {"chat_tokens_today": used, "chat_tokens_limit": limit,
             "chat_tokens_remaining": max(0, limit - used)}
-
-
-def _read_file(file: UploadFile, maximum: int) -> bytes:
-    content = file.file.read(maximum + 1)
-    if not content or len(content) > maximum:
-        raise HTTPException(413, "파일이 비어 있거나 크기 제한을 넘었습니다")
-    return content
-
-
-def _image_mime(data: bytes) -> str:
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-        return "image/webp"
-    raise HTTPException(415, "JPEG, PNG, WebP 사진만 지원합니다")
-
-
-def _media_root() -> Path:
-    configured = setting("MEDIA_ROOT")
-    return Path(configured).expanduser().resolve() if configured else (db_path().parent / "uploads" / "family_album").resolve()
 
 
 def _photo_file(photo_id: str, mime: str, created_at: str) -> tuple[Path, str, str]:
@@ -533,7 +512,9 @@ def _chat(message: str) -> dict:
             """SELECT s.id, s.member_id, m.name AS member,
                  CASE WHEN s.member_id = ? OR EXISTS (
                    SELECT 1 FROM family_data_permission p
-                   WHERE p.member_id = s.member_id AND p.scope = 'SCHEDULE_DETAIL' AND p.is_allowed = 1
+                   WHERE p.member_id = s.member_id
+                     AND p.scope = (CASE WHEN s.kind = 'WORK' THEN 'WORK_DETAIL' ELSE 'SCHEDULE_DETAIL' END)
+                     AND p.is_allowed = 1
                  ) THEN s.title ELSE '바쁨' END AS title,
                  s.starts_at, s.ends_at, s.kind, s.external_source FROM personal_schedule s
                JOIN family_member m ON m.id = s.member_id

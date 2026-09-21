@@ -2,11 +2,11 @@ export type Screen =
   | 'thinq' | 'serviceLoading' | 'lockscreen' | 'home' | 'careHub' | 'familyHub' | 'more' | 'family' | 'capture' | 'review' | 'assignments' | 'suggestion'
   | 'schedule' | 'exception' | 'tasks' | 'notifications'
   | 'members' | 'permissions' | 'plan' | 'chat' | 'emergency'
-  | 'location' | 'album' | 'programs' | 'settings' | 'onboarding' | 'calendar' | 'gap'
+  | 'assignmentDetail' | 'album' | 'programs' | 'settings' | 'onboarding' | 'calendar' | 'gap' | 'supplies'
 
 export interface Family { id: string; name: string; plan: string }
 export interface Member { id: string; name: string; role: string; status: string; is_owner: boolean; created_at?: string; is_online?: boolean | number }
-export interface Child { id: string; name: string; age_label: string }
+export interface Child { id: string; name: string; age_label: string; photo_url?: string | null }
 export interface Schedule { id: string; member_id: string; title: string; starts_at: string; ends_at: string; has_end_time?: number | boolean; kind: 'WORK' | 'ROUTINE'; external_source: string | null; recurrence_id?: string | null; recurrence_rule?: string | null }
 export interface ChildSchedule { id: string; child_id: string; title: string; category: string; starts_at: string; ends_at: string; has_end_time?: number | boolean; source: string; recurrence_id?: string | null; recurrence_rule?: string | null }
 export interface CareItem {
@@ -119,5 +119,8 @@ export function formatDate(value: string | null | undefined): string {
 export function formatTime(value: string | null | undefined): string {
   if (!value) return ''
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }).format(date)
+  if (Number.isNaN(date.getTime())) return value
+  const hours = date.getHours()
+  const minutes = date.getMinutes()
+  return minutes === 0 ? `${hours}시` : `${hours}시 ${minutes}분`
 }

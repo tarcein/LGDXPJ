@@ -111,7 +111,8 @@ CREATE TABLE IF NOT EXISTS family_member (
 );
 CREATE TABLE IF NOT EXISTS child (
   id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
-  name TEXT NOT NULL, age_label TEXT NOT NULL
+  name TEXT NOT NULL, age_label TEXT NOT NULL,
+  photo_storage_path TEXT, photo_mime_type TEXT, photo_updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS personal_schedule (
   id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
@@ -300,6 +301,9 @@ def initialize() -> None:
                 ("family_subscription", "last_renewal_error", "TEXT"),
                 ("family_member", "created_at", "TEXT NOT NULL DEFAULT ''"),
                 ("family_session", "last_seen_at", "TEXT NOT NULL DEFAULT ''"),
+                ("child", "photo_storage_path", "TEXT"),
+                ("child", "photo_mime_type", "TEXT"),
+                ("child", "photo_updated_at", "TEXT"),
             ):
                 db.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {definition}")
         else:
@@ -316,6 +320,7 @@ def initialize() -> None:
                 ("family_subscription", (("cancel_at_period_end", "INTEGER NOT NULL DEFAULT 0"), ("canceled_at", "TEXT"), ("renewal_failure_count", "INTEGER NOT NULL DEFAULT 0"), ("last_renewal_error", "TEXT"))),
                 ("family_member", (("created_at", "TEXT NOT NULL DEFAULT ''"),)),
                 ("family_session", (("last_seen_at", "TEXT NOT NULL DEFAULT ''"),)),
+                ("child", (("photo_storage_path", "TEXT"), ("photo_mime_type", "TEXT"), ("photo_updated_at", "TEXT"))),
             ):
                 columns = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
                 for name, definition in additions:
@@ -343,6 +348,9 @@ def initialize() -> None:
         db.execute("""INSERT INTO family_data_permission(member_id, scope, is_allowed)
                       SELECT id, 'SCHEDULE_DETAIL', 0 FROM family_member WHERE 1=1
                       ON CONFLICT(member_id, scope) DO NOTHING""")
+        db.execute("""INSERT INTO family_data_permission(member_id, scope, is_allowed)
+                      SELECT id, 'WORK_DETAIL', 0 FROM family_member WHERE 1=1
+                      ON CONFLICT(member_id, scope) DO NOTHING""")
         if db.execute("SELECT 1 FROM family_group WHERE id = 'demo-family'").fetchone():
             return
 
@@ -369,7 +377,7 @@ def initialize() -> None:
             )
         for child_id, name, age in [("jiu", "지우", "초2"), ("hayun", "하윤", "5세")]:
             db.execute(
-                "INSERT INTO child VALUES (?, ?, ?, ?)", (child_id, family_id, name, age)
+                "INSERT INTO child (id, family_id, name, age_label) VALUES (?, ?, ?, ?)", (child_id, family_id, name, age)
             )
 
         sample_items = [
@@ -410,8 +418,8 @@ def initialize() -> None:
             )
         for member_id in ["mom", "dad", "grandma"]:
             db.execute("INSERT INTO notification_preference(member_id) VALUES (?)", (member_id,))
-            for scope in ["CHILD_DETAIL", "LOCATION", "HEALTH", "NOTE", "PHOTO", "SCHEDULE_DETAIL"]:
-                allowed = scope != "SCHEDULE_DETAIL" and (member_id == "mom" or scope in ["CHILD_DETAIL", "NOTE"])
+            for scope in ["CHILD_DETAIL", "LOCATION", "HEALTH", "NOTE", "PHOTO", "SCHEDULE_DETAIL", "WORK_DETAIL"]:
+                allowed = scope not in ("SCHEDULE_DETAIL", "WORK_DETAIL") and (member_id == "mom" or scope in ["CHILD_DETAIL", "NOTE"])
                 db.execute(
                     "INSERT INTO family_data_permission VALUES (?, ?, ?)",
                     (member_id, scope, int(allowed)),
