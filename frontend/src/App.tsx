@@ -952,7 +952,20 @@ function App() {
   const dailyDigest = !!(preference?.daily_digest_enabled ?? 1)
   useEffect(() => {
     if (!boot || !me?.authenticated) return
-    const active = boot.assignments.find(item => !['COMPLETED', 'CANCELED', 'CANCELLED'].includes(item.status))
+    const now = Date.now()
+    const candidates = boot.assignments
+      .filter(item => !['COMPLETED', 'CANCELED', 'CANCELLED', 'REJECTED'].includes(item.status))
+      .map(assignment => ({ assignment, item: boot.items.find(item => item.id === assignment.item_id) }))
+      .filter(candidate => candidate.item)
+      .sort((left, right) => {
+        const statusRank = (status: string) => status === 'ACCEPTED' ? 0 : 1
+        const rankDiff = statusRank(left.assignment.status) - statusRank(right.assignment.status)
+        if (rankDiff) return rankDiff
+        const leftTime = left.item?.starts_at ? Math.abs(new Date(left.item.starts_at).getTime() - now) : Number.MAX_SAFE_INTEGER
+        const rightTime = right.item?.starts_at ? Math.abs(new Date(right.item.starts_at).getTime() - now) : Number.MAX_SAFE_INTEGER
+        return leftTime - rightTime
+      })
+    const active = candidates[0]?.assignment
     if (!active) {
       void clearLiveCareStatus()
       return

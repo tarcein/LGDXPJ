@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "501938465110",
+    "project_id": "dx-family",
+    "storage_bucket": "dx-family.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:501938465110:android:78ef193c80c90c7055cef7",
+        "android_client_info": {
+          "package_name": "com.lgdx.family"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBLOGmi30LobiMMHDqZo7gzZBOjfhqDon8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
