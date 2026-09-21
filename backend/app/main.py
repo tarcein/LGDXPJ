@@ -47,8 +47,8 @@ def notify(db, member_id: str | None, title: str, body: str, level: str = "NORMA
     )
     from .push import send_push
     token_rows = db.execute(
-        "SELECT token FROM push_device_token WHERE family_id = ? AND (? IS NULL OR member_id = ?)",
-        (target_family, member_id, member_id),
+        "SELECT token FROM push_device_token WHERE family_id = ?" + (" AND member_id = ?" if member_id else ""),
+        (target_family, member_id) if member_id else (target_family,),
     ).fetchall()
     send_push([row[0] for row in token_rows], title[:100], body[:200], action_type, action_id)
 
