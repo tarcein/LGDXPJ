@@ -86,7 +86,6 @@ type KakaoSdk = {
   Share: { sendDefault: (options: { objectType: 'text'; text: string; link: { mobileWebUrl: string; webUrl: string }; buttonTitle: string }) => Promise<unknown> }
 }
 declare global { interface Window { Kakao?: KakaoSdk } }
-const kakaoJavaScriptKey = import.meta.env.VITE_KAKAO_JAVASCRIPT_KEY?.trim()
 const memberProfileColors = ['#a9cbed', '#b4d99d', '#dfcdad', '#d8b2ea', '#f1b1be', '#9fd8d1', '#f2c58f', '#aeb8e8']
 const localDateTime = (value: string | null) => value ? new Date(new Date(value).getTime() - new Date(value).getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : ''
 const localClock = (value: string) => new Intl.DateTimeFormat('sv-SE', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
@@ -298,6 +297,7 @@ function App() {
   const [selectedDate, setSelectedDate] = useState(() => new Date().toLocaleDateString('sv-SE'))
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
   const [calendarConnections, setCalendarConnections] = useState<CalendarConnection[]>([])
+  const [kakaoJavaScriptKey, setKakaoJavaScriptKey] = useState('')
   const [memberNameInput, setMemberNameInput] = useState('')
   const [memberRole, setMemberRole] = useState('GRANDPARENT')
   const [note, setNote] = useState('')
@@ -524,6 +524,11 @@ function App() {
     }
     addEventListener('popstate', handleBack)
     return () => removeEventListener('popstate', handleBack)
+  }, [])
+  useEffect(() => {
+    api<{ kakao_javascript_key: string }>('/public-config')
+      .then(config => setKakaoJavaScriptKey(config.kakao_javascript_key.trim()))
+      .catch(() => setKakaoJavaScriptKey(''))
   }, [])
   useEffect(() => {
     if (invitationFromUrl) api<{ family_name: string; owner_name: string; expires_at: string }>('/families/invitations/' + encodeURIComponent(invitationFromUrl))

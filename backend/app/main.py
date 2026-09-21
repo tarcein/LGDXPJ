@@ -79,7 +79,7 @@ app.include_router(family_router)
 @app.middleware("http")
 async def family_context(request: Request, call_next):
     if (request.url.path in {"/api/families", "/api/families/join", "/api/families/dev-login",
-                            "/api/families/dev-login-options", "/api/health"}
+                            "/api/families/dev-login-options", "/api/health", "/api/public-config"}
             or request.url.path.startswith("/api/families/invitations/")
             or request.url.path.endswith("/callback")
             or not request.url.path.startswith("/api/")):
@@ -271,6 +271,12 @@ class NotificationPreferenceUpdate(BaseModel):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "mode": "local-demo"}
+
+
+@app.get("/api/public-config")
+def public_config():
+    """Return browser-safe integration keys sourced from the backend environment."""
+    return {"kakao_javascript_key": setting("KAKAO_JAVASCRIPT_KEY")}
 
 
 @app.get("/api/bootstrap")
