@@ -88,7 +88,9 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   const token = localStorage.getItem(tokenKey)
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  const apiBase = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+  const apiBase = window.location.port === '5173'
+    ? ''
+    : (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
   const response = await fetch(`${apiBase}/api${path}`, {
     ...init,
     headers,

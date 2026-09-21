@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -14,6 +15,24 @@ from .config import setting
 
 
 API_ROOT = "https://api.openai.com/v1"
+
+
+def _clean_schedule_title(title: str) -> str:
+    """Keep the event name; its parsed date and time live in separate fields."""
+    patterns = (
+        r"\b\d{4}[./-]\d{1,2}[./-]\d{1,2}\b",
+        r"(?:\d{4}년\s*)?\d{1,2}월\s*\d{1,2}일",
+        r"(?<!\d)\d{1,2}[./-]\d{1,2}(?!\d)",
+        r"(?:월|화|수|목|금|토|일)요일|\([월화수목금토일]\)",
+        r"(?:오전|오후)\s*\d{1,2}(?::\d{2}|\s*시(?:\s*\d{1,2}분)?)?",
+        r"(?<!\d)\d{1,2}시(?:\s*\d{1,2}분)?",
+        r"(?<!\d)\d{1,2}:\d{2}(?!\d)",
+    )
+    cleaned = title
+    for pattern in patterns:
+        cleaned = re.sub(pattern, " ", cleaned)
+    cleaned = re.sub(r"\(\s*\)|\[\s*\]", " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip(" ,·~〜–—-/()[]")
 
 
 def api_key() -> str:
@@ -148,6 +167,8 @@ def extract_schedule_items(text: str) -> list[dict[str, str]]:
             ends_at = datetime.fromisoformat(ends_at.replace("Z", "+00:00")).isoformat() if ends_at else None
         except (AttributeError, ValueError):
             starts_at, ends_at = None, None
+        if kind in {"SCHEDULE", "CHANGE"}:
+            title = _clean_schedule_title(title) or title
         category = item.get("category") if item.get("category") in {"ACADEMY", "SCHOOL", "AFTER_SCHOOL", "ACTIVITY", "OTHER"} else "OTHER"
         selected.append({"item_type": kind, "title": title, "detail": quote, "confidence": "LOW",
                          "starts_at": starts_at, "ends_at": ends_at, "category": category})

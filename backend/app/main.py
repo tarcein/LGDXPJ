@@ -133,6 +133,7 @@ app.add_middleware(
         "http://localhost:5173", "http://127.0.0.1:5173",
         "http://localhost", "https://localhost", "capacitor://localhost",
     ],
+    allow_origin_regex=r"^http://(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}):5173$",
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type", "Authorization", "X-Developer-Token"],
 )
@@ -217,6 +218,10 @@ def recurring_occurrences(starts_at: datetime, ends_at: datetime, repeat_days: l
                           repeat_dates: list[date] | None = None):
     if ends_at <= starts_at:
         raise HTTPException(422, "종료 시각은 시작 시각보다 늦어야 합니다")
+    if starts_at.tzinfo is not None:
+        local_zone = ZoneInfo("Asia/Seoul")
+        starts_at = starts_at.astimezone(local_zone)
+        ends_at = ends_at.astimezone(local_zone)
     days = sorted(set(repeat_days))
     dates = sorted(set(repeat_dates or []))
     if any(day < 0 or day > 6 for day in days):

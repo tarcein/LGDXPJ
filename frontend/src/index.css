@@ -179,7 +179,7 @@ strong { font-weight: 700; }
 .single-schedule-screen { position: relative; width: 100%; height: 100%; overflow-y: auto; padding: calc(16px + env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) calc(84px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); border-radius: 0; color: #1a181c; background: #f4f6fc; box-shadow: none; scrollbar-width: none; }
 .single-schedule-screen::-webkit-scrollbar { display: none; }.single-schedule-screen > header { display: grid; grid-template-columns: 24px 1fr auto; align-items: center; height: 42px; }.single-schedule-screen > header > button { padding: 0; color: #8b8d92; background: transparent; font: 400 24px Arial, sans-serif; text-align: left; }.single-schedule-screen > header > strong { font-size: 14px; }.single-schedule-screen > header > span { padding: 4px 8px; border-radius: 12px; color: #c4123f; background: #fceaf0; font-size: 9px; font-weight: 700; }
 .single-schedule-context { display: flex; gap: 8px; margin: 6px 0 10px; }.single-schedule-context label { flex: 1; min-width: 0; }.single-schedule-context label > span { display: block; margin: 0 0 4px 4px; color: #8b8d92; font-size: 9px; }.single-schedule-context select { width: 100%; height: 34px; padding: 0 10px; border: 1px solid #1a181c12; border-radius: 10px; color: #555963; background: #fff; font-size: 10px; }
-.single-schedule-card { padding: 17px; border: 1px solid #1a181c12; border-radius: 16px; background: #fff; box-shadow: 0 1px 2px #0000000a; }.single-schedule-card label > span, .single-time label > span { display: block; margin-bottom: 7px; color: #1a181c80; font-size: 10px; font-weight: 500; }.single-title, .single-date { display: block; }.single-title input { width: 100%; height: 34px; padding: 0 0 8px; border: 0; border-bottom: 1px solid #c4123f; outline: 0; color: #1a181c; background: transparent; font-size: 15px; font-weight: 700; }.single-title input::placeholder { color: #a2a5ab; font-size: 12px; font-weight: 500; }.single-date { margin-top: 14px; }.single-date input, .single-time input { width: 100%; height: 41px; padding: 0 13px; border: 0; border-radius: 11px; outline: 0; color: #1a181c; background: #f4f6fc; font: 700 12px 'Courier New', monospace; }.single-time { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }.single-time input { height: 38px; }
+.single-schedule-card { padding: 17px; border: 1px solid #1a181c12; border-radius: 16px; background: #fff; box-shadow: 0 1px 2px #0000000a; }.single-schedule-card label > span, .single-time label > span { display: block; margin-bottom: 7px; color: #1a181c80; font-size: 10px; font-weight: 500; }.single-title, .single-date { display: block; }.single-title input { width: 100%; height: 34px; padding: 0 0 8px; border: 0; border-bottom: 1px solid #c4123f; outline: 0; color: #1a181c; background: transparent; font-size: 15px; font-weight: 700; }.single-title input::placeholder { color: #a2a5ab; font-size: 12px; font-weight: 500; }.single-date { margin-top: 14px; }.single-date input, .single-time input { width: 100%; height: 48px; padding: 0 13px; border: 0; border-radius: 11px; outline: 0; color: #1a181c; background: #f4f6fc; font: 700 12px 'Courier New', monospace; }.single-time { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
 .single-collision { min-height: 84px; margin-top: 13px; padding: 14px 17px; border-radius: 14px; background: #fff; box-shadow: 0 3px 6px #00000028; }.single-collision strong { display: block; color: #52635a; font-size: 11px; }.single-collision.danger strong { color: #7a5f12; }.single-collision b { display: block; margin-top: 9px; font-size: 12px; }.single-collision p { margin-top: 8px; color: #1a181c8c; font-size: 10px; }.single-work-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 63px; margin-top: 13px; padding: 12px 14px; border: 1px solid #1a181c12; border-radius: 14px; color: #1a181c; background: #fff; text-align: left; }.single-work-toggle > span { display: flex; flex-direction: column; }.single-work-toggle strong { font-size: 12px; }.single-work-toggle small { margin-top: 2px; color: #1a181c80; font-size: 10px; }.single-work-toggle .switch { display: block; }
 .single-schedule-save { position: absolute; left: max(20px, env(safe-area-inset-left)); right: max(20px, env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); height: 52px; border-radius: 14px; color: #fff; background: #c4123f; font-size: 14px; font-weight: 800; }
 .routine-screen { position: relative; width: 100%; height: 100%; max-height: none; overflow-y: auto; border-radius: 0; color: #101418; background: #f4f6fc; box-shadow: none; scrollbar-width: none; }
@@ -1123,8 +1123,8 @@ strong { font-weight: 700; }
 .care-route-assets > span.active img { width: 34px; height: 34px; }
 .care-route-assets > img { flex: 1 1 22px; width: 22px; min-width: 12px; max-width: 42px; height: 7px; margin-top: 14px; object-fit: fill; }
 .care-route-assets small { max-width: 44px; overflow: hidden; font-size: 8px; line-height: 1.2; text-overflow: ellipsis; }
-.routine-time-fields { display: grid; grid-template-columns: 60px 8px minmax(104px, 1fr); align-items: center; width: min(208px, 68%); min-height: 34px; padding: 0 7px; }
-.routine-time-fields input { width: 100%; min-width: 0; font-size: 9px; }
+.routine-time-fields { display: grid; grid-template-columns: minmax(82px, 1fr) 8px minmax(82px, 1fr); align-items: center; width: min(250px, 76%); min-height: 46px; padding: 0 7px; }
+.routine-time-fields input { width: 100%; min-width: 0; font-size: 10px; }
 .routine-time-fields span { text-align: center; }
 .family-people i.member-profile-initial { overflow: visible; color: #fff; text-shadow: 0 1px 1px #0001; }
 .profile-summary > span { flex: none; font-size: 16px; }
@@ -1359,7 +1359,7 @@ strong { font-weight: 700; }
 /* 2026-09-21 mobile form, plan asset, and supplies polish */
 .schedule-form-sheet { width: min(360px, 100%); padding: 12px 20px calc(22px + env(safe-area-inset-bottom)); }
 .schedule-form-sheet > .form-control,
-.schedule-form-sheet .time-pair .form-control { min-width: 0; height: 42px; min-height: 42px; padding: 0 12px; font-size: 13px; }
+.schedule-form-sheet .time-pair .form-control { min-width: 0; height: 50px; min-height: 50px; padding: 0 12px; font-size: 13px; }
 .schedule-form-sheet > .form-label { margin: 8px 0 5px; font-size: 12px; }
 .schedule-form-sheet .time-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .schedule-form-sheet > .primary-button,
@@ -1371,8 +1371,33 @@ strong { font-weight: 700; }
 .single-schedule-context,
 .single-schedule-context label,
 .single-schedule-context select { min-width: 0; max-width: 100%; }
-.single-date input { display: block; width: 100%; max-width: 100%; padding: 0 10px; }
+.single-date input { display: block; width: 100%; max-width: 100%; padding: 0 12px; }
 .single-time { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+/* Use the spare mobile height for larger controls without enlarging typography. */
+.single-schedule-screen { padding-top: calc(22px + env(safe-area-inset-top)); padding-bottom: calc(94px + env(safe-area-inset-bottom)); }
+.single-schedule-screen > header { height: 50px; }
+.single-schedule-context { margin: 12px 0 16px; }
+.single-schedule-context select { height: 44px; padding: 0 13px; border-radius: 12px; }
+.single-schedule-card { padding: 22px; border-radius: 18px; }
+.single-title input { height: 42px; }
+.single-date { margin-top: 20px; }
+.single-date input,
+.single-time input { height: 56px; border-radius: 13px; }
+.single-time { gap: 12px; margin-top: 20px; }
+.single-collision { min-height: 100px; margin-top: 16px; padding: 18px 20px; border-radius: 16px; }
+.single-work-toggle { min-height: 74px; margin-top: 16px; padding: 15px 18px; border-radius: 16px; }
+.single-schedule-save { bottom: calc(18px + env(safe-area-inset-bottom)); height: 58px; border-radius: 16px; }
+
+.routine-form-card { padding: 25px 20px; border-radius: 18px; }
+.routine-target,
+.routine-repeat { padding-top: 25px !important; }
+.routine-target button { height: 36px; }
+.routine-repeat-tabs button { height: 34px; }
+.routine-weekdays button { width: 38px; height: 38px; }
+.routine-date-range { padding: 12px 13px 14px; border-radius: 12px; }
+.routine-date-range input { min-height: 32px; }
+.routine-save { height: 50px; margin-top: 22px; }
 
 .schedule-quick-menu { width: min(300px, calc(100vw - 92px)); padding: 14px; }
 .schedule-quick-menu .schedule-add-options { gap: 7px; }

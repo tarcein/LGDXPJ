@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
@@ -15,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from app import ai
 from app.db import database
-from app.main import app
+from app.main import app, recurring_occurrences
 from app.payment import process_due_renewals
 
 
@@ -286,11 +287,22 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual(response.json()["transcript"], "안녕하세요. 좋은 하루 되세요.")
 
     def test_schedule_extraction_requires_quote_from_ocr_text(self):
-        payload = {"output": [{"content": [{"type": "output_text", "text": '{"items":[{"item_type":"SCHEDULE","title":"9월 20일 현장학습","source_quote":"9월 20일 현장학습"},{"item_type":"TODO","title":"허구의 과제","source_quote":"원문에 없는 문장"}]}'}]}]}
+        payload = {"output": [{"content": [{"type": "output_text", "text": '{"items":[{"item_type":"SCHEDULE","title":"9월 20일 오전 9시 현장학습","source_quote":"9월 20일 오전 9시 현장학습"},{"item_type":"TODO","title":"허구의 과제","source_quote":"원문에 없는 문장"}]}'}]}]}
         with patch("app.ai._post", return_value=payload) as post:
-            items = ai.extract_schedule_items("9월 20일 현장학습\n안녕하세요")
-        self.assertEqual([item["title"] for item in items], ["9월 20일 현장학습"])
+            items = ai.extract_schedule_items("9월 20일 오전 9시 현장학습\n안녕하세요")
+        self.assertEqual([item["title"] for item in items], ["현장학습"])
         self.assertTrue(post.call_args.kwargs["json"]["text"]["format"]["strict"])
+
+    def test_weekly_recurrence_uses_korea_weekday_for_utc_input(self):
+        occurrences = recurring_occurrences(
+            datetime.fromisoformat("2026-09-13T15:00:00+00:00"),
+            datetime.fromisoformat("2026-09-13T16:00:00+00:00"),
+            [0, 1, 2, 3, 4],
+            datetime.fromisoformat("2026-09-18").date(),
+        )
+        self.assertEqual([start.strftime("%Y-%m-%d") for start, _ in occurrences], [
+            "2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18",
+        ])
 
     def test_ocr_failure_does_not_consume_daily_allowance(self):
         image = b"\x89PNG\r\n\x1a\n" + b"demo-image"
