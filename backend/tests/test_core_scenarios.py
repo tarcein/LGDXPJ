@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -50,10 +51,16 @@ class CoreScenarioTest(unittest.TestCase):
                 "kind": "WORK", "category": None,
             }],
         }
-        with patch("app.extended.ai.answer", return_value=(structured, 30)):
+        with patch("app.extended.ai.answer", return_value=(structured, 30)) as answer:
             response = self.client.post("/api/assistant/chat", json={"message": "9월 20일 18시 퇴근 일정 등록해줘"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["schedule_creations"][0]["title"], "퇴근")
+        context = json.loads(answer.call_args.args[1])
+        self.assertEqual(context["context_scope"], ["schedule"])
+        self.assertIn("personal_schedules", context)
+        self.assertNotIn("care_items", context)
+        self.assertNotIn("notifications", context)
+        self.assertEqual(answer.call_args.args[3], 1400)
         schedules = self.client.get("/api/bootstrap").json()["schedules"]
         self.assertTrue(any(item["title"] == "퇴근" and item["has_end_time"] == 0 for item in schedules))
 

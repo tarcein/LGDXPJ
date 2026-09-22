@@ -54,6 +54,22 @@ APP_CAPABILITIES = [
     {"screen": "plan", "name": "플랜·결제", "description": "Free·Pro 기능과 토스 결제"},
 ]
 
+CHAT_TOPIC_TERMS = {
+    "schedule": (
+        "일정", "스케줄", "캘린더", "달력", "오늘", "내일", "모레", "이번주", "다음주",
+        "등원", "하원", "학원", "학교", "출근", "퇴근", "운동", "약속", "몇시",
+        "등록해", "추가해", "넣어줘", "바꿔", "변경해", "옮겨", "수정해", "미뤄", "당겨",
+    ),
+    "care": (
+        "돌봄", "케어", "담당", "배정", "맡", "누가", "요청", "수락", "거절", "완료",
+        "인수인계", "할일", "긴급", "공백", "특이사항", "준비물", "숙제",
+    ),
+    "notifications": ("알림", "공지"),
+    "album": ("사진", "앨범", "모음zip", "모음집"),
+    "benefits": ("돌봄제도", "지원금", "보조금", "혜택", "아이돌봄"),
+}
+APP_HELP_TERMS = ("어디", "어떻게", "사용법", "화면", "메뉴", "기능", "설정")
+
 
 def _backend_state(feature: str) -> str:
     if feature in API_READY:
@@ -397,6 +413,46 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
 
 
+def _chat_topics(message: str) -> tuple[set[str], bool]:
+    compact = "".join(message.lower().split())
+    topics = {topic for topic, terms in CHAT_TOPIC_TERMS.items() if any(term in compact for term in terms)}
+    app_help = any(term in compact for term in APP_HELP_TERMS)
+    if not topics and not app_help:
+        topics = set(CHAT_TOPIC_TERMS)
+    return topics, app_help
+
+
+def _context_rows(rows, message: str, limit: int) -> list[dict]:
+    """Keep named matches first, then the rows closest to now."""
+    compact = "".join(message.lower().split())
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+
+    def rank(row: dict) -> tuple[int, float]:
+        named = any(
+            len(value) >= 2 and "".join(value.lower().split()) in compact
+            for key in ("title", "member", "child", "assignee", "from_member", "to_member")
+            if isinstance(value := row.get(key), str)
+        )
+        value = row.get("starts_at") or row.get("created_at")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=ZoneInfo("Asia/Seoul"))
+            distance = abs((parsed - now).total_seconds())
+        except (AttributeError, ValueError):
+            distance = float("inf")
+        return (not named, distance)
+
+    return sorted((dict(row) for row in rows), key=rank)[:limit]
+
+
+def _without_ids(value: dict | list[dict]):
+    def clean(row: dict) -> dict:
+        return {key: item for key, item in row.items() if key != "id" and not key.endswith("_id")}
+
+    return [clean(row) for row in value] if isinstance(value, list) else clean(value)
+
+
 def _benefit_context(message: str) -> dict:
     if not any(term in message for term in ("돌봄 제도", "돌봄제도", "지원금", "보조금", "혜택", "아이돌봄")):
         return {"requested": False}
@@ -525,6 +581,13 @@ def _apply_schedule_creations(creations: list[dict], original_message: str) -> l
 
 
 def _chat(message: str) -> dict:
+    topics, app_help = _chat_topics(message)
+    compact_message = message.replace(" ", "")
+    wants_creation = any(term in compact_message for term in ("등록해", "추가해", "넣어줘", "일정잡아", "일정만들어", "기록해"))
+    wants_change = any(term in compact_message for term in ("변경해", "바꿔", "옮겨", "수정해", "미뤄", "당겨"))
+    action_request = wants_creation or wants_change
+    personal_schedule_limit = 4 if wants_creation else 8 if wants_change else 10
+    child_schedule_limit = 4 if wants_creation else 8 if wants_change else 12
     with database() as db:
         plan = _plan(db)
         used = _chat_used(db)
@@ -544,72 +607,103 @@ def _chat(message: str) -> dict:
         children = [dict(row) for row in db.execute(
             "SELECT id, name, age_label FROM child WHERE family_id = ? ORDER BY name", (family_id(),),
         )]
-        schedules = [dict(row) for row in db.execute(
-            """SELECT s.id, s.member_id, m.name AS member,
-                 CASE WHEN s.member_id = ? OR EXISTS (
-                   SELECT 1 FROM family_data_permission p
-                   WHERE p.member_id = s.member_id
-                     AND p.scope = (CASE WHEN s.kind = 'WORK' THEN 'WORK_DETAIL' ELSE 'SCHEDULE_DETAIL' END)
-                     AND p.is_allowed = 1
-                 ) THEN s.title ELSE '바쁨' END AS title,
-                 s.starts_at, s.ends_at, s.kind, s.external_source FROM personal_schedule s
-               JOIN family_member m ON m.id = s.member_id
-               WHERE s.family_id = ? ORDER BY s.starts_at LIMIT 20""", (member_id(), family_id()))]
-        items = [dict(row) for row in db.execute(
-            """SELECT i.id, i.child_id, c.name AS child, i.item_type, i.title, i.detail,
-               i.starts_at, i.status FROM care_item i LEFT JOIN child c ON c.id = i.child_id
-               WHERE i.family_id = ? ORDER BY i.created_at DESC LIMIT 30""", (family_id(),))]
-        assignments = [dict(row) for row in db.execute(
-            """SELECT a.id, a.item_id, i.title, m.name AS assignee, a.assignee_id, a.status,
-               a.requested_by_member_id, a.completed_at FROM care_assignment a
-               JOIN care_item i ON i.id = a.item_id JOIN family_member m ON m.id = a.assignee_id
-               WHERE a.family_id = ? ORDER BY a.created_at DESC LIMIT 20""", (family_id(),))]
-        child_schedules = [dict(row) for row in db.execute(
-            """SELECT s.id, s.child_id, c.name AS child, s.title, s.category, s.starts_at, s.ends_at,
-               s.source, s.recurrence_id
-               FROM child_schedule s JOIN child c ON c.id = s.child_id
-               WHERE s.family_id = ? ORDER BY s.starts_at LIMIT 30""", (family_id(),))]
-        handoffs = [dict(row) for row in db.execute(
-            """SELECT h.id, h.assignment_id, fm.name AS from_member, tm.name AS to_member,
-               h.briefing, h.special_note, h.status FROM care_handoff h
-               LEFT JOIN family_member fm ON fm.id = h.from_member_id
-               JOIN family_member tm ON tm.id = h.to_member_id
-               WHERE h.family_id = ? AND (h.to_member_id = ? OR h.from_member_id = ?)
-               ORDER BY h.id DESC LIMIT 15""", (family_id(), member_id(), member_id()))]
+        if "schedule" in topics:
+            schedules = _context_rows(db.execute(
+                """SELECT s.id, s.member_id, m.name AS member,
+                     CASE WHEN s.member_id = ? OR EXISTS (
+                       SELECT 1 FROM family_data_permission p
+                       WHERE p.member_id = s.member_id
+                         AND p.scope = (CASE WHEN s.kind = 'WORK' THEN 'WORK_DETAIL' ELSE 'SCHEDULE_DETAIL' END)
+                         AND p.is_allowed = 1
+                     ) THEN s.title ELSE '바쁨' END AS title,
+                     s.starts_at, s.ends_at, s.kind, s.external_source FROM personal_schedule s
+                   JOIN family_member m ON m.id = s.member_id
+                   WHERE s.family_id = ? ORDER BY s.starts_at DESC LIMIT 300""",
+                (member_id(), family_id())).fetchall(), message, personal_schedule_limit)
+            child_schedules = _context_rows(db.execute(
+                """SELECT s.id, s.child_id, c.name AS child, s.title, s.category, s.starts_at, s.ends_at,
+                   s.source, s.recurrence_id
+                   FROM child_schedule s JOIN child c ON c.id = s.child_id
+                   WHERE s.family_id = ? ORDER BY s.starts_at DESC LIMIT 300""",
+                (family_id(),)).fetchall(), message, child_schedule_limit)
+        else:
+            schedules, child_schedules = [], []
+        if "care" in topics:
+            items = _context_rows(db.execute(
+                """SELECT i.id, i.child_id, c.name AS child, i.item_type, i.title, i.detail,
+                   i.starts_at, i.status FROM care_item i LEFT JOIN child c ON c.id = i.child_id
+                   WHERE i.family_id = ? ORDER BY i.created_at DESC LIMIT 200""",
+                (family_id(),)).fetchall(), message, 12)
+            assignments = _context_rows(db.execute(
+                """SELECT a.id, a.item_id, i.title, i.starts_at, m.name AS assignee, a.assignee_id,
+                   a.status, a.requested_by_member_id, a.completed_at FROM care_assignment a
+                   JOIN care_item i ON i.id = a.item_id JOIN family_member m ON m.id = a.assignee_id
+                   WHERE a.family_id = ? ORDER BY a.created_at DESC LIMIT 200""",
+                (family_id(),)).fetchall(), message, 12)
+            handoffs = [dict(row) for row in db.execute(
+                """SELECT h.id, h.assignment_id, fm.name AS from_member, tm.name AS to_member,
+                   h.briefing, h.special_note, h.status FROM care_handoff h
+                   LEFT JOIN family_member fm ON fm.id = h.from_member_id
+                   JOIN family_member tm ON tm.id = h.to_member_id
+                   WHERE h.family_id = ? AND (h.to_member_id = ? OR h.from_member_id = ?)
+                   ORDER BY h.id DESC LIMIT 8""", (family_id(), member_id(), member_id()))]
+        else:
+            items, assignments, handoffs = [], [], []
         notices = [dict(row) for row in db.execute(
             """SELECT id, title, body, level, is_read, action_type, action_id, created_at
                FROM notification WHERE family_id = ? AND (member_id IS NULL OR member_id = ?)
-               ORDER BY created_at DESC LIMIT 20""", (family_id(), member_id()))]
+               ORDER BY created_at DESC LIMIT 10""", (family_id(), member_id()))] if "notifications" in topics else []
         album = [dict(row) for row in db.execute(
             """SELECT id, child_id, kind, file_name, caption, created_at, date_folder
-               FROM media_asset WHERE family_id = ? ORDER BY created_at DESC LIMIT 10""", (family_id(),))]
+               FROM media_asset WHERE family_id = ? ORDER BY created_at DESC LIMIT 5""",
+            (family_id(),))] if "album" in topics else []
         location = db.execute(
             "SELECT city, district FROM member_benefit_location WHERE family_id = ? AND member_id = ?",
             (family_id(), member_id()),
-        ).fetchone()
+        ).fetchone() if "benefits" in topics else None
         history = [{"role": row["role"], "content": row["content"]} for row in reversed(db.execute(
             """SELECT role, content FROM assistant_message WHERE family_id = ? AND member_id = ?
                ORDER BY created_at DESC, id DESC LIMIT 6""", (family_id(), member_id())).fetchall())]
-    benefit_data = _benefit_context(message)
-    context = json.dumps({
+    if not action_request:
+        family, current_member = _without_ids(family), _without_ids(current_member)
+        members, children = _without_ids(members), _without_ids(children)
+        schedules, child_schedules = _without_ids(schedules), _without_ids(child_schedules)
+        items, assignments, handoffs = _without_ids(items), _without_ids(assignments), _without_ids(handoffs)
+        notices, album = _without_ids(notices), _without_ids(album)
+    benefit_data = _benefit_context(message) if "benefits" in topics else {"requested": False}
+    context_data = {
         "current_time": datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
         "family": family, "current_member": current_member, "members": members, "children": children,
-        "personal_schedules": schedules, "child_schedules": child_schedules, "care_items": items,
-        "assignments": assignments, "handoffs": handoffs, "notifications": notices,
-        "album_recent_metadata": album, "benefit_search_location": dict(location) if location else None,
-        "benefit_search_result": benefit_data, "capability_catalog": APP_CAPABILITIES,
-    }, ensure_ascii=False)
+        "context_scope": sorted(topics),
+    }
+    if "schedule" in topics:
+        context_data.update(personal_schedules=schedules, child_schedules=child_schedules)
+    if "care" in topics:
+        context_data.update(care_items=items, assignments=assignments, handoffs=handoffs)
+    if "notifications" in topics:
+        context_data["notifications"] = notices
+    if "album" in topics:
+        context_data["album_recent_metadata"] = album
+    if "benefits" in topics:
+        context_data.update(benefit_search_location=dict(location) if location else None,
+                            benefit_search_result=benefit_data)
+    if app_help or len(topics) == len(CHAT_TOPIC_TERMS):
+        context_data["capability_catalog"] = APP_CAPABILITIES
+    context = json.dumps(context_data, ensure_ascii=False, separators=(",", ":"))
     structured, tokens = ai.answer(message, context, history, min(1400, remaining))
     if tokens <= 0:
         raise HTTPException(502, detail={"code": "AI_USAGE_MISSING", "message": "AI 서비스 사용량을 확인하지 못했습니다"})
     if isinstance(structured, str):
         structured = {"answer": structured, "cards": [], "schedule_changes": [], "schedule_creations": []}
-    compact_message = message.replace(" ", "")
-    wants_creation = any(term in compact_message for term in ("등록해", "추가해", "넣어줘", "일정잡아", "일정만들어", "기록해"))
-    wants_change = any(term in compact_message for term in ("변경해", "바꿔", "옮겨", "수정해", "미뤄", "당겨"))
     if ((wants_creation and not structured.get("schedule_creations"))
             or (wants_change and not structured.get("schedule_changes"))):
-        focused, focused_tokens = ai.schedule_actions(message, context)
+        action_context = json.dumps({
+            key: context_data[key] for key in (
+                "current_time", "current_member", "members", "children",
+                "personal_schedules", "child_schedules",
+            ) if key in context_data
+        }, ensure_ascii=False, separators=(",", ":"))
+        focused, focused_tokens = ai.schedule_actions(message, action_context)
         if wants_creation and not structured.get("schedule_creations"):
             structured["schedule_creations"] = focused.get("schedule_creations", [])
         if wants_change and not structured.get("schedule_changes"):
