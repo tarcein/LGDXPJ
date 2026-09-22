@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, formatDate, formatTime, type Assignment, type Bootstrap, type EmergencyRequest, type Notice } from './api'
+import { api, formatDate, formatTime, type Assignment, type Bootstrap, type EmergencyRequest, type FamilyMe, type Notice } from './api'
 import './tv.css'
 import tvNewsBackground from '../../asset/tv-news-background.png'
 
@@ -103,12 +103,22 @@ function TvDisplay() {
     const load = async () => {
       try {
         const fresh = `?tv_refresh=${Date.now()}`
-        const [nextSnapshot, emergencyResult] = await Promise.all([
+        const [nextMe, nextSnapshot, emergencyResult] = await Promise.all([
+          api<FamilyMe>(`/families/me${fresh}`),
           api<Bootstrap>(`/bootstrap${fresh}`),
           api<{ requests: EmergencyRequest[] }>(`/emergency-requests${fresh}`),
         ])
         if (cancelled) return
         setConnected(true)
+        if (!nextSnapshot.notification_preferences.find(item => item.member_id === nextMe.member.id)?.device_enabled) {
+          nextSnapshot.notifications.forEach(notice => seenNoticeIds.current.add(notice.id))
+          if (alertRef.current) {
+            activeAlertKey.current = ''
+            alertRef.current = null
+            setAlert(null)
+          }
+          return
+        }
 
         const openEmergency = emergencyResult.requests.find(request => request.status === 'OPEN')
         if (openEmergency) {

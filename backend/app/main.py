@@ -339,6 +339,7 @@ class PermissionUpdate(BaseModel):
 class NotificationPreferenceUpdate(BaseModel):
     app_enabled: bool | None = None
     daily_digest_enabled: bool | None = None
+    device_enabled: bool | None = None
 
 
 class PushTokenCreate(BaseModel):
@@ -1107,13 +1108,15 @@ def complete_assignment_record(db, assignment_id: str, note_text: str, has_photo
     next_assignment = None
     if item.get("child_id") and item.get("starts_at"):
         next_assignment = db.execute(
-            """SELECT a.* FROM care_assignment a JOIN care_item i ON i.id = a.item_id
-               WHERE a.family_id = ? AND i.child_id = ? AND i.starts_at > ?
-                 AND a.status IN ('PROPOSED', 'ACCEPTED') AND a.assignee_id <> ?
-               ORDER BY i.starts_at LIMIT 1""",
-            (family_id(), item["child_id"], item["starts_at"], assignment["assignee_id"]),
+            """SELECT a.assignee_id FROM care_item i
+               LEFT JOIN care_assignment a ON a.item_id = i.id AND a.status = 'ACCEPTED'
+               WHERE i.family_id = ? AND i.child_id = ? AND i.starts_at > ?
+                 AND i.item_type != 'SUPPLY'
+               ORDER BY i.starts_at, i.id LIMIT 1""",
+            (family_id(), item["child_id"], item["starts_at"]),
         ).fetchone()
-    recipient = dict(next_assignment)["assignee_id"] if next_assignment else (owner if assignment["assignee_id"] != owner else None)
+    next_assignee_id = next_assignment["assignee_id"] if next_assignment else None
+    recipient = next_assignee_id if next_assignee_id != assignment["assignee_id"] else None
     handoff_id = None
     if recipient:
         handoff_id = str(uuid4())
@@ -1129,7 +1132,7 @@ def complete_assignment_record(db, assignment_id: str, note_text: str, has_photo
             (handoff_id, family_id(), assignment_id, assignment["assignee_id"], recipient, details, note),
         )
         notify(db, recipient, "다음 돌봄 인수인계가 도착했어요", details, "IMPORTANT", "HANDOFF", handoff_id)
-    if owner != recipient:
+    if owner != assignment["assignee_id"] and owner != recipient and next_assignee_id != assignment["assignee_id"]:
         notify(db, owner, "돌봄 완료", f"{item['title']} 완료" + (f" · 특이사항: {note[:80]}" if note else " · 특이사항 없음"),
                action_type="ASSIGNMENT_RESULT", action_id=assignment_id)
     return one(db, "SELECT * FROM care_assignment WHERE id = ?", (assignment_id,))
@@ -1217,6 +1220,9 @@ def update_notification_preference(member_id: str, payload: NotificationPreferen
         updates = payload.model_dump(exclude_unset=True)
         if not updates:
             raise HTTPException(422, "변경할 설정을 입력해주세요")
+        if updates.get("device_enabled"):
+            from .extended import _require_pro
+            _require_pro(db)
         db.execute("INSERT INTO notification_preference(member_id) VALUES (?) ON CONFLICT(member_id) DO NOTHING", (member_id,))
         sql = ", ".join(f"{key} = ?" for key in updates)
         db.execute(f"UPDATE notification_preference SET {sql} WHERE member_id = ?", (*[int(value) for value in updates.values()], member_id))
