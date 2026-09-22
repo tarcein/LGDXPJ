@@ -852,7 +852,13 @@ function App() {
     void run(() => send('/members/' + targetMemberId + '/transfer-ownership', 'POST'), `${targetName}님에게 주돌봄자 권한을 넘겼어요`)
   }
   const plan = boot?.family.plan ?? 'FREE'
-  const inviteLink = inviteCode ? (() => { const url = new URL(location.origin + location.pathname); url.searchParams.set('invite', inviteCode); url.searchParams.set('role', inviteRole); return url.toString() })() : ''
+  const inviteLink = inviteCode ? (() => {
+    const publicAppUrl = (import.meta.env.VITE_PUBLIC_APP_URL ?? '').trim()
+    const url = new URL(location.pathname, publicAppUrl || location.origin)
+    url.searchParams.set('invite', inviteCode)
+    url.searchParams.set('role', inviteRole)
+    return url.toString()
+  })() : ''
   const copyInvite = async () => {
     if (!inviteLink) return
     let copied = false

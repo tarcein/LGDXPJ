@@ -174,7 +174,11 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual(fourth.json()["detail"]["code"], "PLAN_LIMIT")
         self.assertEqual(self.client.get("/api/bootstrap", headers={"Authorization": "Bearer bad"}).status_code, 401)
         os.environ["LGDX_REQUIRE_AUTH"] = "1"
-        self.assertEqual(self.client.get("/api/bootstrap").status_code, 401)
+        unauthorized = self.client.get(
+            "/api/bootstrap", headers={"Origin": "http://127.0.0.1:5173"}
+        )
+        self.assertEqual(unauthorized.status_code, 401)
+        self.assertEqual(unauthorized.headers["access-control-allow-origin"], "http://127.0.0.1:5173")
         self.assertEqual(self.client.get("/api/bootstrap", headers=member_headers).status_code, 200)
 
     def test_invite_links_remain_reusable_after_new_links_are_created(self):
