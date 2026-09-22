@@ -277,12 +277,22 @@ CREATE INDEX IF NOT EXISTS idx_payment_family_created ON payment_transaction(fam
 
 def initialize() -> None:
     with database() as db:
+        postgres = is_postgres(db)
+        if postgres:
+            # Keep concurrent deploys from migrating the same shared database.
+            # This session lock survives the commits below and is released on close.
+            db.execute("SELECT pg_advisory_lock(?)", (914_202_609,))
+            db.commit()
         db.executescript(SCHEMA)
+        if postgres:
+            db.commit()
         # Emergency requests are intentionally unlimited. Older databases used a
         # partial unique index that allowed only one open request per assignment.
         db.execute("DROP INDEX IF EXISTS idx_emergency_open_assignment")
-        if is_postgres(db):
+        if postgres:
+            db.commit()
             db.execute("ALTER TABLE care_handoff ADD COLUMN IF NOT EXISTS special_note TEXT NOT NULL DEFAULT ''")
+            db.commit()
             for table, name, definition in (
                 ("personal_schedule", "kind", "TEXT NOT NULL DEFAULT 'ROUTINE'"),
                 ("personal_schedule", "external_source", "TEXT"),
@@ -313,6 +323,7 @@ def initialize() -> None:
                 ("child", "photo_updated_at", "TEXT"),
             ):
                 db.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {definition}")
+                db.commit()
         else:
             if "special_note" not in {row[1] for row in db.execute("PRAGMA table_info(care_handoff)")}:
                 db.execute("ALTER TABLE care_handoff ADD COLUMN special_note TEXT NOT NULL DEFAULT ''")
