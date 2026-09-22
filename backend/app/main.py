@@ -1040,13 +1040,6 @@ def respond_assignment(assignment_id: str, payload: AssignmentResponse):
                 (now(), assignment_id),
             )
             db.execute("UPDATE care_item SET status = 'ASSIGNED' WHERE id = ?", (item["id"],))
-            handoff_id = str(uuid4())
-            db.execute(
-                """INSERT INTO care_handoff(id, family_id, assignment_id, from_member_id,
-                   to_member_id, briefing, status, acknowledged_at)
-                   VALUES (?, ?, ?, ?, ?, ?, 'PENDING', NULL)""",
-                (handoff_id, family_id(), assignment_id, owner_id(db), assignment["assignee_id"], f"{item['title']} · {item['detail']}".strip(" ·")),
-            )
             notify(db, assignment.get("requested_by_member_id") or owner_id(db), "배정이 확정됐어요", f"{item['title']} 담당 요청을 수락했어요",
                    action_type="ASSIGNMENT_RESULT", action_id=assignment_id)
         else:
@@ -1084,14 +1077,6 @@ def confirm_assignment(assignment_id: str):
             (item["id"], assignment_id),
         )
         db.execute("UPDATE care_item SET status = 'ASSIGNED' WHERE id = ?", (item["id"],))
-        handoff_id = str(uuid4())
-        db.execute(
-            """INSERT INTO care_handoff(id, family_id, assignment_id, from_member_id,
-               to_member_id, briefing, status, acknowledged_at)
-               VALUES (?, ?, ?, ?, ?, ?, 'PENDING', NULL)""",
-            (handoff_id, family_id(), assignment_id, owner_id(db), assignment["assignee_id"],
-             f"{item['title']} · {item['detail']}".strip(" ·")),
-        )
         notify(db, assignment["assignee_id"], "돌봄 담당이 최종 확정됐어요", item["title"],
                "IMPORTANT", "ASSIGNMENT_REQUEST", assignment_id)
         notify(db, assignment.get("requested_by_member_id") or owner_id(db), "배정이 확정됐어요",

@@ -102,9 +102,10 @@ function TvDisplay() {
     let cancelled = false
     const load = async () => {
       try {
+        const fresh = `?tv_refresh=${Date.now()}`
         const [nextSnapshot, emergencyResult] = await Promise.all([
-          api<Bootstrap>('/bootstrap'),
-          api<{ requests: EmergencyRequest[] }>('/emergency-requests'),
+          api<Bootstrap>(`/bootstrap${fresh}`),
+          api<{ requests: EmergencyRequest[] }>(`/emergency-requests${fresh}`),
         ])
         if (cancelled) return
         setConnected(true)

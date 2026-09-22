@@ -1051,7 +1051,7 @@ function App() {
         }
       } catch (e) { reportError(e) }
     }
-    const timer = setInterval(poll, 10_000)
+    const timer = setInterval(poll, 2_000)
     return () => clearInterval(timer)
   }, [activeFamilyId, me?.authenticated, me?.member.id, appNotices])
   const today = new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date())

@@ -70,14 +70,14 @@ strong { font-weight: 700; }
 .timeline-card { overflow: hidden; padding: 3px 13px; }
 .timeline-row { display: flex; align-items: center; width: 100%; text-align: left; background: transparent; min-height: 43px; gap: 12px; padding: 6px 0; border-bottom: 1px solid #eef0f1; }
 .timeline-row:last-child { border-bottom: 0; }
-.timeline-row .time { width: 38px; }
+.timeline-row .time { flex: 0 0 58px; width: 58px; white-space: nowrap; line-height: 1.2; }
 .timeline-content { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .timeline-content strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .timeline-content small { color: #9da0a5; font-size: 9px; }
 .timeline-content small.status-done { color: #9da0a5; }
 .timeline-content small.status-pending { color: #2f6fed; }
 .timeline-content small.status-progress { color: #d51d4e; }
-.timeline-status { font-size: 16px; color: #9499a2; }
+.timeline-status { flex: none; font-size: 16px; color: #9499a2; }
 
 .page-title { margin: 2px 0 15px; font-size: 23px; line-height: 1.35; letter-spacing: -.6px; }
 .home-title { display: flex; align-items: center; margin: 1px 0 18px; }
