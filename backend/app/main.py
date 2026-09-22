@@ -46,16 +46,10 @@ def notify(db, member_id: str | None, title: str, body: str, level: str = "NORMA
         (str(uuid4()), target_family, member_id, title[:100], body[:200], level, now(), action_type, action_id),
     )
     from .push import send_push
-    if member_id:
-        token_rows = db.execute(
-            "SELECT token FROM push_device_token WHERE family_id = ? AND member_id = ?",
-            (target_family, member_id),
-        ).fetchall()
-    else:
-        token_rows = db.execute(
-            "SELECT token FROM push_device_token WHERE family_id = ?",
-            (target_family,),
-        ).fetchall()
+    token_rows = db.execute(
+        "SELECT token FROM push_device_token WHERE family_id = ?" + (" AND member_id = ?" if member_id else ""),
+        (target_family, member_id) if member_id else (target_family,),
+    ).fetchall()
     send_push([row[0] for row in token_rows], title[:100], body[:200], action_type, action_id)
 
 
@@ -355,6 +349,7 @@ class PermissionUpdate(BaseModel):
 class NotificationPreferenceUpdate(BaseModel):
     app_enabled: bool | None = None
     daily_digest_enabled: bool | None = None
+    device_enabled: bool | None = None
 
 
 class PushTokenCreate(BaseModel):
@@ -389,7 +384,7 @@ def register_push_token(payload: PushTokenCreate):
 
 
 @app.get("/api/bootstrap")
-def bootstrap():
+def bootstrap(tv: bool = False):
     utc_now = datetime.now(timezone.utc)
     online_cutoff = (utc_now - timedelta(minutes=2)).isoformat()
     with database() as db:
@@ -432,9 +427,9 @@ def bootstrap():
                 db,
                 """SELECT * FROM notification WHERE family_id = ?
                    AND (member_id IS NULL OR member_id = ?) ORDER BY created_at DESC"""
-                if authenticated() else
+                if authenticated() and not tv else
                 "SELECT * FROM notification WHERE family_id = ? ORDER BY created_at DESC",
-                (family_id(), current_member_id()) if authenticated() else (family_id(),),
+                (family_id(), current_member_id()) if authenticated() and not tv else (family_id(),),
             ),
             "permissions": rows(db, "SELECT p.* FROM family_data_permission p JOIN family_member m ON m.id = p.member_id WHERE m.family_id = ?", (family_id(),)),
             "notification_preferences": rows(db, "SELECT p.* FROM notification_preference p JOIN family_member m ON m.id = p.member_id WHERE m.family_id = ?", (family_id(),)),
@@ -860,7 +855,9 @@ def _delete_care_item_cascade(db, item_id: str) -> None:
         db.execute("DELETE FROM care_exception WHERE assignment_id = ?", (assignment_id,))
         db.execute("DELETE FROM care_handoff WHERE assignment_id = ?", (assignment_id,))
         db.execute("DELETE FROM emergency_request WHERE assignment_id = ?", (assignment_id,))
-        db.execute("DELETE FROM media_asset WHERE assignment_id = ?", (assignment_id,))
+        # Keep uploaded photos even when the schedule/assignment they were attached
+        # to gets cleaned up — just detach them instead of deleting the asset.
+        db.execute("UPDATE media_asset SET assignment_id = NULL WHERE assignment_id = ?", (assignment_id,))
         db.execute("DELETE FROM device_alert_outbox WHERE assignment_id = ?", (assignment_id,))
     db.execute("DELETE FROM care_assignment WHERE item_id = ? AND family_id = ?", (item_id, family_id()))
     db.execute("DELETE FROM notification WHERE family_id = ? AND action_type = 'CARE_SUGGESTION' AND action_id = ?",
@@ -1157,13 +1154,6 @@ def respond_assignment(assignment_id: str, payload: AssignmentResponse):
                 (item["id"], assignment_id),
             )
             db.execute("UPDATE care_item SET status = 'ASSIGNED' WHERE id = ?", (item["id"],))
-            handoff_id = str(uuid4())
-            db.execute(
-                """INSERT INTO care_handoff(id, family_id, assignment_id, from_member_id,
-                   to_member_id, briefing, status, acknowledged_at)
-                   VALUES (?, ?, ?, ?, ?, ?, 'PENDING', NULL)""",
-                (handoff_id, family_id(), assignment_id, owner_id(db), assignment["assignee_id"], f"{item['title']} · {item['detail']}".strip(" ·")),
-            )
             notify(db, assignment.get("requested_by_member_id") or owner_id(db), "배정이 확정됐어요", f"{item['title']} 담당 요청을 수락했어요",
                    action_type="ASSIGNMENT_RESULT", action_id=assignment_id)
             _propagate_routine_assignment(db, item, assignment["assignee_id"], assignment.get("requested_by_member_id"))
@@ -1202,14 +1192,6 @@ def confirm_assignment(assignment_id: str):
             (item["id"], assignment_id),
         )
         db.execute("UPDATE care_item SET status = 'ASSIGNED' WHERE id = ?", (item["id"],))
-        handoff_id = str(uuid4())
-        db.execute(
-            """INSERT INTO care_handoff(id, family_id, assignment_id, from_member_id,
-               to_member_id, briefing, status, acknowledged_at)
-               VALUES (?, ?, ?, ?, ?, ?, 'PENDING', NULL)""",
-            (handoff_id, family_id(), assignment_id, owner_id(db), assignment["assignee_id"],
-             f"{item['title']} · {item['detail']}".strip(" ·")),
-        )
         notify(db, assignment["assignee_id"], "돌봄 담당이 최종 확정됐어요", item["title"],
                "IMPORTANT", "ASSIGNMENT_REQUEST", assignment_id)
         notify(db, assignment.get("requested_by_member_id") or owner_id(db), "배정이 확정됐어요",
@@ -1241,13 +1223,15 @@ def complete_assignment_record(db, assignment_id: str, note_text: str, has_photo
     next_assignment = None
     if item.get("child_id") and item.get("starts_at"):
         next_assignment = db.execute(
-            """SELECT a.* FROM care_assignment a JOIN care_item i ON i.id = a.item_id
-               WHERE a.family_id = ? AND i.child_id = ? AND i.starts_at > ?
-                 AND a.status IN ('PROPOSED', 'ACCEPTED') AND a.assignee_id <> ?
-               ORDER BY i.starts_at LIMIT 1""",
-            (family_id(), item["child_id"], item["starts_at"], assignment["assignee_id"]),
+            """SELECT a.assignee_id FROM care_item i
+               LEFT JOIN care_assignment a ON a.item_id = i.id AND a.status = 'ACCEPTED'
+               WHERE i.family_id = ? AND i.child_id = ? AND i.starts_at > ?
+                 AND i.item_type != 'SUPPLY'
+               ORDER BY i.starts_at, i.id LIMIT 1""",
+            (family_id(), item["child_id"], item["starts_at"]),
         ).fetchone()
-    recipient = dict(next_assignment)["assignee_id"] if next_assignment else (owner if assignment["assignee_id"] != owner else None)
+    next_assignee_id = next_assignment["assignee_id"] if next_assignment else None
+    recipient = next_assignee_id if next_assignee_id != assignment["assignee_id"] else None
     handoff_id = None
     if recipient:
         handoff_id = str(uuid4())
@@ -1263,7 +1247,7 @@ def complete_assignment_record(db, assignment_id: str, note_text: str, has_photo
             (handoff_id, family_id(), assignment_id, assignment["assignee_id"], recipient, details, note),
         )
         notify(db, recipient, "다음 돌봄 인수인계가 도착했어요", details, "IMPORTANT", "HANDOFF", handoff_id)
-    if owner != recipient:
+    if owner != assignment["assignee_id"] and owner != recipient and next_assignee_id != assignment["assignee_id"]:
         notify(db, owner, "돌봄 완료", f"{item['title']} 완료" + (f" · 특이사항: {note[:80]}" if note else " · 특이사항 없음"),
                action_type="ASSIGNMENT_RESULT", action_id=assignment_id)
     return one(db, "SELECT * FROM care_assignment WHERE id = ?", (assignment_id,))
@@ -1351,6 +1335,9 @@ def update_notification_preference(member_id: str, payload: NotificationPreferen
         updates = payload.model_dump(exclude_unset=True)
         if not updates:
             raise HTTPException(422, "변경할 설정을 입력해주세요")
+        if updates.get("device_enabled"):
+            from .extended import _require_pro
+            _require_pro(db)
         db.execute("INSERT INTO notification_preference(member_id) VALUES (?) ON CONFLICT(member_id) DO NOTHING", (member_id,))
         sql = ", ".join(f"{key} = ?" for key in updates)
         db.execute(f"UPDATE notification_preference SET {sql} WHERE member_id = ?", (*[int(value) for value in updates.values()], member_id))

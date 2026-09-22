@@ -25,7 +25,7 @@ export interface Notice {
   is_read: number; created_at: string; action_type?: string | null; action_id?: string | null
 }
 export interface Permission { member_id: string; scope: string; is_allowed: number }
-export interface NotificationPreference { member_id: string; app_enabled: number; daily_digest_enabled: number }
+export interface NotificationPreference { member_id: string; app_enabled: number; daily_digest_enabled: number; device_enabled?: number }
 export interface Bootstrap {
   family: Family; members: Member[]; children: Child[]; schedules: Schedule[]; child_schedules: ChildSchedule[];
   items: CareItem[]; assignments: Assignment[]; exceptions: CareException[];

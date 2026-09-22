@@ -760,10 +760,8 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual(self.client.post(respond_path, headers=caregiver_headers, json={"decision": "ACCEPTED"}).status_code, 200)
         complete_path = f"/api/assignments/{assignment['id']}/complete"
         self.assertEqual(self.client.post(complete_path, headers=caregiver_headers, json={"note": "열이 조금 있었음"}).status_code, 200)
-        auto_handoff = next(h for h in self.client.get("/api/bootstrap", headers=owner_headers).json()["handoffs"]
-                            if h["assignment_id"] == assignment["id"] and h["to_member_id"] == owner["member_id"])
-        self.assertIn("열이 조금 있었음", auto_handoff["briefing"])
-        self.assertEqual(auto_handoff["special_note"], "열이 조금 있었음")
+        self.assertFalse(any(h["assignment_id"] == assignment["id"]
+                             for h in self.client.get("/api/bootstrap", headers=owner_headers).json()["handoffs"]))
         handoff = self.client.post(f"/api/assignments/{assignment['id']}/handoff", headers=caregiver_headers,
                                    json={"to_member_id": owner["member_id"]})
         self.assertEqual(handoff.status_code, 201)
@@ -789,6 +787,7 @@ class ExtendedFlowTest(unittest.TestCase):
         for title, start, end in [
             ("학교 하원", "2026-09-20T15:00:00+09:00", "2026-09-20T15:30:00+09:00"),
             ("태권도 이동", "2026-09-20T16:00:00+09:00", "2026-09-20T16:30:00+09:00"),
+            ("저녁 돌봄", "2026-09-20T17:00:00+09:00", "2026-09-20T17:30:00+09:00"),
         ]:
             created = self.client.post("/api/child-schedules", headers=headers(owner), json={
                 "child_id": child["id"], "title": title, "category": "ACADEMY",
@@ -800,22 +799,34 @@ class ExtendedFlowTest(unittest.TestCase):
             "item_id": item_ids[0], "assignee_id": grandma["member_id"],
         }).json()
         second = self.client.post("/api/assignments", headers=headers(owner), json={
-            "item_id": item_ids[1], "assignee_id": dad["member_id"],
+            "item_id": item_ids[1], "assignee_id": grandma["member_id"],
+        }).json()
+        third = self.client.post("/api/assignments", headers=headers(owner), json={
+            "item_id": item_ids[2], "assignee_id": dad["member_id"],
         }).json()
         self.client.post(f"/api/assignments/{first['id']}/respond", headers=headers(grandma), json={"decision": "ACCEPTED"})
-        self.client.post(f"/api/assignments/{second['id']}/respond", headers=headers(dad), json={"decision": "ACCEPTED"})
+        self.client.post(f"/api/assignments/{second['id']}/respond", headers=headers(grandma), json={"decision": "ACCEPTED"})
+        self.client.post(f"/api/assignments/{third['id']}/respond", headers=headers(dad), json={"decision": "ACCEPTED"})
+
+        owner_notices_before = len(self.client.get("/api/bootstrap", headers=headers(owner)).json()["notifications"])
+        self.assertEqual(self.client.post(
+            f"/api/assignments/{first['id']}/complete", headers=headers(grandma), json={"note": "연속 담당"},
+        ).status_code, 200)
+        owner_snapshot = self.client.get("/api/bootstrap", headers=headers(owner)).json()
+        self.assertFalse(any(item["assignment_id"] == first["id"] for item in owner_snapshot["handoffs"]))
+        self.assertEqual(len(owner_snapshot["notifications"]), owner_notices_before)
 
         png = b"\x89PNG\r\n\x1a\n" + b"care-photo"
         completed = self.client.post(
-            f"/api/assignments/{first['id']}/complete-handoff", headers=headers(grandma),
+            f"/api/assignments/{second['id']}/complete-handoff", headers=headers(grandma),
             data={"note": "무릎에 작은 상처가 있어요"}, files={"photo": ("done.png", png, "image/png")},
         )
         self.assertEqual(completed.status_code, 200)
-        self.assertEqual(completed.json()["photo"]["assignment_id"], first["id"])
+        self.assertEqual(completed.json()["photo"]["assignment_id"], second["id"])
 
         dad_snapshot = self.client.get("/api/bootstrap", headers=headers(dad)).json()
         handoff = next(item for item in dad_snapshot["handoffs"]
-                       if item["assignment_id"] == first["id"] and item["to_member_id"] == dad["member_id"])
+                       if item["assignment_id"] == second["id"] and item["to_member_id"] == dad["member_id"])
         self.assertIn("무릎에 작은 상처", handoff["special_note"])
         self.assertIn("완료 사진 있음", handoff["briefing"])
 

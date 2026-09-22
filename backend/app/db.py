@@ -175,7 +175,8 @@ CREATE TABLE IF NOT EXISTS family_data_permission (
 CREATE TABLE IF NOT EXISTS notification_preference (
   member_id TEXT PRIMARY KEY REFERENCES family_member(id),
   app_enabled INTEGER NOT NULL DEFAULT 1,
-  daily_digest_enabled INTEGER NOT NULL DEFAULT 1
+  daily_digest_enabled INTEGER NOT NULL DEFAULT 1,
+  device_enabled INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS family_invite_code (
   family_id TEXT PRIMARY KEY REFERENCES family_group(id),
@@ -295,6 +296,7 @@ def initialize() -> None:
                 ("care_item", "child_schedule_id", "TEXT REFERENCES child_schedule(id)"),
                 ("notification", "action_type", "TEXT"),
                 ("notification", "action_id", "TEXT"),
+                ("notification_preference", "device_enabled", "INTEGER NOT NULL DEFAULT 0"),
                 ("care_assignment", "requested_by_member_id", "TEXT REFERENCES family_member(id)"),
                 ("care_assignment", "reminder_sent_at", "TEXT"),
                 ("calendar_oauth_state", "return_url", "TEXT"),
@@ -319,6 +321,7 @@ def initialize() -> None:
                 ("child_schedule", (("recurrence_id", "TEXT"), ("recurrence_rule", "TEXT"), ("has_end_time", "INTEGER NOT NULL DEFAULT 1"))),
                 ("care_item", (("child_schedule_id", "TEXT REFERENCES child_schedule(id)"),)),
                 ("notification", (("action_type", "TEXT"), ("action_id", "TEXT"))),
+                ("notification_preference", (("device_enabled", "INTEGER NOT NULL DEFAULT 0"),)),
                 ("care_assignment", (("requested_by_member_id", "TEXT REFERENCES family_member(id)"), ("reminder_sent_at", "TEXT"))),
                 ("calendar_oauth_state", (("return_url", "TEXT"),)),
                 ("media_asset", (("storage_path", "TEXT"), ("date_folder", "TEXT"))),

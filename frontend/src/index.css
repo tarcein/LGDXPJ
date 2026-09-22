@@ -82,7 +82,7 @@ a, a:link, a:visited, a:active { color: inherit; text-decoration: inherit; }
 .timeline-content small.status-done { color: #9da0a5; }
 .timeline-content small.status-pending { color: #2f6fed; }
 .timeline-content small.status-progress { color: #d51d4e; }
-.timeline-status { font-size: 16px; color: #9499a2; }
+.timeline-status { flex: none; font-size: 16px; color: #9499a2; }
 
 .page-title { margin: 2px 0 15px; font-size: 23px; line-height: 1.35; letter-spacing: -.6px; }
 .home-title { display: flex; align-items: center; margin: 1px 0 18px; }

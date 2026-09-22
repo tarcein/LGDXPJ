@@ -35,6 +35,16 @@ class CareFlowTest(unittest.TestCase):
         self.assertEqual(member.status_code, 403)
         self.assertEqual(child.json()["detail"]["code"], "PLAN_LIMIT")
 
+    def test_tv_device_alerts_require_pro_plan(self) -> None:
+        blocked = self.client.patch("/api/members/mom/notification-preferences", json={"device_enabled": True})
+        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(blocked.json()["detail"]["code"], "SUBSCRIPTION_REQUIRED")
+        with database() as db:
+            db.execute("UPDATE family_group SET plan = 'PRO' WHERE id = 'demo-family'")
+        enabled = self.client.patch("/api/members/mom/notification-preferences", json={"device_enabled": True})
+        self.assertEqual(enabled.status_code, 200)
+        self.assertEqual(enabled.json()["device_enabled"], 1)
+
     def test_intake_requires_confirmation_before_role_match_and_completes(self) -> None:
         intake = self.client.post(
             "/api/intakes", json={"child_id": "jiu", "raw_content": "준비물: 도화지\n9:00 현장학습"}
@@ -52,7 +62,8 @@ class CareFlowTest(unittest.TestCase):
         self.assertEqual(assignment.status_code, 201)
         assignment_id = assignment.json()["id"]
         self.assertEqual(self.client.post(f"/api/assignments/{assignment_id}/respond", json={"decision": "ACCEPTED"}).status_code, 200)
-        self.assertTrue(self.client.get("/api/bootstrap").json()["handoffs"])
+        self.assertFalse(any(handoff["assignment_id"] == assignment_id
+                             for handoff in self.client.get("/api/bootstrap").json()["handoffs"]))
         complete = self.client.post(
             f"/api/assignments/{assignment_id}/complete", json={"note": "도화지 전달 완료"}
         )
