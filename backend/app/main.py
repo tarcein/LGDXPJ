@@ -1222,13 +1222,20 @@ def complete_assignment_record(db, assignment_id: str, note_text: str, has_photo
     owner = owner_id(db)
     next_assignment = None
     if item.get("child_id") and item.get("starts_at"):
+        # A schedule with a real duration is split into drop-off/pick-up moments that
+        # share one child_schedule_id — that sibling isn't a "next duty" in the handoff
+        # sense, so skip it when looking for whoever picks up after this one.
+        schedule_filter, params = "", [family_id(), item["child_id"], item["starts_at"]]
+        if item.get("child_schedule_id"):
+            schedule_filter = " AND (i.child_schedule_id IS NULL OR i.child_schedule_id != ?)"
+            params.append(item["child_schedule_id"])
         next_assignment = db.execute(
-            """SELECT a.assignee_id FROM care_item i
+            f"""SELECT a.assignee_id FROM care_item i
                LEFT JOIN care_assignment a ON a.item_id = i.id AND a.status = 'ACCEPTED'
                WHERE i.family_id = ? AND i.child_id = ? AND i.starts_at > ?
-                 AND i.item_type != 'SUPPLY'
+                 AND i.item_type != 'SUPPLY'{schedule_filter}
                ORDER BY i.starts_at, i.id LIMIT 1""",
-            (family_id(), item["child_id"], item["starts_at"]),
+            tuple(params),
         ).fetchone()
     next_assignee_id = next_assignment["assignee_id"] if next_assignment else None
     recipient = next_assignee_id if next_assignee_id != assignment["assignee_id"] else None

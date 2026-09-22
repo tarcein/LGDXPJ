@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
+from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException
@@ -740,8 +741,16 @@ class ExtendedFlowTest(unittest.TestCase):
         self.client.post(f"/api/items/{item_id}/confirm")
         assignment = self.client.post("/api/assignments", json={"item_id": item_id, "assignee_id": "grandma"}).json()
         self.client.post(f"/api/assignments/{assignment['id']}/respond", json={"decision": "ACCEPTED"})
-        handoff = next(h for h in self.client.get("/api/bootstrap").json()["handoffs"] if h["assignment_id"] == assignment["id"])
-        changed = self.client.patch(f"/api/handoffs/{handoff['id']}", json={"special_note": "우산 챙기기"})
+        # Accepting no longer auto-creates a handoff (that only happens on completion),
+        # so seed one directly to exercise the PATCH endpoint being tested here.
+        handoff_id = str(uuid4())
+        with database() as db:
+            db.execute(
+                """INSERT INTO care_handoff(id, family_id, assignment_id, from_member_id, to_member_id, briefing, status)
+                   VALUES (?, ?, ?, ?, ?, ?, 'PENDING')""",
+                (handoff_id, "demo-family", assignment["id"], "mom", "grandma", "물병 준비"),
+            )
+        changed = self.client.patch(f"/api/handoffs/{handoff_id}", json={"special_note": "우산 챙기기"})
         self.assertEqual(changed.status_code, 200)
         self.assertEqual(changed.json()["special_note"], "우산 챙기기")
 
