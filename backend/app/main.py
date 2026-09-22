@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .db import database, initialize
+from .db import close_pool, database, initialize, open_pool
 from .config import setting
 from .family import authenticated, family_id, member_id as current_member_id, owner_id, require_owner, resolve_bearer, reset_context, router as family_router, set_context
 from .media import image_mime as _child_image_mime, media_root as _child_media_root, read_file as _read_child_file
@@ -105,6 +105,7 @@ def _delete_child_photo_file(storage_path: str | None) -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     initialize()
+    open_pool()
     renewal_task = None
     reminder_task = None
     if setting("LGDX_BILLING_RENEWAL_WORKER", "1").lower() in {"1", "true", "yes", "on"}:
@@ -124,6 +125,7 @@ async def lifespan(_app: FastAPI):
             reminder_task.cancel()
             with suppress(asyncio.CancelledError):
                 await reminder_task
+        close_pool()
 
 
 app = FastAPI(title="ZIPPY 가족 돌봄 API", version="0.1.0", lifespan=lifespan)

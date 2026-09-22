@@ -11,10 +11,14 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import psycopg
+from psycopg_pool import ConnectionPool
 from dotenv import load_dotenv
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+
+
+_pool: ConnectionPool | None = None
 
 
 def db_path() -> Path:
@@ -42,8 +46,8 @@ def _postgres_row_factory(cursor):
 
 
 class PostgresConnection:
-    def __init__(self, url: str):
-        self.raw = psycopg.connect(url, row_factory=_postgres_row_factory, connect_timeout=10)
+    def __init__(self, url: str | None = None, *, raw=None):
+        self.raw = raw or psycopg.connect(url, row_factory=_postgres_row_factory, connect_timeout=10)
 
     def execute(self, sql: str, args: tuple | list = ()):
         if sql.strip().upper() == "BEGIN IMMEDIATE":
@@ -82,8 +86,40 @@ def connect() -> sqlite3.Connection | PostgresConnection:
     return connection
 
 
+def open_pool() -> None:
+    global _pool
+    if not is_postgres() or _pool is not None:
+        return
+    _pool = ConnectionPool(
+        os.environ["DATABASE_URL"],
+        min_size=1,
+        max_size=5,
+        timeout=10,
+        kwargs={"row_factory": _postgres_row_factory, "connect_timeout": 10},
+        open=False,
+    )
+    _pool.open(wait=True, timeout=30)
+
+
+def close_pool() -> None:
+    global _pool
+    if _pool is not None:
+        _pool.close()
+        _pool = None
+
+
 @contextmanager
 def database():
+    if is_postgres() and _pool is not None:
+        with _pool.connection() as raw:
+            connection = PostgresConnection(raw=raw)
+            try:
+                yield connection
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return
     connection = connect()
     try:
         yield connection

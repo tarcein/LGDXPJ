@@ -31,6 +31,26 @@ class DatabaseInitializationTest(unittest.TestCase):
         )
         self.assertEqual(connection.commit.call_count, alter_count + 3)
 
+    def test_database_reuses_an_open_postgres_pool(self):
+        raw = MagicMock()
+        checkout = MagicMock()
+        checkout.__enter__.return_value = raw
+        checkout.__exit__.return_value = False
+        pool = MagicMock()
+        pool.connection.return_value = checkout
+
+        with (
+            patch.object(db_module, "_pool", pool),
+            patch.object(db_module, "is_postgres", return_value=True),
+        ):
+            with db_module.database() as connection:
+                connection.execute("SELECT 1")
+
+        pool.connection.assert_called_once_with()
+        raw.execute.assert_called_once_with("SELECT 1", ())
+        raw.commit.assert_called_once_with()
+        raw.close.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
