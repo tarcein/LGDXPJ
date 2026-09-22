@@ -6,7 +6,7 @@ import json
 import secrets
 import base64
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -91,8 +91,44 @@ def _add_usage(db, feature: str, amount: int) -> None:
        (family_id(), _day(), feature, amount))
 
 
+def _chat_window_start(db) -> datetime:
+    """Chat usage resets 24h after the window began, not at local midnight."""
+    row = db.execute("SELECT day FROM daily_usage WHERE family_id = ? AND feature = 'CHAT_TOKENS'",
+                      (family_id(),)).fetchone()
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    if row:
+        try:
+            started = datetime.fromisoformat(row["day"])
+            # Rows written before the 24h-window feature shipped stored a plain
+            # date (e.g. "2026-09-20"), which parses as naive and can't be
+            # compared to an aware `now` — treat those as Asia/Seoul local time.
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=ZoneInfo("Asia/Seoul"))
+            if now - started < timedelta(hours=24):
+                return started
+        except ValueError:
+            pass
+    return now
+
+
+def _chat_used(db) -> int:
+    window_start = _chat_window_start(db)
+    row = db.execute("SELECT amount FROM daily_usage WHERE family_id = ? AND day = ? AND feature = 'CHAT_TOKENS'",
+                      (family_id(), window_start.isoformat())).fetchone()
+    return row["amount"] if row else 0
+
+
+def _chat_add_usage(db, amount: int) -> None:
+    window_start = _chat_window_start(db)
+    db.execute("DELETE FROM daily_usage WHERE family_id = ? AND feature = 'CHAT_TOKENS' AND day != ?",
+               (family_id(), window_start.isoformat()))
+    db.execute("""INSERT INTO daily_usage(family_id, day, feature, amount) VALUES (?, ?, 'CHAT_TOKENS', ?)
+       ON CONFLICT(family_id, day, feature) DO UPDATE SET amount = daily_usage.amount + excluded.amount""",
+       (family_id(), window_start.isoformat(), amount))
+
+
 def _chat_usage(db, plan: str) -> dict[str, int]:
-    used = _used(db, "CHAT_TOKENS")
+    used = _chat_used(db)
     limit = CHAT_TOKEN_LIMITS[plan]
     return {"chat_tokens_today": used, "chat_tokens_limit": limit,
             "chat_tokens_remaining": max(0, limit - used)}
@@ -491,7 +527,7 @@ def _apply_schedule_creations(creations: list[dict], original_message: str) -> l
 def _chat(message: str) -> dict:
     with database() as db:
         plan = _plan(db)
-        used = _used(db, "CHAT_TOKENS")
+        used = _chat_used(db)
         limit = CHAT_TOKEN_LIMITS[plan]
         remaining = limit - used
         if remaining < 256:
@@ -602,7 +638,7 @@ def _chat(message: str) -> dict:
         for role, content in [("user", message), ("assistant", answer)]:
             db.execute("INSERT INTO assistant_message VALUES (?, ?, ?, ?, ?, ?)",
                        (str(uuid4()), family_id(), member_id(), role, content, datetime.now(ZoneInfo("Asia/Seoul")).isoformat()))
-        _add_usage(db, "CHAT_TOKENS", tokens)
+        _chat_add_usage(db, tokens)
         usage = _chat_usage(db, plan)
     links = [{"label": f"{card.get('title') or '관련 내용'} 보기", "screen": card.get("screen")}
              for card in cards if card.get("screen")]

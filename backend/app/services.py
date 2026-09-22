@@ -5,23 +5,68 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
+
+_SEOUL = ZoneInfo("Asia/Seoul")
 
 
-def classify_lines(raw_content: str) -> list[dict[str, str]]:
+def _extract_due_date(line: str, reference: datetime) -> str | None:
+    """Pull an explicit '9월 25일' or '25일' due date out of a hand-typed note line.
+
+    Without this, a supply/homework item typed today with no date of its own would
+    otherwise be due "tomorrow" purely because that's when it happened to be typed in.
+    """
+    match = re.search(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일", line)
+    day_only = not match
+    if not match:
+        match = re.search(r"(\d{1,2})\s*일(?!주)", line)
+        if not match:
+            return None
+    month = reference.month if day_only else int(match.group(1))
+    day = int(match.group(1)) if day_only else int(match.group(2))
+    year = reference.year
+    try:
+        due = datetime(year, month, day, tzinfo=reference.tzinfo)
+    except ValueError:
+        return None
+    if due.date() < reference.date():
+        if day_only:
+            if month == 12:
+                month, year = 1, year + 1
+            else:
+                month += 1
+        else:
+            year += 1
+        try:
+            due = datetime(year, month, day, tzinfo=reference.tzinfo)
+        except ValueError:
+            return None
+    return due.isoformat()
+
+
+def classify_lines(raw_content: str, reference: datetime | None = None) -> list[dict[str, str]]:
     lines = [line.strip(" -•\t") for line in re.split(r"[\n。]+", raw_content) if line.strip()]
     if not lines:
         return []
+    reference = reference or datetime.now(_SEOUL)
     result = []
     for line in lines[:20]:
         if any(word in line for word in ("변경", "휴강", "지연", "취소")):
             item_type = "CHANGE"
         elif any(word in line for word in ("준비물", "챙기", "물품", "도시락")):
             item_type = "SUPPLY"
+        elif any(word in line for word in ("숙제", "일기", "독서록", "문제집", "받아쓰기")):
+            item_type = "HOMEWORK"
         elif any(word in line for word in ("제출", "신청", "회신", "확인")):
             item_type = "TODO"
         else:
             item_type = "SCHEDULE" if re.search(r"\d{1,2}[:시]\d{0,2}", line) else "TODO"
-        result.append({"item_type": item_type, "title": line[:200], "confidence": "LOW"})
+        entry = {"item_type": item_type, "title": line[:200], "confidence": "LOW"}
+        if item_type in {"SUPPLY", "HOMEWORK"}:
+            due = _extract_due_date(line, reference)
+            if due:
+                entry["starts_at"] = due
+        result.append(entry)
     return result
 
 

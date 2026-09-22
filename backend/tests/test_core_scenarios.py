@@ -57,7 +57,7 @@ class CoreScenarioTest(unittest.TestCase):
         schedules = self.client.get("/api/bootstrap").json()["schedules"]
         self.assertTrue(any(item["title"] == "퇴근" and item["has_end_time"] == 0 for item in schedules))
 
-    def test_parallel_requests_require_primary_caregiver_final_choice(self):
+    def test_first_caregiver_to_accept_a_parallel_request_is_confirmed_immediately(self):
         child_schedule = self.client.post("/api/child-schedules", json={
             "child_id": "jiu", "title": "수영", "category": "ACADEMY",
             "starts_at": "2026-09-22T16:00:00+09:00", "ends_at": "2026-09-22T17:00:00+09:00",
@@ -68,10 +68,10 @@ class CoreScenarioTest(unittest.TestCase):
         second = self.client.post("/api/assignments", json={
             "item_id": child_schedule["care_item_id"], "assignee_id": "dad",
         }).json()
+        # Whoever accepts first is confirmed right away — no owner sign-off step —
+        # and the other outstanding request for the same item is auto-canceled.
         accepted = self.client.post(f"/api/assignments/{first['id']}/respond", json={"decision": "ACCEPTED"})
-        self.assertEqual(accepted.json()["status"], "CANDIDATE_ACCEPTED")
-        confirmed = self.client.post(f"/api/assignments/{first['id']}/confirm")
-        self.assertEqual(confirmed.json()["status"], "ACCEPTED")
+        self.assertEqual(accepted.json()["status"], "ACCEPTED")
         snapshot = self.client.get("/api/bootstrap").json()
         self.assertEqual(next(item for item in snapshot["assignments"] if item["id"] == second["id"])["status"], "CANCELED")
 

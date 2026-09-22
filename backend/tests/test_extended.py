@@ -428,7 +428,9 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual([row["starts_at"][11:16] for row in child_schedules], ["15:00", "16:00", "16:00"])
         changed_ids = {row["id"] for row in child_schedules[1:]}
         changed_items = [row for row in snapshot["items"] if row.get("child_schedule_id") in changed_ids]
-        self.assertEqual({row["starts_at"][11:16] for row in changed_items}, {"16:00"})
+        # A schedule with a real end time now splits into a drop-off (등원) and pick-up (하원)
+        # item, so each updated occurrence carries both the new start and end time.
+        self.assertEqual({row["starts_at"][11:16] for row in changed_items}, {"16:00", "17:00"})
 
         personal_deleted = self.client.delete(
             f"/api/schedules/{created[1]['id']}", params={"delete_scope": "FUTURE"},
@@ -488,10 +490,35 @@ class ExtendedFlowTest(unittest.TestCase):
         updated_child = self.client.patch(child_path, headers=owner_headers, json=child_update)
         self.assertEqual(updated_child.status_code, 200)
         self.assertEqual(updated_child.json()["schedule"]["title"], "미술 학원")
-        self.assertEqual(self.client.delete(child_path, headers=caregiver_headers).status_code, 403)
-        self.assertEqual(self.client.delete(child_path, headers=owner_headers).status_code, 200)
+        # A caregiver assignment already exists on this item, and the deleter isn't the
+        # assignee — deletion must still be allowed for any active family member.
+        self.client.post("/api/assignments", headers=owner_headers, json={
+            "item_id": updated_child.json()["care_item_id"], "assignee_id": caregiver["member_id"], "source": "MANUAL",
+        })
+        self.assertEqual(self.client.delete(child_path, headers=caregiver_headers).status_code, 200)
         snapshot = self.client.get("/api/bootstrap", headers=owner_headers).json()
         self.assertFalse(any(item["id"] == child_schedule["id"] for item in snapshot["child_schedules"]))
+        self.assertFalse(any(item.get("child_schedule_id") == child_schedule["id"] for item in snapshot["items"]))
+
+    def test_a_single_moment_of_a_schedule_can_be_deleted_without_touching_its_sibling(self):
+        # e.g. 학교 and 방과후 are both registered normally, but on a day the child goes
+        # straight from one to the other, the 학교 하원 / 방과후 등원 moment isn't needed —
+        # deleting just that care_item should leave the sibling moment and the schedule intact.
+        room = self.client.post("/api/families", json={"name": "단일삭제 가족", "owner_name": "엄마"}).json()
+        headers = {"Authorization": "Bearer " + room["access_token"]}
+        child = self.client.post("/api/children", headers=headers, json={"name": "지우", "age_label": "7세"}).json()
+        child_schedule = self.client.post("/api/child-schedules", headers=headers, json={
+            "child_id": child["id"], "title": "학교", "category": "SCHOOL",
+            "starts_at": "2026-09-22T09:00:00+09:00", "ends_at": "2026-09-22T13:00:00+09:00",
+        }).json()
+        item_ids = child_schedule["care_item_ids"]
+        self.assertEqual(len(item_ids), 2)
+        dropoff_id, pickup_id = item_ids
+        self.assertEqual(self.client.delete(f"/api/care-items/{pickup_id}", headers=headers).status_code, 200)
+        snapshot = self.client.get("/api/bootstrap", headers=headers).json()
+        self.assertTrue(any(item["id"] == dropoff_id for item in snapshot["items"]))
+        self.assertFalse(any(item["id"] == pickup_id for item in snapshot["items"]))
+        self.assertTrue(any(schedule["id"] == child_schedule["id"] for schedule in snapshot["child_schedules"]))
 
     def test_child_schedule_recommends_available_requester_and_self_assignment_is_immediate(self):
         room = self.client.post("/api/families", json={"name": "지우네", "owner_name": "엄마"}).json()
@@ -909,6 +936,21 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual([message["content"] for message in owner_messages], ["내 일정 알려줘", "확인해볼게요."])
         self.assertEqual([message["content"] for message in caregiver_messages], ["오늘 담당은?", "확인해볼게요."])
         self.assertEqual(self.client.get("/api/features", headers=owner_headers).json()["usage"]["chat_tokens_today"], 46)
+
+    def test_legacy_plain_date_chat_usage_row_does_not_crash_the_24h_window(self):
+        # Rows written before chat usage switched from "resets at local midnight" to a
+        # rolling 24h window stored a plain date ("2026-09-20"), which parses as a naive
+        # datetime and used to crash when compared against an aware "now".
+        room = self.client.post("/api/families", json={"name": "레거시 사용량", "owner_name": "엄마"}).json()
+        headers = {"Authorization": "Bearer " + room["access_token"]}
+        with database() as db:
+            db.execute(
+                "INSERT INTO daily_usage(family_id, day, feature, amount) VALUES (?, ?, 'CHAT_TOKENS', ?)",
+                (room["family_id"], "2026-09-20", 10),
+            )
+        response = self.client.get("/api/features", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["usage"]["chat_tokens_today"], 0)
 
     def test_chat_can_apply_an_explicit_personal_schedule_change(self):
         room = self.client.post("/api/families", json={"name": "일정 가족", "owner_name": "엄마"}).json()

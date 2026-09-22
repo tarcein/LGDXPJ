@@ -2,7 +2,7 @@ export type Screen =
   | 'thinq' | 'serviceLoading' | 'lockscreen' | 'home' | 'careHub' | 'familyHub' | 'more' | 'family' | 'capture' | 'review' | 'assignments' | 'suggestion'
   | 'schedule' | 'exception' | 'tasks' | 'notifications'
   | 'members' | 'permissions' | 'plan' | 'chat' | 'emergency'
-  | 'assignmentDetail' | 'album' | 'programs' | 'settings' | 'onboarding' | 'calendar' | 'gap' | 'supplies'
+  | 'assignmentDetail' | 'album' | 'programs' | 'settings' | 'onboarding' | 'calendar' | 'gap' | 'supplies' | 'homework'
 
 export interface Family { id: string; name: string; plan: string }
 export interface Member { id: string; name: string; role: string; status: string; is_owner: boolean; created_at?: string; is_online?: boolean | number }

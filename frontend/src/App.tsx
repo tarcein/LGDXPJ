@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, send, upload, setFamilyToken, hasFamilyToken, ApiError, formatDate, formatTime, type Assignment, type Bootstrap, type CareItem, type Child, type Screen, type Suggestion, type FamilyMe, type FamilySession, type ChatAnswer, type EmergencyRequest, type CalendarConnection, type Notice, type AlbumPhoto, type Benefit, type BenefitLocation, type CareInstitution, type EligibilityCriteria, type BillingConfig, type BillingOrder, type ChatCard } from './api'
 import voiceIcon from '../../asset/assistant-main-logo-centered.png'
@@ -54,15 +54,15 @@ import { setupNativeNotifications, showNativeNotice, syncPushToken, updateLiveCa
 const groups: { title: string; pages: [Screen, string][] }[] = [
   { title: 'ThinQ 진입 · 외부 화면', pages: [['thinq', 'ThinQ 홈'], ['lockscreen', '잠금화면 동선']] },
   { title: '서비스 탭', pages: [['home', '홈'], ['careHub', '케어'], ['schedule', '일정'], ['familyHub', '가족'], ['more', '더보기']] },
-  { title: '돌봄 정보', pages: [['family', '알림장·돌봄 정보'], ['capture', '알림장 등록'], ['review', '추출 결과 확인'], ['supplies', '준비물 확인'], ['assignments', '오늘의 배정'], ['assignmentDetail', '배정 상세'], ['suggestion', '배정 제안'], ['tasks', '오늘 할 일']] },
+  { title: '돌봄 정보', pages: [['family', '알림장·돌봄 정보'], ['capture', '알림장 등록'], ['review', '추출 결과 확인'], ['supplies', '준비물 확인'], ['homework', '숙제 확인'], ['assignments', '오늘의 배정'], ['assignmentDetail', '배정 상세'], ['suggestion', '배정 제안'], ['tasks', '오늘 할 일']] },
   { title: '돌봄 흐름', pages: [['schedule', '개인 일정'], ['exception', '예외 상황'], ['notifications', '알림함']] },
   { title: '가족 · 설정', pages: [['onboarding', '온보딩'], ['calendar', '캘린더 연동'], ['members', '가족 구성원'], ['permissions', '정보 공개 권한'], ['album', '우리집 기록함'], ['settings', '알림 설정'], ['plan', '플랜 비교']] },
   { title: '확장 화면', pages: [['chat', 'AI 채팅'], ['emergency', '긴급 요청'], ['gap', '돌봄 공백 예측'], ['programs', '돌봄 제도']] },
 ]
-const typeLabel: Record<string, string> = { SCHEDULE: '일정', SUPPLY: '준비물', TODO: '할 일', CHANGE: '변경사항' }
+const typeLabel: Record<string, string> = { SCHEDULE: '일정', SUPPLY: '준비물', TODO: '할 일', CHANGE: '변경사항', HOMEWORK: '숙제' }
 const childScheduleLabel: Record<string, string> = { ACADEMY: '학원', SCHOOL: '학교', AFTER_SCHOOL: '방과후', ACTIVITY: '활동', OTHER: '기타' }
 const roleLabel: Record<string, string> = { PARENT: '부모', GRANDPARENT: '조부모', CAREGIVER: '돌봄 참여자' }
-const chatScreenLabel: Partial<Record<Screen, string>> = { schedule: '캘린더 보기', calendar: '캘린더 연동 보기', supplies: '준비물 확인', tasks: '내 할 일 보기', assignments: '담당 배정 보기', assignmentDetail: '배정 상세 보기', notifications: '알림함 보기', members: '가족 구성원 보기', album: '우리집 기록함 보기', programs: '돌봄 제도 보기', plan: '플랜 보기', home: '홈으로 가기', careHub: '케어 보기', familyHub: '가족 설정 보기', settings: '설정 보기' }
+const chatScreenLabel: Partial<Record<Screen, string>> = { schedule: '캘린더 보기', calendar: '캘린더 연동 보기', supplies: '준비물 확인', homework: '숙제 확인', tasks: '내 할 일 보기', assignments: '담당 배정 보기', assignmentDetail: '배정 상세 보기', notifications: '알림함 보기', members: '가족 구성원 보기', album: '우리집 기록함 보기', programs: '돌봄 제도 보기', plan: '플랜 보기', home: '홈으로 가기', careHub: '케어 보기', familyHub: '가족 설정 보기', settings: '설정 보기' }
 type ChatMessage = { from: 'me' | 'agent'; text: string; cards?: ChatCard[] }
 type EditingSchedule = { type: 'PERSONAL' | 'CHILD'; id: string }
 type SubscriptionState = { plan: string; status: string; developer_preview: boolean; dev_switch_available: boolean; current_period_end?: string | null; next_billing_at?: string | null; cancel_at_period_end: boolean; canceled_at?: string | null; auto_renew_available: boolean; renewal_mode: 'AUTO_BILLING' | 'ONE_TIME' }
@@ -269,6 +269,12 @@ function App() {
   const [captureTranscript, setCaptureTranscript] = useState('')
   const [captureFromPhoto, setCaptureFromPhoto] = useState(false)
   const [captureBusy, setCaptureBusy] = useState(false)
+  const [homeworkChild, setHomeworkChild] = useState('')
+  const [homeworkTitle, setHomeworkTitle] = useState('')
+  const [homeworkDate, setHomeworkDate] = useState('')
+  const [editingHomeworkId, setEditingHomeworkId] = useState('')
+  const [editHomeworkTitle, setEditHomeworkTitle] = useState('')
+  const [editHomeworkDate, setEditHomeworkDate] = useState('')
   const [scheduleTitle, setScheduleTitle] = useState('')
   const [scheduleMember, setScheduleMember] = useState('mom')
   const [scheduleKind, setScheduleKind] = useState<'WORK' | 'ROUTINE'>('ROUTINE')
@@ -276,6 +282,7 @@ function App() {
   const [scheduleStartTime, setScheduleStartTime] = useState('09:00')
   const [scheduleEndTime, setScheduleEndTime] = useState('')
   const [scheduleScope, setScheduleScope] = useState('all')
+  const [careStatusChild, setCareStatusChild] = useState('')
   const [scheduleForm, setScheduleForm] = useState<'PERSONAL' | 'CHILD'>('CHILD')
   const [scheduleEntryMode, setScheduleEntryMode] = useState<'SINGLE' | 'REPEAT'>('SINGLE')
   const [scheduleSheet, setScheduleSheet] = useState<'NONE' | 'DAY' | 'ADD_MENU' | 'CHOOSER' | 'FORM'>('NONE')
@@ -926,14 +933,24 @@ function App() {
   const memberIsOnline = (targetMemberId: string) => targetMemberId === me?.member.id || !!boot?.members.find(item => item.id === targetMemberId)?.is_online
   const member = (id: string) => boot?.members.find(m => m.id === id)?.name ?? '가족'
   const child = (id: string | null) => boot?.children.find(c => c.id === id)?.name ?? '가족'
-  const items = boot?.items.filter(i => filter === 'all' || i.child_id === filter) ?? []
+  // boot.items/assignments keep growing as a family uses the app, and these lists feed
+  // O(n) lookups (itemFor) used all over the render — memoized so typing in an unrelated
+  // field elsewhere doesn't re-filter/re-scan them on every keystroke.
+  const items = useMemo(() => boot?.items.filter(i => filter === 'all' || i.child_id === filter) ?? [], [boot, filter])
   const pending = items.filter(i => i.status === 'NEEDS_REVIEW')
   const allPending = boot?.items.filter(i => i.status === 'NEEDS_REVIEW') ?? []
-  const assignments = boot?.assignments.filter(a => !['CANCELED', 'REJECTED'].includes(a.status)) ?? []
+  const assignments = useMemo(() => boot?.assignments.filter(a => !['CANCELED', 'REJECTED'].includes(a.status)) ?? [], [boot])
   const careViewerId = me?.authenticated ? me.member.id : viewer
-  const viewerAssignments = assignments.filter(a => a.assignee_id === careViewerId)
+  const viewerAssignments = useMemo(() => assignments.filter(a => a.assignee_id === careViewerId), [assignments, careViewerId])
   const itemFor = (a: Assignment | undefined) => a ? boot?.items.find(i => i.id === a.item_id) : undefined
-  const activeAssignmentForItem = (careItemId: string) => assignments.find(a => a.item_id === careItemId && ['ACCEPTED', 'CANDIDATE_ACCEPTED', 'PROPOSED'].includes(a.status))
+  const activeAssignmentForItem = (careItemId: string) => assignments.find(a => a.item_id === careItemId && ['ACCEPTED', 'CANDIDATE_ACCEPTED', 'PROPOSED', 'COMPLETED'].includes(a.status))
+  // Accepting a request only confirms who's responsible — it isn't "in progress" until
+  // the item's own time actually arrives, and it stops being live once marked done.
+  const isLiveAssignment = (assignment?: Assignment) => {
+    if (!assignment || assignment.status !== 'ACCEPTED') return false
+    const item = itemFor(assignment)
+    return !!item && item.status !== 'DONE' && !!item.starts_at && new Date(item.starts_at).getTime() <= Date.now()
+  }
   const caregiverForChildSchedule = (scheduleId: string) => {
     const careItem = boot?.items.find(item => item.child_schedule_id === scheduleId)
     const assignment = careItem ? activeAssignmentForItem(careItem.id) : undefined
@@ -943,6 +960,7 @@ function App() {
     const assignment = activeAssignmentForItem(careItemId)
     return assignment ? { name: member(assignment.assignee_id), status: assignment.status } : null
   }
+  const caregiverStatusLabel = (status: string) => status === 'COMPLETED' ? '완료' : status === 'ACCEPTED' ? '담당' : '요청 중'
   const activeItem = boot?.items.find(i => i.id === itemId) ?? null
   const activeAssignment = boot?.assignments.find(a => a.id === assignmentId) ?? null
   const unread = boot?.notifications.filter(n => !n.is_read).length ?? 0
@@ -973,10 +991,10 @@ function App() {
     const child = boot.children.find(item => item.id === careItem?.child_id)
     const caregiver = boot.members.find(item => item.id === active.assignee_id)
     const schedule = boot.child_schedules.find(item => item.id === careItem?.child_schedule_id)
-    const statusText = active.status === 'ACCEPTED' ? '돌봄 진행 중' : '돌봄 담당 확인 중'
+    const statusText = isLiveAssignment(active) ? '돌봄 진행 중' : '돌봄 담당 확인 중'
     const currentPlace = schedule?.title ?? careItem?.title ?? '돌봄 시작'
     const route = `${currentPlace} → ${caregiver?.name ?? '담당자'} → 집`
-    const progress = active.status === 'ACCEPTED' ? 1 : 0
+    const progress = isLiveAssignment(active) ? 1 : 0
     void updateLiveCareStatus(
       `${child?.name ?? '아이'} · ${caregiver?.name ?? '담당자'}`,
       statusText,
@@ -1050,28 +1068,56 @@ function App() {
   const activeBenefit = benefits.find(program => program.id === programSelected)
   const calendarsReady = calendarConnections.length === 2 && calendarConnections.every(connection => connection.configured)
   const todayKey = dateKey(new Date())
-  const todayCare = boot?.items.filter(i => !i.child_schedule_id && i.starts_at && dateKey(i.starts_at) === todayKey && i.item_type !== 'SUPPLY') ?? []
-  const todayPersonal = boot?.schedules.filter(s => dateKey(s.starts_at) === todayKey) ?? []
+  const todayCare = boot?.items.filter(i => !i.child_schedule_id && i.starts_at && dateKey(i.starts_at) === todayKey && i.item_type !== 'SUPPLY' && i.item_type !== 'HOMEWORK') ?? []
   const todayChildSchedules = boot?.child_schedules.filter(s => dateKey(s.starts_at) === todayKey) ?? []
-  const activeSupplies = boot?.items.filter(i => i.item_type === 'SUPPLY' && i.status !== 'DONE') ?? []
-  const supplyDueDate = (item: CareItem) => {
+  const dueDateOf = (item: CareItem) => {
     if (item.starts_at) return dateKey(item.starts_at)
     const nextDay = new Date(item.created_at); nextDay.setDate(nextDay.getDate() + 1)
     return dateKey(nextDay)
   }
+  const activeSupplies = boot?.items.filter(i => i.item_type === 'SUPPLY' && i.status !== 'DONE') ?? []
+  const allSupplies = boot?.items.filter(i => i.item_type === 'SUPPLY') ?? []
   const supplyWindowEnd = new Date(); supplyWindowEnd.setDate(supplyWindowEnd.getDate() + 6)
   const weekSupplies = activeSupplies.filter(item => {
-    const due = supplyDueDate(item)
+    const due = dueDateOf(item)
     return due >= todayKey && due <= dateKey(supplyWindowEnd)
-  }).sort((left, right) => supplyDueDate(left).localeCompare(supplyDueDate(right)))
-  const supplyGroups = Object.entries(weekSupplies.reduce<Record<string, CareItem[]>>((groups, item) => {
-    ;(groups[supplyDueDate(item)] ??= []).push(item)
+  }).sort((left, right) => dueDateOf(left).localeCompare(dueDateOf(right)))
+  const weekSuppliesAll = allSupplies.filter(item => {
+    const due = dueDateOf(item)
+    return due >= todayKey && due <= dateKey(supplyWindowEnd)
+  }).sort((left, right) => dueDateOf(left).localeCompare(dueDateOf(right)))
+  const supplyGroups = Object.entries(weekSuppliesAll.reduce<Record<string, CareItem[]>>((groups, item) => {
+    ;(groups[dueDateOf(item)] ??= []).push(item)
     return groups
   }, {})).sort(([left], [right]) => left.localeCompare(right))
+  const activeHomework = boot?.items.filter(i => i.item_type === 'HOMEWORK' && i.status !== 'DONE') ?? []
+  const allHomework = boot?.items.filter(i => i.item_type === 'HOMEWORK') ?? []
+  const weekHomework = activeHomework.filter(item => {
+    const due = dueDateOf(item)
+    return due >= todayKey && due <= dateKey(supplyWindowEnd)
+  }).sort((left, right) => dueDateOf(left).localeCompare(dueDateOf(right)))
+  const homeworkGroups = Object.entries(allHomework.reduce<Record<string, CareItem[]>>((groups, item) => {
+    ;(groups[dueDateOf(item)] ??= []).push(item)
+    return groups
+  }, {})).sort(([left], [right]) => left.localeCompare(right))
+  const tomorrowKey = dateKey(new Date(new Date().setDate(new Date().getDate() + 1)))
+  // The home screen's "지금 해야 할 것" preview is meant for things due imminently —
+  // supplies due today or tomorrow, homework due today — not the full week's worth
+  // shown on the dedicated 준비물/숙제 확인 screens.
+  const homeSupplyAlerts = weekSupplies.filter(item => dueDateOf(item) === todayKey || dueDateOf(item) === tomorrowKey)
+  const homeHomeworkAlerts = weekHomework.filter(item => dueDateOf(item) === todayKey)
   const pendingHandoffs = boot?.handoffs.filter(h => h.to_member_id === careViewerId && h.status === 'PENDING') ?? []
-  const movingAssignment = assignments.find(a => a.status === 'ACCEPTED')
+  // "오늘의 배정" / "맡은 일" counts must reflect actual today's duties, not every
+  // still-active assignment ever created — otherwise stale items pile the count up forever.
+  // Chained off the memoized assignments/viewerAssignments above so an unrelated
+  // keystroke elsewhere doesn't re-scan these (itemFor is an O(n) lookup per assignment).
+  const todayAssignments = useMemo(() => assignments.filter(a => { const item = itemFor(a); return !!item?.starts_at && dateKey(item.starts_at) === todayKey }), [assignments, todayKey])
+  const todayViewerAssignments = useMemo(() => todayAssignments.filter(a => a.assignee_id === careViewerId), [todayAssignments, careViewerId])
+  const weekWindowEndKey = dateKey(supplyWindowEnd)
+  const weekViewerAssignments = useMemo(() => viewerAssignments.filter(a => { const item = itemFor(a); const due = item?.starts_at ? dateKey(item.starts_at) : ''; return !!due && due >= todayKey && due <= weekWindowEndKey }), [viewerAssignments, todayKey, weekWindowEndKey])
+  const movingAssignment = assignments.find(a => isLiveAssignment(a) && (!careStatusChild || itemFor(a)?.child_id === careStatusChild))
   const movingItem = movingAssignment ? itemFor(movingAssignment) : undefined
-  const careRouteChildId = movingItem?.child_id ?? itemFor(viewerAssignments.find(a => a.status !== 'COMPLETED') ?? viewerAssignments[0])?.child_id ?? boot?.children[0]?.id
+  const careRouteChildId = careStatusChild || movingItem?.child_id || itemFor(viewerAssignments.find(a => a.status !== 'COMPLETED') ?? viewerAssignments[0])?.child_id || boot?.children[0]?.id
   const careRouteDate = movingItem?.starts_at ? dateKey(movingItem.starts_at) : todayKey
   const careRouteAssignment = (careItemId: string) => assignments.find(a => a.item_id === careItemId && a.status === 'COMPLETED')
     ?? assignments.find(a => a.item_id === careItemId && a.status === 'ACCEPTED')
@@ -1080,7 +1126,7 @@ function App() {
     if (!careItem) return 'future'
     const assignment = careRouteAssignment(careItem.id)
     if (careItem.status === 'DONE' || assignment?.status === 'COMPLETED') return 'done'
-    return assignment?.status === 'ACCEPTED' ? 'active' : 'future'
+    return isLiveAssignment(assignment) ? 'active' : 'future'
   }
   const careRouteSteps = [
     ...(boot?.child_schedules ?? []).filter(schedule => schedule.child_id === careRouteChildId && dateKey(schedule.starts_at) === careRouteDate).map(schedule => {
@@ -1095,9 +1141,15 @@ function App() {
     careRouteSteps.push({ id: 'home', label: '집', startsAt: '9999', status: careRouteSteps.every(step => step.status === 'done') ? 'done' : 'future' })
   }
   const homeEvents = [
-    ...todayCare.map(item => { const assignment = activeAssignmentForItem(item.id); return { id: `care-${item.id}`, time: item.starts_at!, title: item.title, meta: `${child(item.child_id)} · 담당 ${assignment ? member(assignment.assignee_id) : '미정'}`, active: assignment?.status === 'ACCEPTED', done: item.status === 'DONE', unassigned: !assignment, careItem: item } }),
-    ...todayChildSchedules.map(item => { const careItem = boot?.items.find(candidate => candidate.child_schedule_id === item.id); const assignment = careItem ? activeAssignmentForItem(careItem.id) : undefined; return { id: `child-${item.id}`, time: item.starts_at, title: item.title, meta: `${child(item.child_id)} · 담당 ${assignment ? member(assignment.assignee_id) : '미정'}`, active: assignment?.status === 'ACCEPTED', done: careItem?.status === 'DONE', unassigned: !assignment, careItem } }),
-    ...todayPersonal.map(item => ({ id: `personal-${item.id}`, time: item.starts_at, title: item.title, meta: member(item.member_id), active: false, done: false, unassigned: false, careItem: undefined as CareItem | undefined })),
+    ...todayCare.map(item => { const assignment = activeAssignmentForItem(item.id); return { id: `care-${item.id}`, time: item.starts_at!, title: item.title, meta: `${child(item.child_id)} · 담당 ${assignment ? member(assignment.assignee_id) : '미정'}`, active: isLiveAssignment(assignment), done: item.status === 'DONE', unassigned: !assignment, careItem: item } }),
+    ...todayChildSchedules.flatMap(item => {
+      const careItems = boot?.items.filter(candidate => candidate.child_schedule_id === item.id) ?? []
+      if (!careItems.length) return [{ id: `child-${item.id}`, time: item.starts_at, title: item.title, meta: `${child(item.child_id)} · 담당 미정`, active: false, done: false, unassigned: true, careItem: undefined as CareItem | undefined }]
+      return careItems.map(careItem => {
+        const assignment = activeAssignmentForItem(careItem.id)
+        return { id: `child-${careItem.id}`, time: careItem.starts_at ?? item.starts_at, title: careItem.title, meta: `${child(item.child_id)} · 담당 ${assignment ? member(assignment.assignee_id) : '미정'}`, active: isLiveAssignment(assignment), done: careItem.status === 'DONE', unassigned: !assignment, careItem }
+      })
+    }),
   ].sort((left, right) => left.time.localeCompare(right.time))
   const visibleNotices = boot?.notifications.filter(notice => noticeScope === 'family' || !me?.member.id || !notice.member_id || notice.member_id === me.member.id) ?? []
   const yesterdayKey = dateKey(new Date(new Date().setDate(new Date().getDate() - 1)))
@@ -1117,13 +1169,21 @@ function App() {
     const start = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1 - calendarMonth.getDay())
     return new Date(start.getFullYear(), start.getMonth(), start.getDate() + index)
   })
-  const filteredChildSchedules = boot?.child_schedules.filter(s => scheduleScope === 'all' || s.child_id === scheduleScope) ?? []
-  const filteredCareSchedules = boot?.items.filter(i => !i.child_schedule_id && i.starts_at && ['SCHEDULE', 'CHANGE', 'TODO'].includes(i.item_type) && (scheduleScope === 'all' || i.child_id === scheduleScope)) ?? []
+  // These feed the 35-cell month grid (3 filter passes per day) — memoized so
+  // typing in an unrelated field (e.g. the registration form open on top of this
+  // same screen) doesn't re-run that work on every keystroke.
+  const filteredChildSchedules = useMemo(() => boot?.child_schedules.filter(s => scheduleScope === 'all' || s.child_id === scheduleScope) ?? [], [boot, scheduleScope])
+  const filteredCareSchedules = useMemo(() => boot?.items.filter(i => !i.child_schedule_id && i.starts_at && ['SCHEDULE', 'CHANGE', 'TODO'].includes(i.item_type) && (scheduleScope === 'all' || i.child_id === scheduleScope)) ?? [], [boot, scheduleScope])
   const calendarEventsFor = (key: string) => [
     ...(boot?.schedules ?? []).filter(s => dateKey(s.starts_at) === key && personalScheduleVisible(s.member_id)).map(s => ({ id: 'personal-' + s.id, title: s.title, color: caregiverColor(s.member_id), startsAt: s.starts_at, endsAt: s.ends_at, meta: `${member(s.member_id)} · ${s.kind === 'WORK' ? '업무 일정' : '개인 루틴'}` })),
     ...filteredChildSchedules.filter(s => dateKey(s.starts_at) === key).map(s => ({ id: 'child-' + s.id, title: s.title, color: childColor(s.child_id), startsAt: s.starts_at, endsAt: s.ends_at, meta: `${child(s.child_id)} · ${childScheduleLabel[s.category] ?? '아이 일정'}` })),
     ...filteredCareSchedules.filter(i => dateKey(i.starts_at!) === key).map(i => ({ id: 'care-' + i.id, title: i.title, color: childColor(i.child_id), startsAt: i.starts_at!, endsAt: i.starts_at!, meta: `${child(i.child_id)} · 알림장` })),
   ]
+  const calendarMonthEvents = useMemo(() => {
+    const map: Record<string, ReturnType<typeof calendarEventsFor>> = {}
+    calendarDays.forEach(day => { map[dateKey(day)] = calendarEventsFor(dateKey(day)) })
+    return map
+  }, [boot, scheduleScope, calendarMonth])
   const scheduleStartMinutes = normalizeClock(scheduleStartTime).split(':').reduce((total, value, index) => total + Number(value) * (index ? 1 : 60), 0)
   const scheduleEndMinutes = scheduleEndTime.trim() ? normalizeClock(scheduleEndTime).split(':').reduce((total, value, index) => total + Number(value) * (index ? 1 : 60), 0) : scheduleStartMinutes + 1
   const schedulePreviewCollision = calendarEventsFor(scheduleDate).find(event => {
@@ -1416,6 +1476,10 @@ function App() {
     }
     }, editingSchedule ? (updateScope === 'FUTURE' ? '이후 반복 일정도 함께 수정했어요' : '일정을 수정했어요') : scheduleRepeat ? '반복 루틴 일정을 한 번에 등록했어요' : scheduleForm === 'CHILD' ? '아이 일정을 등록했어요' : '개인 일정을 등록했어요')
   }
+  const deleteCareItem = (careItem: CareItem) => {
+    if (!confirm(`${careItem.title}을(를) 삭제할까요?`)) return
+    void run(() => send('/care-items/' + careItem.id, 'DELETE'), '삭제했어요')
+  }
   const deleteSchedule = (deleteScope?: 'SINGLE' | 'FUTURE') => {
     if (!editingSchedule) return
     const original = editingSchedule.type === 'CHILD'
@@ -1547,6 +1611,26 @@ function App() {
   const removeChildPhoto = (childId: string) => {
     void run(() => send('/children/' + childId + '/photo', 'DELETE'), '아이 프로필 사진을 삭제했어요')
   }
+  const toggleItemDone = (item: CareItem) => {
+    void run(() => send('/items/' + item.id + '/done', 'PATCH', { done: item.status !== 'DONE' }), item.status === 'DONE' ? '완료 표시를 해제했어요' : '완료로 표시했어요')
+  }
+  const addHomework = () => {
+    if (!homeworkChild || !homeworkTitle.trim()) { setError('아이와 숙제 내용을 입력해주세요'); return }
+    void run(async () => {
+      await send('/homework', 'POST', { child_id: homeworkChild, title: homeworkTitle.trim(), due_date: homeworkDate || null })
+      setHomeworkTitle(''); setHomeworkDate('')
+    }, '숙제를 등록했어요')
+  }
+  const saveHomeworkEdit = (itemId: string) => {
+    if (!editHomeworkTitle.trim()) { setError('숙제 내용을 입력해주세요'); return }
+    void run(async () => {
+      await send('/items/' + itemId, 'PATCH', {
+        title: editHomeworkTitle.trim(),
+        starts_at: editHomeworkDate ? `${editHomeworkDate}T00:00:00+09:00` : undefined,
+      })
+      setEditingHomeworkId('')
+    }, '숙제를 수정했어요')
+  }
   const addAlbumPhotos = async (files: File[]) => {
     if (!files.length || albumBusy) return
     setAlbumBusy(true); setError('')
@@ -1643,15 +1727,19 @@ function App() {
     {allPending.length > 0 ? <button className="family-alert home-alert" onClick={() => openReview(allPending[0])}><span className="small-badge danger">확인 {allPending.length}</span><strong>{allPending[0].title}</strong><span>›</span></button> : activeExceptions.length > 0 ? <button className="family-alert home-alert" onClick={() => go('exception')}><span className="small-badge danger">확인 {activeExceptions.length}</span><strong>{activeExceptions[0].reason}</strong><span>›</span></button> : null}
     <Section>오늘 일정</Section>
     <Card className="home-timeline exact-timeline">
-      {homeEvents.map(event => <button key={event.id} className={'home-schedule-row ' + (event.active ? 'current' : 'muted')} onClick={() => event.unassigned && event.careItem ? void openSuggestion(event.careItem) : go('schedule')}><time>{formatTime(event.time)}</time><span><strong>{event.title}</strong><small>{event.active ? `진행 중 · ${event.meta}` : event.meta}</small></span>{event.done ? <b className="done"><img src={homeScheduleDoneIcon} alt="완료" /></b> : event.active ? <b>›</b> : null}</button>)}
+      {homeEvents.map(event => <div key={event.id} className="home-schedule-row-wrap">
+        <button className={'home-schedule-row ' + (event.active ? 'current' : 'muted')} onClick={() => event.unassigned && event.careItem ? void openSuggestion(event.careItem) : go('schedule')}><time>{formatTime(event.time)}</time><span><strong>{event.title}</strong><small>{event.active ? `진행 중 · ${event.meta}` : event.meta}</small></span>{event.done ? <b className="done"><img src={homeScheduleDoneIcon} alt="완료" /></b> : event.active ? <b>›</b> : null}</button>
+        {event.careItem && <button className="home-schedule-row-delete" aria-label="일정 삭제" onClick={() => deleteCareItem(event.careItem!)}>✕</button>}
+      </div>)}
       {!homeEvents.length && <p className="empty-line">오늘 등록된 일정이 없어요</p>}
     </Card>
     <Section>지금 해야 할 것</Section>
     <div className="home-now-list">
       {activeExceptions.slice(0, 1).map(exception => <button key={exception.id} className="attention" onClick={() => go('exception')}><i><img src={homeAttentionIcon} alt="" /></i><span><strong>지금 확인이 필요해요</strong><small>{exception.reason}</small></span><b>›</b></button>)}
       {pendingHandoffs.slice(0, 1).map(handoff => <button key={handoff.id} onClick={() => go('tasks')}><i><img src={homeHandoffIcon} alt="" /></i><span><strong>인수인계 확인</strong><small>{member(handoff.from_member_id)} → {member(handoff.to_member_id)} · {handoff.briefing}</small></span><b>›</b></button>)}
-      {weekSupplies.slice(0, 3).map(item => <button key={item.id} className="attention" onClick={() => go('supplies')}><i><img src={homeSupplyIcon} alt="" /></i><span><strong>{supplyDueDate(item) === todayKey ? '오늘 준비물 확인' : '내일 준비물 확인'}</strong><small>{item.title} · {child(item.child_id)}{item.detail ? ` · ${item.detail}` : ''}</small></span><b>›</b></button>)}
-      {!activeExceptions.length && !pendingHandoffs.length && !weekSupplies.length && <div className="home-now-empty"><i>✓</i><span><strong>지금 확인할 일이 없어요</strong><small>새 요청이나 준비물이 생기면 여기에 표시돼요.</small></span></div>}
+      {homeSupplyAlerts.slice(0, 3).map(item => <button key={item.id} className="attention" onClick={() => go('supplies')}><i><img src={homeSupplyIcon} alt="" /></i><span><strong>{dueDateOf(item) === todayKey ? '오늘 준비물 확인' : '내일 준비물 확인'}</strong><small>{item.title} · {child(item.child_id)}{item.detail ? ` · ${item.detail}` : ''}</small></span><b>›</b></button>)}
+      {homeHomeworkAlerts.slice(0, 3).map(item => <button key={item.id} className="attention" onClick={() => go('homework')}><i style={{ fontSize: 22 }}>📝</i><span><strong>오늘 숙제 확인</strong><small>{item.title} · {child(item.child_id)}</small></span><b>›</b></button>)}
+      {!activeExceptions.length && !pendingHandoffs.length && !homeSupplyAlerts.length && !homeHomeworkAlerts.length && <div className="home-now-empty"><i>✓</i><span><strong>지금 확인할 일이 없어요</strong><small>새 요청이나 준비물이 생기면 여기에 표시돼요.</small></span></div>}
     </div>
     <p className="figma-home-note">평소와 같은 배정은 알리지 않습니다.</p>
   </div>
@@ -1660,6 +1748,7 @@ function App() {
     <Section>확인 필요 {pending.length}</Section>{pending.length ? pending.map(i => <Card key={i.id} className="review-card"><div className="review-meta"><span className="child-pill">{child(i.child_id)}</span><span>{typeLabel[i.item_type]}</span></div><strong>{i.title}</strong><p>{i.detail || '추출된 내용을 확인해주세요'}</p><div className="card-actions"><button onClick={() => openReview(i)}>확인하기</button><button onClick={() => setToast('나중에 다시 확인할 수 있어요')}>나중에</button></div></Card>) : <Empty title="확인할 것이 없어요" text="새로운 알림장이 들어오면 이곳에 표시돼요" />}
     <Section>아이 일정</Section>{boot.child_schedules.filter(s => filter === 'all' || s.child_id === filter).slice(0, 5).map(s => <Card key={s.id} className="schedule-card"><i className="child-color" style={{ background: childColor(s.child_id) }} /><span className="time">{formatTime(s.starts_at) || '—'}</span><div><strong>{s.title}</strong><p>{child(s.child_id)} · {childScheduleLabel[s.category] ?? '기타'}</p></div><span className="green-check">✓</span></Card>)}{items.filter(i => !i.child_schedule_id && ['SCHEDULE', 'CHANGE', 'TODO'].includes(i.item_type) && ['CONFIRMED', 'ASSIGNED', 'DONE'].includes(i.status)).slice(0, 5).map(i => <Card key={i.id} className="schedule-card"><i className="child-color" style={{ background: childColor(i.child_id) }} /><span className="time">{formatTime(i.starts_at) || '—'}</span><div><strong>{i.title}</strong><p>{child(i.child_id)} · 알림장</p></div><span className="green-check">✓</span></Card>)}
     <Section>준비물</Section>{items.filter(i => i.item_type === 'SUPPLY' && ['CONFIRMED', 'ASSIGNED', 'DONE'].includes(i.status)).slice(0, 5).map(i => <Card key={i.id} className="schedule-card"><i className="child-color" style={{ background: childColor(i.child_id) }} /><div><strong>{i.title}</strong><p>{child(i.child_id)} · {i.detail}</p></div><span className="green-check">✓</span></Card>)}
+    <Section action={<button className="text-link" onClick={() => go('homework')}>숙제 확인 ›</button>}>숙제</Section>{items.filter(i => i.item_type === 'HOMEWORK' && ['CONFIRMED', 'ASSIGNED', 'DONE'].includes(i.status)).slice(0, 5).map(i => <Card key={i.id} className="schedule-card"><i className="child-color" style={{ background: childColor(i.child_id) }} /><div><strong>{i.title}</strong><p>{child(i.child_id)}</p></div><span className="green-check">✓</span></Card>)}
     <div className="inbox-buttons"><button className="primary-button" onClick={() => go('capture')}>알림장 촬영</button><button className="outline-button" onClick={() => go('capture')}>직접 입력</button></div>
   </>
   if (boot && screen === 'capture') page = <><div className="eyebrow">FAMILY INBOX</div><h2 className="hero-title">흩어진 안내를<br />한 번에 정리해요</h2><p className="hero-copy">알림장, 문자, 가정통신문에 적힌 돌봄 정보를 모아주세요.</p>
@@ -1682,7 +1771,7 @@ function App() {
       <div className="care-subscreen-title"><strong>역할 배정</strong><button onClick={() => unassignedItems[0] ? openSuggestion(unassignedItems[0]) : go('tasks')}>전체 보기 ›</button></div>
       {finalCandidates.length > 0 && <><Section>최종 확인 필요</Section>{finalCandidates.map(a => <Card key={a.id} className="urgent-card"><span className="small-badge danger">수락 응답</span><strong>{itemFor(a)?.title ?? '돌봄'} · {member(a.assignee_id)}</strong><p>이 가족을 최종 담당자로 확정하면 다른 후보 요청은 자동으로 마감돼요.</p>{me?.member.is_owner && <button className="primary-button wide-button" onClick={() => run(() => send('/assignments/' + a.id + '/confirm', 'POST'), member(a.assignee_id) + '님을 최종 담당자로 확정했어요')}>최종 담당자로 확정</button>}</Card>)}</>}
       <Section>오늘의 배정</Section>
-      {assignments.length ? timeline(assignments) : <Empty title="오늘 확정된 배정이 없어요" text="새로운 돌봄 일정을 등록하면 담당자를 추천해요" />}
+      {todayAssignments.length ? timeline(todayAssignments) : <Empty title="오늘 확정된 배정이 없어요" text="새로운 돌봄 일정을 등록하면 담당자를 추천해요" />}
       <Section>미리 확인할 변경</Section>
       <Card className="assignment-preview-card">{unassignedItems.slice(0, 2).map((item, index) => <button key={item.id} onClick={() => openSuggestion(item)}><i className={index ? 'muted' : ''} /><span><strong>{formatTime(item.starts_at) || '시간 미정'} {item.title} 담당자 조정이 필요해요</strong><small>{child(item.child_id)} · 가능한 가족을 추천해드릴게요</small></span><b>›</b></button>)}{!unassignedItems.length && <div className="assignment-preview-empty"><i />등록된 일정에서 필요한 변경이 없어요</div>}</Card>
       <Section>아이별 오늘</Section>
@@ -1694,7 +1783,7 @@ function App() {
   if (boot && screen === 'assignmentDetail') {
     const detailItem = activeAssignment ? itemFor(activeAssignment) : null
     const detailStatus = activeAssignment?.status === 'COMPLETED' ? '완료' : activeAssignment?.status === 'PROPOSED' ? '수락 대기' : activeAssignment?.status === 'CANDIDATE_ACCEPTED' ? '최종 확인 대기' : activeAssignment?.status === 'REJECTED' ? '거절됨' : activeAssignment?.status === 'CANCELED' ? '취소됨' : activeAssignment?.status === 'RECONFIRMATION_REQUIRED' ? '재배정 필요' : '담당 확정'
-    page = <section className="assignment-detail-page"><div className="care-subscreen-title"><strong>배정 상세</strong><button onClick={() => go('assignments')}>전체 배정 ›</button></div>{activeAssignment && detailItem ? <><Card className="assignment-detail-card"><div className="assignment-detail-head"><time>{formatTime(detailItem.starts_at) || '시간 미정'}</time><span className={'small-badge ' + (['REJECTED', 'CANCELED', 'RECONFIRMATION_REQUIRED'].includes(activeAssignment.status) ? 'danger' : 'ok')}>{detailStatus}</span></div><h2>{detailItem.title}</h2><dl><div><dt>아이</dt><dd>{child(detailItem.child_id)}</dd></div><div><dt>담당</dt><dd>{member(activeAssignment.assignee_id)}</dd></div><div><dt>일정</dt><dd>{detailItem.starts_at ? `${formatDate(detailItem.starts_at)} ${formatTime(detailItem.starts_at)}` : '시간 미정'}</dd></div></dl><p>{detailItem.detail || '등록된 상세 내용이 없어요.'}</p>{activeAssignment.note && <div className="assignment-detail-note"><strong>특이사항</strong><span>{activeAssignment.note}</span></div>}</Card>{activeAssignment.status === 'PROPOSED' && activeAssignment.assignee_id === me?.member.id && <div className="task-actions assignment-detail-actions"><button className="primary-button" onClick={() => run(() => send('/assignments/' + activeAssignment.id + '/respond', 'POST', { decision: 'ACCEPTED' }), '배정을 수락했어요')}>맡을게요</button><button className="outline-button" onClick={() => run(() => send('/assignments/' + activeAssignment.id + '/respond', 'POST', { decision: 'REJECTED' }), '다른 담당자를 찾을게요')}>어려워요</button></div>}{activeAssignment.status === 'ACCEPTED' && activeAssignment.assignee_id === me?.member.id && <button className="primary-button wide-button" onClick={() => { setNote(''); setCompletionPhoto(null); setCompletionPreview(''); setShowSheet(true) }}>완료 체크</button>}</> : <Empty title="배정 정보를 찾을 수 없어요" text="역할 배정에서 확인할 항목을 다시 선택해주세요" />}</section>
+    page = <section className="assignment-detail-page"><div className="care-subscreen-title"><strong>배정 상세</strong><button onClick={() => go('assignments')}>전체 배정 ›</button></div>{activeAssignment && detailItem ? <><Card className="assignment-detail-card"><div className="assignment-detail-head"><time>{formatTime(detailItem.starts_at) || '시간 미정'}</time><span className={'small-badge ' + (['REJECTED', 'CANCELED', 'RECONFIRMATION_REQUIRED'].includes(activeAssignment.status) ? 'danger' : 'ok')}>{detailStatus}</span></div><h2>{detailItem.title}</h2><dl><div><dt>아이</dt><dd>{child(detailItem.child_id)}</dd></div><div><dt>담당</dt><dd>{member(activeAssignment.assignee_id)}</dd></div><div><dt>일정</dt><dd>{detailItem.starts_at ? formatDate(detailItem.starts_at) : '날짜 미정'}</dd></div></dl>{activeAssignment.note && <div className="assignment-detail-note"><strong>특이사항</strong><span>{activeAssignment.note}</span></div>}</Card>{activeAssignment.status === 'PROPOSED' && activeAssignment.assignee_id === me?.member.id && <div className="task-actions assignment-detail-actions"><button className="primary-button" onClick={() => run(() => send('/assignments/' + activeAssignment.id + '/respond', 'POST', { decision: 'ACCEPTED' }), '배정을 수락했어요')}>맡을게요</button><button className="outline-button" onClick={() => run(() => send('/assignments/' + activeAssignment.id + '/respond', 'POST', { decision: 'REJECTED' }), '다른 담당자를 찾을게요')}>어려워요</button></div>}{activeAssignment.status === 'ACCEPTED' && activeAssignment.assignee_id === me?.member.id && <button className="primary-button wide-button" onClick={() => { setNote(''); setCompletionPhoto(null); setCompletionPreview(''); setShowSheet(true) }}>완료 체크</button>}</> : <Empty title="배정 정보를 찾을 수 없어요" text="역할 배정에서 확인할 항목을 다시 선택해주세요" />}</section>
   }
   if (boot && screen === 'suggestion') {
     const preferredMemberId = activeItem?.child_id ? localStorage.getItem(`family-care-pattern:${boot.family.id}:${activeItem.child_id}`) : ''
@@ -1703,11 +1792,11 @@ function App() {
   }
   if (boot && screen === 'tasks') page = <>
     <div className="viewer-switch"><strong>내 담당</strong></div>
-    <Card className="task-summary"><span className="green-check">✓</span><div><strong>오늘 맡은 일 {viewerAssignments.length}건</strong><p>요청을 열어 세부내용을 확인하고 응답할 수 있어요</p></div></Card>
+    <Card className="task-summary"><span className="green-check">✓</span><div><strong>오늘 맡은 일 {todayViewerAssignments.length}건</strong><p>요청을 열어 세부내용을 확인하고 응답할 수 있어요</p></div></Card>
     {pendingHandoffs.length > 0 && <><Section>받은 인수인계</Section>{pendingHandoffs.map(h => <Card key={h.id} className={'handoff-card inline-handoff ' + (handoffId === h.id ? 'selected-request' : '')}><span className="small-badge danger">확인 필요</span><strong>{h.briefing}</strong>{h.special_note && <p>특이사항 · {h.special_note}</p>}<small>{member(h.from_member_id)}님이 전달</small><button className="outline-button wide-button" onClick={() => run(() => send('/handoffs/' + h.id + '/acknowledge', 'POST'), '인수인계를 확인했어요')}>확인했어요</button></Card>)}</>}
     <Section>오늘 할 일</Section>
-    {viewerAssignments.map(a => { const i = itemFor(a); return i && <Card key={a.id} className={'task-card ' + (assignmentId === a.id ? 'selected-request' : '')}><div className="task-top"><span className="time">{formatTime(i.starts_at) || '시간 미정'}</span><span className="small-badge ok">{a.status === 'COMPLETED' ? '완료' : a.status === 'PROPOSED' ? '수락 대기' : a.status === 'CANDIDATE_ACCEPTED' ? '최종 확인 대기' : a.status === 'RECONFIRMATION_REQUIRED' ? '재배정 필요' : '담당'}</span></div><strong>{i.title} — {child(i.child_id)}</strong><p>{i.detail}</p>{a.status === 'PROPOSED' ? <div className="task-actions"><button className="primary-button" onClick={() => run(() => send('/assignments/' + a.id + '/respond', 'POST', { decision: 'ACCEPTED' }), '배정을 수락했어요')}>맡을게요</button><button className="outline-button" onClick={() => run(() => send('/assignments/' + a.id + '/respond', 'POST', { decision: 'REJECTED' }), '다른 담당자를 찾을게요')}>어려워요</button></div> : a.status === 'CANDIDATE_ACCEPTED' ? <p className="source-text">수락 응답을 보냈어요. 주돌봄자의 최종 확정을 기다리고 있어요.</p> : a.status === 'ACCEPTED' ? <button className="primary-button wide-button" onClick={() => { setAssignmentId(a.id); setNote(''); setCompletionPhoto(null); setCompletionPreview(''); setShowSheet(true) }}>완료 체크</button> : <p className="source-text">{a.note ? '특이사항 · ' + a.note : '특이사항 없음'}</p>}</Card> })}
-    {viewerAssignments.length ? <><Section>이번 주 내 담당</Section><Card className="stats-card"><div><strong>{viewerAssignments.length}</strong><span>맡은 일</span></div><div><strong>{viewerAssignments.filter(a => a.status === 'COMPLETED').length}</strong><span>완료</span></div><div><strong>{viewerAssignments.filter(a => a.note).length}</strong><span>특이사항</span></div></Card></> : <Empty title="아직 맡은 일이 없어요" text="가족이 돌봄을 요청하면 이곳에서 확인할 수 있어요" />}
+    {todayViewerAssignments.map(a => { const i = itemFor(a); return i && <Card key={a.id} className={'task-card ' + (assignmentId === a.id ? 'selected-request' : '')}><div className="task-top"><span className="time">{formatTime(i.starts_at) || '시간 미정'}</span><span className="small-badge ok">{a.status === 'COMPLETED' ? '완료' : a.status === 'PROPOSED' ? '수락 대기' : a.status === 'CANDIDATE_ACCEPTED' ? '최종 확인 대기' : a.status === 'RECONFIRMATION_REQUIRED' ? '재배정 필요' : '담당'}</span></div><strong>{i.title} — {child(i.child_id)}</strong><p>{i.detail}</p>{a.status === 'PROPOSED' ? <div className="task-actions"><button className="primary-button" onClick={() => run(() => send('/assignments/' + a.id + '/respond', 'POST', { decision: 'ACCEPTED' }), '배정을 수락했어요')}>맡을게요</button><button className="outline-button" onClick={() => run(() => send('/assignments/' + a.id + '/respond', 'POST', { decision: 'REJECTED' }), '다른 담당자를 찾을게요')}>어려워요</button></div> : a.status === 'CANDIDATE_ACCEPTED' ? <p className="source-text">수락 응답을 보냈어요. 주돌봄자의 최종 확정을 기다리고 있어요.</p> : a.status === 'ACCEPTED' ? <button className="primary-button wide-button" onClick={() => { setAssignmentId(a.id); setNote(''); setCompletionPhoto(null); setCompletionPreview(''); setShowSheet(true) }}>완료 체크</button> : <p className="source-text">{a.note ? '특이사항 · ' + a.note : '특이사항 없음'}</p>}</Card> })}
+    {weekViewerAssignments.length ? <><Section>이번 주 내 담당</Section><Card className="stats-card"><div><strong>{weekViewerAssignments.length}</strong><span>맡은 일</span></div><div><strong>{weekViewerAssignments.filter(a => a.status === 'COMPLETED').length}</strong><span>완료</span></div><div><strong>{weekViewerAssignments.filter(a => a.note).length}</strong><span>특이사항</span></div></Card></> : <Empty title="아직 맡은 일이 없어요" text="가족이 돌봄을 요청하면 이곳에서 확인할 수 있어요" />}
   </>
   if (boot && screen === 'schedule') {
     const selectedEvents = calendarEventsFor(selectedDate)
@@ -1717,7 +1806,7 @@ function App() {
         <div className="figma-calendar-legend"><button className={scheduleScope === 'all' ? 'active' : ''} onClick={() => setScheduleScope('all')}><i className="all-dot" />전체</button><button className={scheduleScope === 'me' ? 'active' : ''} onClick={() => setScheduleScope(scheduleScope === 'me' ? 'all' : 'me')}><i style={{ background: myScheduleColor }} />나</button>{boot.children.map(childItem => <button key={childItem.id} title={childItem.name} className={scheduleScope === childItem.id ? 'active' : ''} onClick={() => setScheduleScope(scheduleScope === childItem.id ? 'all' : childItem.id)}><i style={{ background: childColor(childItem.id) }} />{childItem.name}</button>)}</div>
         <div className="weekdays figma-weekdays">{['일', '월', '화', '수', '목', '금', '토'].map((day, index) => <span className={index === 0 ? 'sun' : index === 6 ? 'sat' : ''} key={day}>{day}</span>)}</div>
         <div className="month-grid figma-month-grid">{calendarDays.map(day => {
-          const key = dateKey(day); const dayEvents = calendarEventsFor(key); const outside = day.getMonth() !== calendarMonth.getMonth()
+          const key = dateKey(day); const dayEvents = calendarMonthEvents[key] ?? []; const outside = day.getMonth() !== calendarMonth.getMonth()
           return <button key={key} disabled={outside} aria-label={outside ? undefined : `${key} · 일정 ${dayEvents.length}개`} className={(outside ? 'muted ' : '') + (selectedDate === key ? 'selected' : '')} onClick={() => pickCalendarDate(day)}><span>{outside ? '' : day.getDate()}</span><i className="month-day-events" aria-hidden="true">{dayEvents.slice(0, 3).map(event => <b key={event.id} style={{ background: event.color }} />)}{dayEvents.length > 3 && <small>+{dayEvents.length - 3}</small>}</i></button>
         })}</div>
         <div className={'figma-calendar-agenda ' + (selectedEvents.length ? 'has-events' : 'is-empty')}><small>{selectedDate === todayKey ? '오늘 일정' : '선택한 일정'} · {selectedEvents.length}건</small>{selectedEvents.map(event => <button key={event.id} onClick={() => setScheduleSheet('DAY')}><i style={{ background: event.color }} /><span><strong>{event.title}</strong><small>{selectedDate.slice(5).replace('-', '/')} · {formatTime(event.startsAt)} · {event.meta.split(' · ')[0]}</small></span></button>)}{!selectedEvents.length && <p>등록된 일정이 없어요</p>}</div>
@@ -1729,15 +1818,38 @@ function App() {
   }
   if (boot && screen === 'supplies') page = <section className="supplies-page">
     <div className="eyebrow">앞으로 7일</div><h2 className="page-title">준비물 확인</h2><p className="hero-copy">오늘부터 일주일 동안 챙겨야 할 준비물을 날짜별로 모았어요.</p>
-    {supplyGroups.map(([dueDate, dueItems]) => <section className="supply-day" key={dueDate}><h3>{dueDate === todayKey ? '오늘' : formatDate(dueDate + 'T12:00:00')}</h3><div>{dueItems.map(item => <Card className="supply-item-card" key={item.id}><i><img src={homeSupplyIcon} alt="" /></i><span><strong>{item.title}</strong><small>{child(item.child_id)}{item.detail ? ` · ${item.detail}` : ''}</small></span><em>{item.status === 'NEEDS_REVIEW' ? '확인 필요' : '준비 전'}</em></Card>)}</div></section>)}
+    {supplyGroups.map(([dueDate, dueItems]) => <section className="supply-day" key={dueDate}><h3>{dueDate === todayKey ? '오늘' : formatDate(dueDate + 'T12:00:00')}</h3><div>{dueItems.map(item => <Card className={'supply-item-card' + (item.status === 'DONE' ? ' item-done' : '')} key={item.id}>{item.status === 'NEEDS_REVIEW' ? <em className="item-review-badge">확인 필요</em> : <input type="checkbox" className="item-checkbox" checked={item.status === 'DONE'} onChange={() => toggleItemDone(item)} aria-label={item.title + ' 완료 체크'} />}<i><img src={homeSupplyIcon} alt="" /></i><span><strong>{item.title}</strong><small>{child(item.child_id)}{item.detail ? ` · ${item.detail}` : ''}</small></span><button className="supply-item-delete" aria-label="준비물 삭제" onClick={() => deleteCareItem(item)}>✕</button></Card>)}</div></section>)}
     {!supplyGroups.length && <Empty title="일주일 안에 챙길 준비물이 없어요" text="알림장을 등록하면 준비물을 날짜별로 정리해드려요" />}
     <button className="primary-button wide-button supply-register" onClick={() => go('capture')}>알림장 등록하기</button>
+  </section>
+  if (boot && screen === 'homework') page = <section className="supplies-page homework-page">
+    <div className="eyebrow">숙제</div><h2 className="page-title">숙제 확인</h2><p className="hero-copy">등록된 숙제를 날짜별로 모았어요. 여기서 바로 등록하거나 수정할 수 있어요.</p>
+    <Card className="form-card homework-form-card">
+      <label className="form-label">아이</label>
+      <div className="choice-row">{boot.children.map(c => <button key={c.id} className={'choice-chip ' + (homeworkChild === c.id ? 'active' : '')} onClick={() => setHomeworkChild(c.id)}>{c.name}</button>)}</div>
+      <label className="form-label">숙제 내용</label>
+      <input className="form-control" value={homeworkTitle} onChange={e => setHomeworkTitle(e.target.value)} placeholder="예: 수학 문제집 3단원" />
+      <label className="form-label">날짜 (선택)</label>
+      <input type="date" className="form-control" value={homeworkDate} onChange={e => setHomeworkDate(e.target.value)} />
+      <button className="primary-button wide-button" onClick={addHomework}>숙제 등록</button>
+    </Card>
+    {homeworkGroups.map(([dueDate, dueItems]) => <section className="supply-day" key={dueDate}><h3>{dueDate === todayKey ? '오늘' : formatDate(dueDate + 'T12:00:00')}</h3><div>{dueItems.map(item => editingHomeworkId === item.id ? <Card className="homework-edit-card" key={item.id}>
+      <input className="form-control" value={editHomeworkTitle} onChange={e => setEditHomeworkTitle(e.target.value)} placeholder="숙제 내용" />
+      <input type="date" className="form-control" value={editHomeworkDate} onChange={e => setEditHomeworkDate(e.target.value)} />
+      <div className="homework-edit-actions"><button className="outline-button" onClick={() => setEditingHomeworkId('')}>취소</button><button className="primary-button" onClick={() => saveHomeworkEdit(item.id)}>저장</button></div>
+    </Card> : <Card className={'supply-item-card' + (item.status === 'DONE' ? ' item-done' : '')} key={item.id}>
+      <input type="checkbox" className="item-checkbox" checked={item.status === 'DONE'} onChange={() => toggleItemDone(item)} aria-label={item.title + ' 완료 체크'} />
+      <button className="homework-item-body" onClick={() => { setEditingHomeworkId(item.id); setEditHomeworkTitle(item.title); setEditHomeworkDate(item.starts_at ? dateKey(item.starts_at) : '') }}>
+        <strong>{item.title}</strong><small>{child(item.child_id)}</small>
+      </button>
+    </Card>)}</div></section>)}
+    {!homeworkGroups.length && <Empty title="등록된 숙제가 없어요" text="위에서 숙제를 등록하거나 알림장을 등록해서 정리해보세요" />}
   </section>
   if (boot && screen === 'careHub') {
     const myNext = viewerAssignments.find(a => a.status !== 'COMPLETED') ?? viewerAssignments[0]
     const myNextItem = myNext ? itemFor(myNext) : undefined
     page = <>
-      <div className="section-kicker care-status-kicker">돌봄 현황</div>
+      <div className="care-status-kicker-row"><div className="section-kicker care-status-kicker">돌봄 현황</div><div className="care-status-scope">{boot.children.map(childItem => <button key={childItem.id} className={careStatusChild === childItem.id ? 'active' : ''} onClick={() => setCareStatusChild(careStatusChild === childItem.id ? '' : childItem.id)}>{childItem.name}</button>)}</div></div>
       <section className="care-status-panel">
         <div className="care-status-title"><span className="care-avatar">{movingAssignment ? member(movingAssignment.assignee_id).slice(0, 1) : '✓'}</span><div><strong>{movingAssignment && movingItem ? `${child(movingItem.child_id)} · ${movingItem.title}` : '진행 중인 돌봄이 없어요'}</strong><small>{movingAssignment ? `${member(movingAssignment.assignee_id)} 담당` : '현재 확정된 이동 일정이 없습니다'}</small></div><em>{movingAssignment ? '실시간' : '오늘'}</em></div>
         {!!careRouteSteps.length && <div className="care-route-assets">{careRouteSteps.map((step, index) => <Fragment key={step.id}>{index > 0 && <img src={careRouteSteps[index - 1].status === 'done' ? careDoneLine : careRouteSteps[index - 1].status === 'active' ? careActiveLine : careFutureLine} alt="" />}<span className={step.status}><img src={step.status === 'done' ? careDoneNode : step.status === 'active' ? careActiveNode : careFutureNode} alt={`${step.label} ${step.status === 'done' ? '완료' : step.status === 'active' ? '진행 중' : '예정'}`} /><small>{step.label}</small></span></Fragment>)}</div>}
@@ -1745,7 +1857,7 @@ function App() {
       </section>
       <button className={'care-state-strip ' + (activeExceptions.length ? 'danger' : 'safe')} onClick={() => go('exception')}><b>{activeExceptions.length ? '!' : '✓'}</b><span><strong>{activeExceptions.length ? '지금 확인이 필요해요' : '충돌되는 일정이 없어요'}</strong><small>{activeExceptions.length ? `${activeExceptions.length}개의 예외 상황` : '등록된 가족 일정 기준'}</small></span><em>›</em></button>
       <Section action={<button className="text-link" onClick={() => go('tasks')}>전체 이력 ›</button>}>내가 맡은 일</Section>
-      {myNext && myNextItem ? <Card className="care-duty-card exact-duty"><div><time>{formatTime(myNextItem.starts_at) || '시간 미정'}</time><span className="small-badge ok">{myNext.status === 'COMPLETED' ? '완료' : '담당'}</span></div><strong>{myNextItem.title} — {child(myNextItem.child_id)}</strong><p>{myNextItem.detail || '등록된 돌봄 일정'}</p><button aria-label="내 돌봄 상세 보기" onClick={() => { setAssignmentId(myNext.id); setViewer(myNext.assignee_id); go('assignmentDetail') }}>{myNext.status === 'COMPLETED' ? '완료 기록 보기' : '자세히'}</button><div className="care-duty-stats"><span><strong>{viewerAssignments.length}</strong><small>맡은 일</small></span><span><strong>{viewerAssignments.filter(a => a.status === 'COMPLETED').length}</strong><small>완료</small></span><span><strong>{viewerAssignments.filter(a => a.note).length}</strong><small>특이사항</small></span></div></Card> : <Empty title="오늘 맡은 일이 없어요" text="새로운 돌봄 요청이 오면 여기에 표시돼요" />}
+      {myNext && myNextItem ? <Card className="care-duty-card exact-duty"><div><time>{formatTime(myNextItem.starts_at) || '시간 미정'}</time><span className="small-badge ok">{myNext.status === 'COMPLETED' ? '완료' : '담당'}</span></div><strong>{myNextItem.title} — {child(myNextItem.child_id)}</strong><button aria-label="내 돌봄 상세 보기" onClick={() => { setAssignmentId(myNext.id); setViewer(myNext.assignee_id); go('assignmentDetail') }}>{myNext.status === 'COMPLETED' ? '완료 기록 보기' : '자세히'}</button><div className="care-duty-stats"><span><strong>{todayViewerAssignments.length}</strong><small>맡은 일</small></span><span><strong>{todayViewerAssignments.filter(a => a.status === 'COMPLETED').length}</strong><small>완료</small></span><span><strong>{todayViewerAssignments.filter(a => a.note).length}</strong><small>특이사항</small></span></div></Card> : <Empty title="오늘 맡은 일이 없어요" text="새로운 돌봄 요청이 오면 여기에 표시돼요" />}
       <Section>빠른 실행</Section><div className="care-quick-grid"><button className="urgent" onClick={() => go('emergency')}><i><img src={careEmergencyIcon} alt="" /></i><span><strong>긴급 도움 요청</strong><small>가족 전체에 도움 요청</small></span></button><button onClick={() => go('assignments')}><i><img src={careAssignmentIcon} alt="" /></i><span><strong>역할 배정</strong><small>오늘의 담당 확인</small></span></button></div>
     </>
   }
@@ -1831,7 +1943,7 @@ function App() {
   </section>
   if (boot && screen === 'emergency') page = <section className="emergency-request-page">
     <div className="care-subscreen-title"><strong>긴급 도움 요청 <Pro /></strong></div>
-    <Card className="emergency-form-card"><label className="form-label">도움이 필요한 내 돌봄</label><select className="form-control" value={emergencyItem} onChange={e => setEmergencyItem(e.target.value)}><option value="">선택하세요</option>{assignments.filter(a => a.assignee_id === me?.member.id && a.status === 'ACCEPTED').map(a => <option key={a.id} value={a.id}>{itemFor(a)?.title ?? '돌봄'} · {formatTime(itemFor(a)?.starts_at) || '시간 미정'}</option>)}</select><label className="form-label">요청 사유</label><textarea className="text-area" rows={3} value={emergencyReason} onChange={e => setEmergencyReason(e.target.value)} /><button className="outline-button wide-button emergency-voice" disabled={emergencyVoiceBusy} onClick={toggleEmergencyRecording}>{emergencyRecording ? '■ 음성 인식 끝내기' : emergencyVoiceBusy ? '음성 인식 중…' : '● 음성 인식'}</button><label className="form-label">요청을 받을 돌봄자</label><small className="emergency-recipients-hint">탭해서 받을 사람을 고르세요 · 기본은 전체 전송</small><div className="emergency-recipients">{members.filter(m => m.id !== me?.member.id).map(m => { const selected = !emergencyDeselected.has(m.id); return <button type="button" key={m.id} className={'emergency-recipient' + (selected ? ' selected' : '')} onClick={() => setEmergencyDeselected(prev => { const next = new Set(prev); if (next.has(m.id)) next.delete(m.id); else next.add(m.id); return next })}><i style={{ background: profileColorForMember(m.id) }}>{m.name.trim().slice(0, 1)}</i><small>{m.name}</small></button> })}</div></Card>
+    <Card className="emergency-form-card"><label className="form-label">도움이 필요한 내 돌봄</label><select className="form-control" value={emergencyItem} onChange={e => setEmergencyItem(e.target.value)}><option value="">선택하세요</option>{assignments.filter(a => a.assignee_id === me?.member.id && a.status === 'ACCEPTED' && itemFor(a)?.starts_at && dateKey(itemFor(a)!.starts_at!) >= todayKey && dateKey(itemFor(a)!.starts_at!) <= weekWindowEndKey).sort((left, right) => (itemFor(left)?.starts_at ?? '').localeCompare(itemFor(right)?.starts_at ?? '')).map(a => <option key={a.id} value={a.id}>{itemFor(a)?.title ?? '돌봄'} · {formatDate(itemFor(a)?.starts_at)} {formatTime(itemFor(a)?.starts_at) || '시간 미정'}</option>)}</select><label className="form-label">요청 사유</label><textarea className="text-area" rows={3} value={emergencyReason} onChange={e => setEmergencyReason(e.target.value)} /><button className="outline-button wide-button emergency-voice" disabled={emergencyVoiceBusy} onClick={toggleEmergencyRecording}>{emergencyRecording ? '■ 음성 인식 끝내기' : emergencyVoiceBusy ? '음성 인식 중…' : '● 음성 인식'}</button><label className="form-label">요청을 받을 돌봄자</label><small className="emergency-recipients-hint">탭해서 받을 사람을 고르세요 · 기본은 전체 전송</small><div className="emergency-recipients">{members.filter(m => m.id !== me?.member.id).map(m => { const selected = !emergencyDeselected.has(m.id); return <button type="button" key={m.id} className={'emergency-recipient' + (selected ? ' selected' : '')} onClick={() => setEmergencyDeselected(prev => { const next = new Set(prev); if (next.has(m.id)) next.delete(m.id); else next.add(m.id); return next })}><i style={{ background: profileColorForMember(m.id) }}>{m.name.trim().slice(0, 1)}</i><small>{m.name}</small></button> })}</div></Card>
     <button className="primary-button wide-button emergency-submit" disabled={!emergencyItem || members.filter(m => m.id !== me?.member.id && !emergencyDeselected.has(m.id)).length === 0} onClick={() => run(async () => { const recipientMemberIds = members.filter(m => m.id !== me?.member.id && !emergencyDeselected.has(m.id)).map(m => m.id); await send('/emergency-requests', 'POST', { assignment_id: emergencyItem, reason: emergencyReason.trim(), recipient_member_ids: recipientMemberIds }); const result = await api<{ requests: EmergencyRequest[] }>('/emergency-requests'); setEmergencyRequests(result.requests); setEmergencyItem(''); setEmergencyDeselected(new Set()) }, '가족에게 긴급 요청을 보냈어요')}>긴급 도움 요청 보내기</button>
     <Section>요청 현황</Section>{emergencyRequests.length ? emergencyRequests.map(r => { const original = boot.assignments.find(a => a.id === r.assignment_id); const canClaim = r.status === 'OPEN' && me?.member.id !== r.requested_by_member_id && me?.member.id !== original?.assignee_id; const canCancel = r.status === 'OPEN' && (me?.member.id === r.requested_by_member_id || !!me?.member.is_owner); return <Card key={r.id} className="urgent-card"><span className={'small-badge ' + (r.status === 'OPEN' ? 'danger' : 'ok')}>{r.status === 'OPEN' ? '응답 대기 중' : r.status === 'CLAIMED' ? '담당 확정' : '취소됨'}</span><strong>{r.item_title}</strong><p>{r.reason}</p>{r.claimed_by_member_id && <p>새 담당 · {member(r.claimed_by_member_id)}</p>}{canClaim && <button className="primary-button wide-button" onClick={() => run(async () => { await send('/emergency-requests/' + r.id + '/claim', 'POST'); setEmergencyRequests((await api<{ requests: EmergencyRequest[] }>('/emergency-requests')).requests) }, '새 담당자로 확정됐어요')}>제가 맡을게요</button>}{canCancel && <button className="outline-button wide-button" onClick={() => run(async () => { await send('/emergency-requests/' + r.id + '/cancel', 'POST'); setEmergencyRequests((await api<{ requests: EmergencyRequest[] }>('/emergency-requests')).requests) }, '긴급 요청을 취소했어요')}>요청 취소</button>}</Card> }) : <Empty title="진행 중인 긴급 요청이 없어요" text="요청이 생기면 이곳에서 응답할 수 있어요" />}
   </section>
@@ -1886,19 +1998,29 @@ function App() {
     {selectedAlbumPhoto && <AlbumLightbox photo={selectedAlbumPhoto} deleting={albumDeleteBusy} onClose={() => history.back()} onDelete={() => void deleteAlbumPhoto(selectedAlbumPhoto)} />}
     {proGateFeature && <div className="pro-gate-overlay" role="presentation" onClick={() => setProGateFeature('')}><section className="pro-gate-dialog" role="dialog" aria-modal="true" aria-label="Pro 플랜 안내" onClick={event => event.stopPropagation()}><img src={planPaymentUiIcon} alt="" /><h2>{proGateFeature}은<br />Pro에서 이용할 수 있어요</h2><p>Pro 플랜으로 전환하면 이 기능과 가족 돌봄 자동화를 바로 사용할 수 있어요.</p><button className="primary-button wide-button" onClick={() => { setProGateFeature(''); go('plan') }}>Pro 알아보기</button><button className="text-link centered" onClick={() => setProGateFeature('')}>취소</button></section></div>}
     {inviteSheetOpen && boot && <BottomSheet className="invite-quick-sheet" onDismiss={() => setInviteSheetOpen(false)}><h2>가족 구성원 초대</h2><p>역할을 고른 뒤 카카오톡으로 바로 초대 링크를 보낼 수 있어요.</p><label className="form-label">초대할 가족의 역할</label><select className="form-control" value={inviteRole} onChange={event => setInviteRole(event.target.value)}><option value="PARENT">부모</option><option value="GRANDPARENT">조부모</option><option value="CAREGIVER">돌봄 참여자</option></select>{inviteCode ? <><div className="invite-code"><strong>{inviteCode}</strong><small>만료: {formatDate(inviteExpiresAt)}</small></div><button className="kakao-share wide-button" onClick={() => void shareInvite('kakao')}><img src={inviteKakaoIcon} alt="" />카카오톡으로 초대하기</button><div className="invite-quick-options"><button onClick={() => void shareInvite('sms')}><img src={inviteMessageIcon} alt="" />문자</button><button onClick={() => void copyInvite()}><img src={inviteLinkIcon} alt="" />링크 복사</button></div></> : <div className="invite-preparing" role="status">초대 링크를 준비하고 있어요…</div>}<button className="text-link centered" onClick={() => setInviteSheetOpen(false)}>닫기</button></BottomSheet>}
-    {scheduleSheet === 'DAY' && boot && <div className="schedule-overlay" onClick={() => setScheduleSheet('NONE')}><section className="schedule-day-sheet" onClick={e => e.stopPropagation()}><header><div><small>선택한 날짜</small><h2>{new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(selectedDate + 'T12:00:00'))}</h2></div><button aria-label="날짜 일정 닫기" onClick={() => setScheduleSheet('NONE')}>×</button></header><div className="day-sheet-events">{boot.schedules.filter(s => dateKey(s.starts_at) === selectedDate && personalScheduleVisible(s.member_id)).map(s => <Card key={s.id} className="calendar-event personal"><i style={{ background: caregiverColor(s.member_id) }} /><time>{formatTime(s.starts_at)}</time><div><strong>{s.title}</strong><p>{member(s.member_id)} · {s.kind === 'WORK' ? '업무 일정' : '고정 루틴'}</p></div><span className={'caregiver-pill ' + (s.member_id === me?.member.id ? 'self' : '')}>{s.member_id === me?.member.id ? '나' : '돌봄자'}</span>{s.member_id === me?.member.id && !s.external_source && <button className="schedule-row-edit" onClick={() => openPersonalScheduleEdit(s)}>수정</button>}</Card>)}{filteredChildSchedules.filter(s => dateKey(s.starts_at) === selectedDate).map(s => { const caregiver = caregiverForChildSchedule(s.id); return <Card key={s.id} className="calendar-event"><i style={{ background: childColor(s.child_id) }} /><time>{formatTime(s.starts_at)}</time><div><strong>{s.title}</strong><p>{child(s.child_id)} · {childScheduleLabel[s.category] ?? '아이 일정'}</p></div><span className={'caregiver-pill ' + (caregiver?.status === 'ACCEPTED' ? 'confirmed' : '')}>{caregiver ? `${caregiver.status === 'ACCEPTED' ? '담당' : '요청 중'} · ${caregiver.name}` : '미배정'}</span>{me?.authenticated && <button className="schedule-row-edit" onClick={() => openChildScheduleEdit(s)}>수정</button>}</Card> })}{filteredCareSchedules.filter(i => dateKey(i.starts_at!) === selectedDate).map(i => { const caregiver = caregiverForCareItem(i.id); return <Card key={i.id} className="calendar-event"><i style={{ background: childColor(i.child_id) }} /><time>{formatTime(i.starts_at)}</time><div><strong>{i.title}</strong><p>{child(i.child_id)} · 알림장</p></div><span className={'caregiver-pill ' + (caregiver?.status === 'ACCEPTED' ? 'confirmed' : '')}>{caregiver ? `${caregiver.status === 'ACCEPTED' ? '담당' : '요청 중'} · ${caregiver.name}` : '미배정'}</span></Card> })}{calendarEventsFor(selectedDate).length === 0 && <Empty title="등록된 일정이 없어요" text="아래 + 버튼으로 이 날의 일정을 추가해보세요" />}</div><button className="day-add-button" aria-label="선택한 날짜에 일정 추가" onClick={() => { setScheduleSheet('NONE'); openScheduleRegistration() }}>＋</button></section></div>}
+    {scheduleSheet === 'DAY' && boot && <div className="schedule-overlay" onClick={() => setScheduleSheet('NONE')}><section className="schedule-day-sheet" onClick={e => e.stopPropagation()}><header><div><small>선택한 날짜</small><h2>{new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(selectedDate + 'T12:00:00'))}</h2></div><button aria-label="날짜 일정 닫기" onClick={() => setScheduleSheet('NONE')}>×</button></header><div className="day-sheet-events">{boot.schedules.filter(s => dateKey(s.starts_at) === selectedDate && personalScheduleVisible(s.member_id)).map(s => <Card key={s.id} className="calendar-event personal"><i style={{ background: caregiverColor(s.member_id) }} /><time>{formatTime(s.starts_at)}</time><div><strong>{s.title}</strong><p>{member(s.member_id)} · {s.kind === 'WORK' ? '업무 일정' : '고정 루틴'}</p></div><span className={'caregiver-pill ' + (s.member_id === me?.member.id ? 'self' : '')}>{s.member_id === me?.member.id ? '나' : '돌봄자'}</span>{s.member_id === me?.member.id && !s.external_source && <button className="schedule-row-edit" onClick={() => openPersonalScheduleEdit(s)}>수정</button>}</Card>)}{filteredChildSchedules.filter(s => dateKey(s.starts_at) === selectedDate).flatMap(s => {
+  const linkedItems = boot.items.filter(i => i.child_schedule_id === s.id)
+  const rowsForSchedule: (CareItem | null)[] = linkedItems.length > 1 ? linkedItems : [null]
+  return rowsForSchedule.map((careItem, index) => {
+    const assignment = careItem ? activeAssignmentForItem(careItem.id) : undefined
+    const caregiver = careItem ? (assignment ? { name: member(assignment.assignee_id), status: assignment.status } : null) : caregiverForChildSchedule(s.id)
+    return <Card key={s.id + '-' + index} className="calendar-event"><i style={{ background: childColor(s.child_id) }} /><time>{formatTime(careItem?.starts_at ?? s.starts_at)}</time><div><strong>{careItem?.title ?? s.title}</strong><p>{child(s.child_id)} · {childScheduleLabel[s.category] ?? '아이 일정'}</p></div><span className={'caregiver-pill ' + (caregiver?.status === 'ACCEPTED' || caregiver?.status === 'COMPLETED' ? 'confirmed' : '')}>{caregiver ? `${caregiverStatusLabel(caregiver.status)} · ${caregiver.name}` : '미배정'}</span>{me?.authenticated && <button className="schedule-row-edit" onClick={() => openChildScheduleEdit(s)}>수정</button>}</Card>
+  })
+})}{filteredCareSchedules.filter(i => dateKey(i.starts_at!) === selectedDate).map(i => { const caregiver = caregiverForCareItem(i.id); return <Card key={i.id} className="calendar-event"><i style={{ background: childColor(i.child_id) }} /><time>{formatTime(i.starts_at)}</time><div><strong>{i.title}</strong><p>{child(i.child_id)} · 알림장</p></div><span className={'caregiver-pill ' + (caregiver?.status === 'ACCEPTED' || caregiver?.status === 'COMPLETED' ? 'confirmed' : '')}>{caregiver ? `${caregiverStatusLabel(caregiver.status)} · ${caregiver.name}` : '미배정'}</span></Card> })}{calendarEventsFor(selectedDate).length === 0 && <Empty title="등록된 일정이 없어요" text="아래 + 버튼으로 이 날의 일정을 추가해보세요" />}</div><button className="day-add-button" aria-label="선택한 날짜에 일정 추가" onClick={() => { setScheduleSheet('NONE'); openScheduleRegistration() }}>＋</button></section></div>}
     {scheduleSheet === 'ADD_MENU' && boot && <div className="sheet-overlay schedule-quick-overlay" onClick={() => setScheduleSheet('NONE')}><section className="schedule-quick-menu" role="dialog" aria-modal="true" aria-label="일정 등록 방식 선택" onClick={event => event.stopPropagation()} data-figma-node="702:2203"><button className="schedule-quick-close" aria-label="등록 메뉴 닫기" onClick={() => setScheduleSheet('NONE')}>＋</button><div className="schedule-add-options"><button onClick={() => { setScheduleEntryMode('SINGLE'); setScheduleSheet('CHOOSER') }}><span><strong>일정 등록하기</strong><small>새롭게 추가된 일정을 등록해주세요</small></span></button><button onClick={() => { openNewScheduleForm(boot.children.length ? 'CHILD' : 'PERSONAL', 'REPEAT'); if (boot.children[0]) setChildScheduleChild(boot.children[0].id) }}><span><strong>루틴 설정하기</strong><small>반복되는 일정을 등록해주세요</small></span></button><button onClick={() => { setScheduleSheet('NONE'); go('capture') }}><span><strong>알림장 등록</strong><small>사진을 읽어 일정과 준비물을 정리해요</small></span></button></div></section></div>}
     {scheduleSheet === 'CHOOSER' && <BottomSheet className="schedule-chooser" onDismiss={() => setScheduleSheet('ADD_MENU')}><h2>누구의 일정인가요?</h2><p>등록할 일정의 주인을 먼저 선택해주세요.</p><div className="schedule-owner-options"><button onClick={() => openNewScheduleForm('CHILD')}><i><img src={scheduleChildIcon} alt="" /></i><strong>아이</strong><small>학원·학교·방과후 일정</small></button><button onClick={() => openNewScheduleForm('PERSONAL')}><i><img src={scheduleOwnerIcon} alt="" /></i><strong>본인</strong><small>운동·업무·개인 일정</small></button></div><button className="text-link centered" onClick={() => setScheduleSheet('ADD_MENU')}>돌아가기</button></BottomSheet>}
     {scheduleSheet === 'FORM' && boot && !editingSchedule && scheduleEntryMode === 'SINGLE' && <div className="single-schedule-overlay"><section className="single-schedule-screen" role="dialog" aria-modal="true" aria-label="일정 등록" data-figma-node="460:3102">
       <header><button aria-label="일정 등록 닫기" onClick={() => setScheduleSheet('CHOOSER')}>×</button><strong>일정 등록</strong><span>{scheduleForm === 'CHILD' ? child(childScheduleChild) : '본인'}</span></header>
-      <div className="single-schedule-context">{scheduleForm === 'CHILD' ? <><label><span>대상</span><select value={childScheduleChild} onChange={event => setChildScheduleChild(event.target.value)}>{boot.children.map(childItem => <option key={childItem.id} value={childItem.id}>{childItem.name}</option>)}</select></label><label><span>종류</span><select value={childScheduleCategory} onChange={event => setChildScheduleCategory(event.target.value)}><option value="ACADEMY">학원</option><option value="AFTER_SCHOOL">방과후</option><option value="SCHOOL">학교</option><option value="ACTIVITY">활동</option><option value="OTHER">기타</option></select></label></> : <label><span>종류</span><select value={scheduleKind} onChange={event => setScheduleKind(event.target.value as 'WORK' | 'ROUTINE')}><option value="ROUTINE">개인 일정</option><option value="WORK">업무 일정</option></select></label>}</div>
-      <div className="single-schedule-card">
-        <label className="single-title"><span>내용</span><input value={scheduleTitle} onChange={event => setScheduleTitle(event.target.value)} placeholder={scheduleForm === 'CHILD' ? '예: 현장학습, 치과 진료' : '예: 팀 워크숍'} /></label>
-        <label className="single-date"><span>날짜</span><input aria-label="일정 날짜" type="date" value={scheduleDate} onChange={event => setScheduleDate(event.target.value)} /></label>
-        <div className="single-time direct-time"><label><span>시작</span><input aria-label="일정 시작 시간" type="time" step="60" value={scheduleStartTime} onChange={event => setScheduleStartTime(event.target.value)} /></label><label><span>종료</span><input aria-label="일정 종료 시간" type="time" step="60" value={scheduleEndTime} onChange={event => setScheduleEndTime(event.target.value)} /></label></div>
+      <div className="single-schedule-scroll">
+        <div className="single-schedule-context">{scheduleForm === 'CHILD' ? <><label><span>대상</span><select value={childScheduleChild} onChange={event => setChildScheduleChild(event.target.value)}>{boot.children.map(childItem => <option key={childItem.id} value={childItem.id}>{childItem.name}</option>)}</select></label><label><span>종류</span><select value={childScheduleCategory} onChange={event => setChildScheduleCategory(event.target.value)}><option value="ACADEMY">학원</option><option value="AFTER_SCHOOL">방과후</option><option value="SCHOOL">학교</option><option value="ACTIVITY">활동</option><option value="OTHER">기타</option></select></label></> : <label><span>종류</span><select value={scheduleKind} onChange={event => setScheduleKind(event.target.value as 'WORK' | 'ROUTINE')}><option value="ROUTINE">개인 일정</option><option value="WORK">업무 일정</option></select></label>}</div>
+        <div className="single-schedule-card">
+          <label className="single-title"><span>내용</span><input value={scheduleTitle} onChange={event => setScheduleTitle(event.target.value)} placeholder={scheduleForm === 'CHILD' ? '예: 현장학습, 치과 진료' : '예: 팀 워크숍'} /></label>
+          <label className="single-date"><span>날짜</span><input aria-label="일정 날짜" type="date" value={scheduleDate} onChange={event => setScheduleDate(event.target.value)} /></label>
+          <div className="single-time direct-time"><label><span>시작</span><input aria-label="일정 시작 시간" type="time" step="60" value={scheduleStartTime} onChange={event => setScheduleStartTime(event.target.value)} /></label><label><span>종료</span><input aria-label="일정 종료 시간" type="time" step="60" value={scheduleEndTime} onChange={event => setScheduleEndTime(event.target.value)} /></label></div>
+        </div>
+        <div className={'single-collision ' + (schedulePreviewCollision ? 'danger' : 'safe')}><strong>{schedulePreviewCollision ? '가족 일정과 시간이 겹쳐요' : '겹치는 가족 일정이 없어요'}</strong>{schedulePreviewCollision ? <><b>{formatTime(schedulePreviewCollision.startsAt)} {schedulePreviewCollision.title}</b><p>저장하면 대체 담당자를 바로 찾아드릴게요.</p></> : <p>현재 등록된 가족 일정 기준입니다.</p>}</div>
+        {scheduleForm === 'PERSONAL' && <button className="single-work-toggle" onClick={() => setScheduleKind(value => value === 'WORK' ? 'ROUTINE' : 'WORK')}><span><strong>업무 일정으로 등록</strong><small>가족 일정 충돌 확인에만 사용</small></span><i className={'switch ' + (scheduleKind === 'WORK' ? 'on' : '')}><span /></i></button>}
       </div>
-      <div className={'single-collision ' + (schedulePreviewCollision ? 'danger' : 'safe')}><strong>{schedulePreviewCollision ? '가족 일정과 시간이 겹쳐요' : '겹치는 가족 일정이 없어요'}</strong>{schedulePreviewCollision ? <><b>{formatTime(schedulePreviewCollision.startsAt)} {schedulePreviewCollision.title}</b><p>저장하면 대체 담당자를 바로 찾아드릴게요.</p></> : <p>현재 등록된 가족 일정 기준입니다.</p>}</div>
-      {scheduleForm === 'PERSONAL' && <button className="single-work-toggle" onClick={() => setScheduleKind(value => value === 'WORK' ? 'ROUTINE' : 'WORK')}><span><strong>업무 일정으로 등록</strong><small>가족 일정 충돌 확인에만 사용</small></span><i className={'switch ' + (scheduleKind === 'WORK' ? 'on' : '')}><span /></i></button>}
       <button className="single-schedule-save" aria-label="이 일정 등록" onClick={() => saveSchedule()}>저장</button>
     </section></div>}
     {scheduleSheet === 'FORM' && boot && !editingSchedule && scheduleEntryMode === 'REPEAT' && <div className="routine-screen-overlay"><section className="routine-screen" role="dialog" aria-modal="true" aria-label="루틴 등록" data-figma-node="557:1551">
