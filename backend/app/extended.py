@@ -49,7 +49,7 @@ APP_CAPABILITIES = [
     {"screen": "notifications", "name": "알림함", "description": "배정 요청, 수락 결과, 인수인계 알림"},
     {"screen": "familyHub", "name": "가족", "description": "가족 설정과 정보 공개"},
     {"screen": "members", "name": "가족 구성원", "description": "재사용 가능한 초대 링크, 구성원 관리"},
-    {"screen": "album", "name": "우리집 기록함", "description": "날짜별 사진과 돌봄 완료 사진"},
+    {"screen": "album", "name": "모음ZIP", "description": "날짜별 사진과 돌봄 완료 사진"},
     {"screen": "programs", "name": "돌봄 제도", "description": "구성원별 지역의 아동 돌봄 혜택과 기관"},
     {"screen": "plan", "name": "플랜·결제", "description": "Free·Pro 기능과 토스 결제"},
 ]

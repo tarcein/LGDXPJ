@@ -26,7 +26,7 @@ export function MobileStatusBar() {
 export function AppHeader({ familyName, memberName, profileColor, contextLine, unread, onNavigate, onOpenThinQHomes }: ChromeProps) {
   return <header className="app-header">
     <button className="family-switcher" aria-label={`${familyName} 홈 선택`} onClick={onOpenThinQHomes}>
-      <strong>{familyName}</strong><img className="service-switch-icon" src={serviceSwitchIcon} alt="" /><small>{contextLine || 'Family Care'}</small>
+      <strong>{familyName}</strong><img className="service-switch-icon" src={serviceSwitchIcon} alt="" /><small>{contextLine || 'ZIPPY'}</small>
     </button>
     <button className="header-bell" aria-label="알림함" onClick={() => onNavigate('notifications')}><img src={bellIcon} alt="" />{unread > 0 && <i>{unread}</i>}</button>
     <button className="header-profile" aria-label={`${memberName || '내'} 정보 공개 설정`} onClick={() => onNavigate('permissions')}><span style={{ background: profileColor }}>{(memberName || '나').trim().slice(0, 1)}</span></button>
@@ -42,7 +42,7 @@ const navItems: { screen: Screen; label: string; icon: string; className?: strin
 ]
 
 export function BottomNav({ screen, onNavigate }: Pick<ChromeProps, 'screen' | 'onNavigate'>) {
-  return <nav className="bottom-nav" aria-label="Family Care 주요 메뉴">{navItems.map(item => {
+  return <nav className="bottom-nav" aria-label="ZIPPY 주요 메뉴">{navItems.map(item => {
     const active = item.active.includes(screen)
     return <button key={item.screen} aria-current={active ? 'page' : undefined} className={active ? 'active' : ''} onClick={() => onNavigate(item.screen)}>
       <span className={`nav-icon ${item.className ?? ''}`.trim()} style={{ WebkitMaskImage: `url("${item.icon}")`, maskImage: `url("${item.icon}")` }} />{item.label}

@@ -96,7 +96,7 @@ try {
       ? { plan: 'PRO', status: 'ACTIVE', developer_preview: false, dev_switch_available: joined, current_period_end: '2026-10-17T12:00:00+09:00', next_billing_at: subscriptionCanceled ? null : '2026-10-17T12:00:00+09:00', cancel_at_period_end: subscriptionCanceled, canceled_at: subscriptionCanceled ? new Date().toISOString() : null, auto_renew_available: true, renewal_mode: 'AUTO_BILLING' }
       : { plan: family.plan, status: family.plan === 'PRO' ? 'DEV_PREVIEW' : 'NOT_SUBSCRIBED', developer_preview: family.plan === 'PRO', dev_switch_available: joined, current_period_end: null, next_billing_at: null, cancel_at_period_end: false, canceled_at: null, auto_renew_available: false, renewal_mode: 'ONE_TIME' }
     else if (path === '/api/billing/config') body = { provider: 'TOSS', configured: true, integration_mode: 'WIDGET', client_key: 'test_gck_qa', customer_key: 'qa-customer', amount: 7900, currency: 'KRW', status: 'PENDING', next_billing_at: null }
-    else if (path === '/api/billing/orders' && method === 'POST') body = { provider: 'TOSS', configured: true, integration_mode: 'WIDGET', client_key: 'test_gck_qa', customer_key: 'qa-customer', amount: 7900, currency: 'KRW', status: 'PENDING', next_billing_at: null, order_id: 'FC-QA-ORDER', order_name: 'Family Care Pro 월 이용권' }
+    else if (path === '/api/billing/orders' && method === 'POST') body = { provider: 'TOSS', configured: true, integration_mode: 'WIDGET', client_key: 'test_gck_qa', customer_key: 'qa-customer', amount: 7900, currency: 'KRW', status: 'PENDING', next_billing_at: null, order_id: 'FC-QA-ORDER', order_name: 'ZIPPY Pro 월 이용권' }
     else if (path === '/api/billing/cancel' && method === 'POST') { subscriptionCanceled = true; body = { plan: 'PRO', status: 'ACTIVE', cancel_at_period_end: true, auto_renew_available: true, current_period_end: '2026-10-17T12:00:00+09:00', next_billing_at: null } }
     else if (path === '/api/billing/resume' && method === 'POST') { subscriptionCanceled = false; body = { plan: 'PRO', status: 'ACTIVE', cancel_at_period_end: false, auto_renew_available: true, current_period_end: '2026-10-17T12:00:00+09:00', next_billing_at: '2026-10-17T12:00:00+09:00' } }
     else if (path === '/api/dev/preview-plan' && method === 'POST') { family.plan = request.postDataJSON().plan; body = { plan: family.plan, status: family.plan === 'PRO' ? 'DEV_PREVIEW' : 'NOT_SUBSCRIBED', developer_preview: family.plan === 'PRO', dev_switch_available: true, current_period_end: null, next_billing_at: null, cancel_at_period_end: false, canceled_at: null, auto_renew_available: false, renewal_mode: 'ONE_TIME' } }
@@ -114,7 +114,7 @@ try {
   await page.getByRole('button', { name: /가족의 돌봄을 알아서/ }).click()
   await page.getByRole('button', { name: /가족방 지금 만들기/ }).waitFor()
   const thinqLogos = page.locator('.thinq-agent-banner > img, .thinq-family-fab img, .thinq-family-home > img')
-  if (await thinqLogos.count() !== 3 || !await thinqLogos.evaluateAll(images => images.every(image => image.currentSrc.includes('assistant-main-logo-centered')))) throw new Error('ThinQ 홈과 홈 선택 화면의 Family Care 로고가 통일되지 않았어요')
+  if (await thinqLogos.count() !== 3 || !await thinqLogos.evaluateAll(images => images.every(image => image.currentSrc.includes('assistant-main-logo-centered')))) throw new Error('ThinQ 홈과 홈 선택 화면의 ZIPPY 로고가 통일되지 않았어요')
   await page.setViewportSize({ width: 390, height: 844 })
   await page.screenshot({ path: join(tmpdir(), 'lgdx-mobile-thinq-selector.png') })
   await page.setViewportSize({ width: 1200, height: 840 })
@@ -139,19 +139,19 @@ try {
   await page.getByRole('button', { name: '카카오톡 등으로 초대 링크 공유' }).waitFor()
   const sameDayStart = childSchedules[0].starts_at
   for (const [index, title] of ['피아노', '치과', '도서관'].entries()) childSchedules.push({ ...childSchedules[0], id: `qa-extra-event-${index}`, title, starts_at: new Date(new Date(sameDayStart).getTime() + (index + 1) * 3600000).toISOString(), ends_at: new Date(new Date(sameDayStart).getTime() + (index + 2) * 3600000).toISOString() })
-  await page.getByRole('button', { name: 'Family Care 시작하기' }).click()
+  await page.getByRole('button', { name: 'ZIPPY 시작하기' }).click()
   if (!children.some(child => child.name === '지우')) throw new Error('온보딩 아이 등록 API가 반영되지 않았어요')
   await page.locator('.figma-home').waitFor()
   await page.locator('.screen-index').getByRole('button', { name: 'ThinQ 홈' }).click()
   await page.locator('.thinq-home-picker').click()
-  await page.getByRole('button', { name: /Family Care 가족방/ }).click()
+  await page.getByRole('button', { name: /ZIPPY 가족방/ }).click()
   await page.locator('.service-loading').waitFor()
   await page.locator('.app-header').waitFor()
   await page.locator('.family-switcher').click()
-  await page.getByRole('button', { name: /Family Care 가족방/ }).waitFor()
+  await page.getByRole('button', { name: /ZIPPY 가족방/ }).waitFor()
   if (!await page.locator('.figma-home').count() || await page.locator('.thinq-entry').count()) throw new Error('가족방 홈 선택창을 열 때 현재 앱 배경이 ThinQ 홈으로 바뀌어요')
   if (await page.locator('.header-profile').innerText() !== owner.name.slice(0, 1)) throw new Error('우측 상단 프로필에 사용자 성이 표시되지 않아요')
-  await page.getByRole('button', { name: /Family Care 가족방/ }).click()
+  await page.getByRole('button', { name: /ZIPPY 가족방/ }).click()
   await page.locator('.thinq-selector-shade').waitFor({ state: 'hidden' })
   await page.locator('.app-header').waitFor()
   await page.locator('.screen-index').getByRole('button', { name: '알림장 등록' }).click()
@@ -197,7 +197,7 @@ try {
   await page.getByText(/까지 Pro 이용 가능/).waitFor()
   await page.getByRole('button', { name: '자동 갱신 다시 켜기' }).click()
   await page.getByText('Pro 이용 중', { exact: true }).waitFor()
-  for (const label of ['ThinQ 홈', '잠금화면 동선', '홈', '알림장·돌봄 정보', '추출 결과 확인', '오늘의 배정', '배정 제안', '오늘 할 일', '개인 일정', '예외 상황', '알림함', '온보딩', '캘린더 연동', '가족 구성원', '정보 공개 권한', '알림 설정', '플랜 비교', 'AI 채팅', '긴급 요청', '돌봄 동선', '돌봄 공백 예측', '우리집 기록함', '돌봄 제도']) {
+  for (const label of ['ThinQ 홈', '잠금화면 동선', '홈', '알림장·돌봄 정보', '추출 결과 확인', '오늘의 배정', '배정 제안', '오늘 할 일', '개인 일정', '예외 상황', '알림함', '온보딩', '캘린더 연동', '가족 구성원', '정보 공개 권한', '알림 설정', '플랜 비교', 'AI 채팅', '긴급 요청', '돌봄 동선', '돌봄 공백 예측', '모음ZIP', '돌봄 제도']) {
     await page.locator('.screen-index').getByRole('button', { name: label, exact: true }).click()
     await page.waitForTimeout(80)
     if (label === '잠금화면 동선' && await page.locator('.lockscreen-status').count()) throw new Error('잠금화면 목업에 OS 상태바가 남아 있어요')
@@ -373,8 +373,8 @@ try {
   if (await page.locator('.success-toast').count()) await page.locator('.success-toast').waitFor({ state: 'hidden' })
   await page.screenshot({ path: join(tmpdir(), 'lgdx-mobile-family.png') })
   await page.locator('.hub-list').getByRole('button', { name: /가족 설정/ }).waitFor()
-  await page.locator('.hub-list').getByRole('button', { name: /우리집 기록함/ }).waitFor()
-  await page.getByRole('button', { name: /우리집 기록함/ }).click()
+  await page.locator('.hub-list').getByRole('button', { name: /모음ZIP/ }).waitFor()
+  await page.getByRole('button', { name: /모음ZIP/ }).click()
   await page.locator('.album-folder-card').first().click()
   await page.getByText('무릎에 작은 상처가 있어요').waitFor()
   const [albumChooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByText('＋ 사진 선택').click()])
@@ -382,9 +382,9 @@ try {
   await page.locator('.album-grid button').nth(1).waitFor()
   await page.reload({ waitUntil: 'networkidle' })
   await page.locator('.thinq-home-picker').click()
-  await page.getByRole('button', { name: /Family Care 가족방/ }).click()
+  await page.getByRole('button', { name: /ZIPPY 가족방/ }).click()
   await page.locator('.bottom-nav button').nth(3).click()
-  await page.getByRole('button', { name: /우리집 기록함/ }).click()
+  await page.getByRole('button', { name: /모음ZIP/ }).click()
   await page.locator('.album-folder-card').first().click()
   if (await page.locator('.album-grid button').count() !== 2) throw new Error('새로고침 뒤 앨범 사진이 유지되지 않아요')
   await page.locator('.album-grid button').first().click()
@@ -403,7 +403,7 @@ try {
   const moreServiceCards = await page.locator('.more-list > button').evaluateAll(cards => cards.map(card => ({ width: card.getBoundingClientRect().width, overflow: card.scrollWidth - card.clientWidth })))
   if (moreServiceCards.length !== 2 || moreServiceCards.some(card => card.width < 300 || card.overflow > 1)) throw new Error('더보기 혜택·부가서비스 카드가 모바일 전체 너비에 맞지 않아요: ' + JSON.stringify(moreServiceCards))
   await page.getByText('Free / Pro 화면 전환').waitFor()
-  if (await page.getByRole('button', { name: /우리집 기록함/ }).count()) throw new Error('더보기 탭에 우리집 기록함 메뉴가 남아 있어요')
+  if (await page.getByRole('button', { name: /모음ZIP/ }).count()) throw new Error('더보기 탭에 모음ZIP 메뉴가 남아 있어요')
   if (await page.locator('.bottom-nav button.active').count() !== 1) throw new Error('하단바 선택 상태가 중복돼요')
   await page.getByRole('button', { name: /돌봄 제도 안내/ }).click()
   await page.getByRole('textbox', { name: '혜택 지역 시·도' }).fill('서울특별시')

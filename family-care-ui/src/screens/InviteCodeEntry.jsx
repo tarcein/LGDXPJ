@@ -7,7 +7,7 @@ import { Button } from "../components/ui.jsx";
  * 원본: images/535d24b0f877902f0b1afcf8badde6fb21ce1c95 (혹시 이미 가족이 이 서비스를 쓰고 있나요?)
  *
  * @param {() => void} onBack
- * @param {(code: string) => void} onJoin - "가족 케어에 합류"
+ * @param {(code: string) => void} onJoin - "ZIPPY에 합류"
  * @param {() => void} onFirstTime - "아니요, 제가 처음이에요"
  */
 export default function InviteCodeEntry({ onBack, onJoin, onFirstTime }) {
@@ -52,7 +52,7 @@ export default function InviteCodeEntry({ onBack, onJoin, onFirstTime }) {
             ))}
           </div>
           <Button className="mt-4" onClick={() => onJoin?.(code.join(""))}>
-            가족 케어에 합류
+            ZIPPY에 합류
           </Button>
         </div>
 
@@ -70,7 +70,7 @@ export default function InviteCodeEntry({ onBack, onJoin, onFirstTime }) {
         </button>
 
         <div className="mt-4 rounded-2xl bg-surfaceAlt p-4 text-[12.5px] leading-relaxed text-ink-soft">
-          이 코드는 홈 코드와 별개입니다. 같은 집에 살아도 가족 케어에는 참여하지 않을 수 있고,
+          이 코드는 홈 코드와 별개입니다. 같은 집에 살아도 ZIPPY에는 참여하지 않을 수 있고,
           따로 사는 조부모도 참여할 수 있습니다.
         </div>
       </div>

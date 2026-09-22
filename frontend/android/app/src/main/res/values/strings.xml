@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">LG 가족 운영</string>
-    <string name="title_activity_main">LG 가족 운영</string>
+    <string name="app_name">ZIPPY</string>
+    <string name="title_activity_main">ZIPPY</string>
     <string name="package_name">com.lgdx.family</string>
     <string name="custom_url_scheme">com.lgdx.family</string>
 </resources>

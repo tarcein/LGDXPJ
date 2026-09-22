@@ -68,7 +68,7 @@ export default function VoiceNote({ onBack, onSubmit }) {
           <button className="mt-4 flex w-full items-center justify-between rounded-2xl border border-line/70 bg-white px-4 py-3.5 shadow-card">
             <div className="text-left">
               <div className="text-[14.5px] font-semibold text-ink">사진 첨부 (선택)</div>
-              <div className="text-[12.5px] text-ink-soft">패밀리 앨범에 자동 정리됩니다</div>
+              <div className="text-[12.5px] text-ink-soft">모음ZIP에 자동 정리됩니다</div>
             </div>
             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-surfaceAlt text-[15px] text-ink-soft">
               +

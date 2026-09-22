@@ -32,7 +32,7 @@ type HomeSelectorProps = {
 }
 
 export function ThinQHomeSelector({ hasFamily, onClose, onSelectThinQHome, onSelectFamily, onStartOnboarding, familyName = '민솔이네 집' }: HomeSelectorProps) {
-  return <div className="thinq-selector-shade" onClick={onClose}><section className="thinq-selector-sheet" role="dialog" aria-modal="true" aria-label="홈 선택" onClick={event => event.stopPropagation()}><i /><header><h2>홈 선택</h2></header><button className="thinq-selected-home" onClick={onSelectThinQHome}><img src={thinqHomeCheck} alt="선택됨" /><strong>이지윤 홈</strong></button><h3>Family Care</h3><button className="thinq-family-home" onClick={hasFamily ? onSelectFamily : onStartOnboarding}><img src={thinqFamilyRoom} alt="" /><strong>{hasFamily ? familyName : '+ 지금 만들기'}</strong></button></section></div>
+  return <div className="thinq-selector-shade" onClick={onClose}><section className="thinq-selector-sheet" role="dialog" aria-modal="true" aria-label="홈 선택" onClick={event => event.stopPropagation()}><i /><header><h2>홈 선택</h2></header><button className="thinq-selected-home" onClick={onSelectThinQHome}><img src={thinqHomeCheck} alt="선택됨" /><strong>이지윤 홈</strong></button><h3>ZIPPY</h3><button className="thinq-family-home" onClick={hasFamily ? onSelectFamily : onStartOnboarding}><img src={thinqFamilyRoom} alt="" /><strong>{hasFamily ? familyName : '+ 지금 만들기'}</strong></button></section></div>
 }
 
 function ThinQAgentMark() {
@@ -63,7 +63,7 @@ export function ThinQEntry({ selectorOpen, hasFamily, onOpenSelector, onCloseSel
 }
 
 export function ServiceLoading() {
-  return <div className="service-loading" role="status" aria-live="polite"><span className="service-loading-character">{[serviceLoading1, serviceLoading2, serviceLoading3].map((source, index) => <img key={source} src={source} alt="" style={{ animationDelay: `${index * .32}s` }} />)}</span><strong>Family Care</strong><p>가족의 오늘을 불러오고 있어요</p><i /></div>
+  return <div className="service-loading" role="status" aria-live="polite"><span className="service-loading-character">{[serviceLoading1, serviceLoading2, serviceLoading3].map((source, index) => <img key={source} src={source} alt="" style={{ animationDelay: `${index * .32}s` }} />)}</span><strong>ZIPPY</strong><p>가족의 오늘을 불러오고 있어요</p><i /></div>
 }
 
 export function LockscreenPreview({ onOpen }: { onOpen: () => void }) {

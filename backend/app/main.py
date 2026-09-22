@@ -126,12 +126,18 @@ async def lifespan(_app: FastAPI):
                 await reminder_task
 
 
-app = FastAPI(title="LG 가족 운영 에이전트 데모 API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="ZIPPY 가족 돌봄 API", version="0.1.0", lifespan=lifespan)
+_configured_origins = [
+    origin.strip().rstrip("/")
+    for origin in [setting("FRONTEND_URL"), *setting("CORS_ORIGINS").split(",")]
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173", "http://127.0.0.1:5173",
         "http://localhost", "https://localhost", "capacitor://localhost",
+        *_configured_origins,
     ],
     allow_origin_regex=r"^http://(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}):5173$",
     allow_methods=["GET", "POST", "PATCH", "DELETE"],

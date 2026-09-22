@@ -4,7 +4,7 @@ import { Button } from "../components/ui.jsx";
 
 /**
  * 다크 배경 알림 카드 — 며느리의 등원 요청을 수락/거절하는 화면
- * 원본: images/0152b0044de98fefa71c81b6a38b4329e371746f (가족 케어 알림 카드)
+ * 원본: images/0152b0044de98fefa71c81b6a38b4329e371746f (ZIPPY 알림 카드)
  */
 export default function CareNotifyCard({ onAccept, onDecline, onCall }) {
   const details = [
@@ -26,7 +26,7 @@ export default function CareNotifyCard({ onAccept, onDecline, onCall }) {
                 />
               </svg>
             </div>
-            <span className="text-[16px] font-semibold text-white">가족 케어</span>
+            <span className="text-[16px] font-semibold text-white">ZIPPY</span>
           </div>
           <span className="text-[13px] text-white/50">방금</span>
         </div>

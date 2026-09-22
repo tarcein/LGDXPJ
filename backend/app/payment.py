@@ -120,7 +120,7 @@ def _charge(db, subscription: dict, billing_key: str, *, target_family_id: str |
         "customerKey": subscription["customer_key"],
         "amount": amount,
         "orderId": order_id,
-        "orderName": "Family Care Pro 월 구독",
+        "orderName": "ZIPPY Pro 월 구독",
     }, idempotency_key=f"billing-{order_id}")
     status = str(payment.get("status") or "UNKNOWN")
     if status != "DONE":
@@ -341,7 +341,7 @@ def create_widget_order():
     return {
         "provider": "TOSS", "integration_mode": "WIDGET", "configured": True,
         "client_key": setting("TOSS_BILLING_CLIENT_KEY"), "customer_key": subscription["customer_key"],
-        "order_id": order_id, "order_name": "Family Care Pro 월 이용권",
+        "order_id": order_id, "order_name": "ZIPPY Pro 월 이용권",
         "amount": int(subscription["amount"]), "currency": "KRW", "status": subscription["status"],
         "next_billing_at": subscription.get("next_billing_at"),
     }

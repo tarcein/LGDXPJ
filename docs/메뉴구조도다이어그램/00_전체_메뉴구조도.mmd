@@ -1,7 +1,7 @@
-%% LG 가족 운영 에이전트 전체 메뉴구조도
+%% ZIPPY 전체 메뉴구조도
 %%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 18, "rankSpacing": 28, "curve": "basis"}}}%%
 flowchart TB
-  root["LG 가족 운영 에이전트"]
+  root["ZIPPY"]
 
   subgraph homeRow[" "]
     direction LR
@@ -60,7 +60,7 @@ flowchart TB
     direction LR
     benefits(["혜택·부가 서비스"])
     careGap["돌봄 공백"] --> s16[["돌봄 공백 예측 화면<br/>SCR-16<br/>FR-033"]]
-    familyContent["가족 콘텐츠"] --> s17[["패밀리 앨범 화면<br/>SCR-17<br/>FR-034"]]
+    familyContent["가족 콘텐츠"] --> s17[["모음ZIP 화면<br/>SCR-17<br/>FR-034"]]
     supportPolicy["지원 제도"] --> s18[["돌봄 제도 안내 화면<br/>SCR-18<br/>FR-035"]]
     benefits --> careGap
     benefits --> familyContent

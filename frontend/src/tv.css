@@ -27,7 +27,7 @@
 @keyframes tv-side-in { from { opacity: 0; transform: translateX(22px); } to { opacity: 1; transform: translateX(0); } } @keyframes tv-side-pulse { from { box-shadow: 0 18px 45px #00000045; } to { box-shadow: 0 18px 45px #00000045, 0 0 0 8px #ff6b6224; } }
 @media (max-width: 760px) { .tv-alert, .tv-alert-tier-1, .tv-alert-tier-2, .tv-alert-tier-3, .tv-alert-tier-4 { right: 20px; bottom: 70px; left: 20px; top: auto; width: auto; transform: none; }.tv-alert-tier-4 h1 { font-size: 24px; } }
 
-/* The demo view is a full-screen broadcast; Family Care appears only in alert cards. */
+/* The demo view is a full-screen broadcast; ZIPPY appears only in alert cards. */
 .tv-display { position: relative; width: 100vw; height: 100vh; min-height: 100vh; background: #060b12; }
 .tv-header { position: absolute; z-index: 2; top: 24px; right: 34px; left: 34px; padding: 0; background: transparent; border: 0; }
 .tv-channel strong { text-shadow: 0 2px 8px #000; }.tv-channel small { color: #e4edf6; text-shadow: 0 2px 8px #000; }.tv-header-status { color: #fff; text-shadow: 0 2px 8px #000; }

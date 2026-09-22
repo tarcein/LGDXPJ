@@ -38,7 +38,7 @@ export default function InviteFamily({ onBack, onSkip, onAddAsCoParent, onChange
             <Avatar name="김" tone="bg-line" />
             <div>
               <div className="text-[15px] font-semibold text-ink">
-                김도현님을 가족 케어에도 추가할까요?
+                김도현님을 ZIPPY에도 추가할까요?
               </div>
               <div className="mt-0.5 text-[12.5px] text-ink-soft">
                 연결된 계정 그대로 · 재입력 없음
@@ -83,7 +83,7 @@ export default function InviteFamily({ onBack, onSkip, onAddAsCoParent, onChange
         <div className="mt-3 rounded-2xl bg-surfaceAlt p-4">
           <div className="text-[13px] font-bold text-warning">권한은 분리됩니다</div>
           <div className="mt-1 text-[12.5px] leading-snug text-ink-soft">
-            가족 케어에 초대해도 가전 제어 권한은 따라가지 않습니다.
+            ZIPPY에 초대해도 가전 제어 권한은 따라가지 않습니다.
           </div>
         </div>
 

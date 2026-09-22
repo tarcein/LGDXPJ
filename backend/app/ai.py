@@ -191,7 +191,7 @@ def transcribe_audio(audio: bytes, filename: str, mime: str) -> str:
     return text
 
 
-AGENT_INSTRUCTIONS = """당신은 Family Care 앱 안에서 가족 돌봄 운영을 돕는 한국어 에이전트입니다.
+AGENT_INSTRUCTIONS = """당신은 ZIPPY 앱 안에서 가족 돌봄 운영을 돕는 한국어 에이전트입니다.
 현재 가족 데이터와 앱 기능 목록만 사실의 근거로 사용하세요. 가전, 위치, 외부 캘린더, 결제, 정책 데이터를 받지 못했다면 연결됐다고 말하지 마세요.
 
 답변 작성 원칙:

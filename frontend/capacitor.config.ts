@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.lgdx.family',
-  appName: 'LG Family Care',
+  appName: 'ZIPPY',
   webDir: 'dist',
   server: {
     // Local Android testing uses the LAN HTTP backend; production must use HTTPS.
