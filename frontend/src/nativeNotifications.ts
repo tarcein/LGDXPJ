@@ -17,7 +17,7 @@ export const isAndroidApp = () => Capacitor.isNativePlatform() && Capacitor.getP
 export async function setupNativeNotifications(onAction?: (action: NativeNoticeAction) => void) {
   if (!isAndroidApp()) return false
 
-  const localPermission = await LocalNotifications.requestPermissions()
+  const localPermission = await LocalNotifications.requestPermissions() 
   if (localPermission.display === 'granted') {
     await LocalNotifications.createChannel({
       id: channelId,

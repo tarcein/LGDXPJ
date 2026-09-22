@@ -373,7 +373,7 @@ def register_push_token(payload: PushTokenCreate):
 
 
 @app.get("/api/bootstrap")
-def bootstrap():
+def bootstrap(tv: bool = False):
     utc_now = datetime.now(timezone.utc)
     online_cutoff = (utc_now - timedelta(minutes=2)).isoformat()
     with database() as db:
@@ -416,9 +416,9 @@ def bootstrap():
                 db,
                 """SELECT * FROM notification WHERE family_id = ?
                    AND (member_id IS NULL OR member_id = ?) ORDER BY created_at DESC"""
-                if authenticated() else
+                if authenticated() and not tv else
                 "SELECT * FROM notification WHERE family_id = ? ORDER BY created_at DESC",
-                (family_id(), current_member_id()) if authenticated() else (family_id(),),
+                (family_id(), current_member_id()) if authenticated() and not tv else (family_id(),),
             ),
             "permissions": rows(db, "SELECT p.* FROM family_data_permission p JOIN family_member m ON m.id = p.member_id WHERE m.family_id = ?", (family_id(),)),
             "notification_preferences": rows(db, "SELECT p.* FROM notification_preference p JOIN family_member m ON m.id = p.member_id WHERE m.family_id = ?", (family_id(),)),
@@ -824,12 +824,24 @@ def delete_child_schedule(schedule_id: str, delete_scope: str = "SINGLE"):
         }
         for care_items in care_items_by_schedule.values():
             for care_item in care_items:
-                if db.execute("SELECT 1 FROM care_assignment WHERE item_id = ? AND family_id = ?", (care_item["id"], family_id())).fetchone():
+                if db.execute(
+                    "SELECT 1 FROM care_assignment WHERE item_id = ? AND family_id = ? "
+                    "AND status IN ('PROPOSED', 'CANDIDATE_ACCEPTED', 'ACCEPTED')",
+                    (care_item["id"], family_id()),
+                ).fetchone():
                     raise HTTPException(409, "담당자가 배정된 아이 일정은 담당 요청을 먼저 정리해주세요")
         for target in targets:
             for care_item in care_items_by_schedule[target["id"]]:
                 db.execute("DELETE FROM notification WHERE family_id = ? AND action_type = 'CARE_SUGGESTION' AND action_id = ?",
                            (family_id(), care_item["id"]))
+                # Completed/cancelled assignments no longer block deletion, but their
+                # foreign-key dependants must be detached or removed first.
+                db.execute("UPDATE media_asset SET assignment_id = NULL WHERE family_id = ? AND assignment_id IN (SELECT id FROM care_assignment WHERE item_id = ?)", (family_id(), care_item["id"]))
+                db.execute("DELETE FROM emergency_request WHERE family_id = ? AND assignment_id IN (SELECT id FROM care_assignment WHERE item_id = ?)", (family_id(), care_item["id"]))
+                db.execute("DELETE FROM device_alert_outbox WHERE family_id = ? AND assignment_id IN (SELECT id FROM care_assignment WHERE item_id = ?)", (family_id(), care_item["id"]))
+                db.execute("DELETE FROM care_exception WHERE family_id = ? AND assignment_id IN (SELECT id FROM care_assignment WHERE item_id = ?)", (family_id(), care_item["id"]))
+                db.execute("DELETE FROM care_handoff WHERE family_id = ? AND assignment_id IN (SELECT id FROM care_assignment WHERE item_id = ?)", (family_id(), care_item["id"]))
+                db.execute("DELETE FROM care_assignment WHERE family_id = ? AND item_id = ?", (family_id(), care_item["id"]))
                 db.execute("DELETE FROM care_item WHERE id = ? AND family_id = ?", (care_item["id"], family_id()))
             db.execute("DELETE FROM child_schedule WHERE id = ? AND family_id = ?", (target["id"], family_id()))
         return {"deleted": True, "schedule_id": schedule_id,
