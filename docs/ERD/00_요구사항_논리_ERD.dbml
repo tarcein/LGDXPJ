@@ -305,3 +305,57 @@ Table calendar_connection {
   connected_at datetime [not null]
   synced_at datetime
 }
+
+TableGroup A_family_members_children {
+  family_group
+  family_location
+  family_member
+  child
+}
+
+TableGroup B_auth_invitation {
+  family_invite_link
+  family_session
+}
+
+TableGroup C_schedules {
+  personal_schedule
+  child_schedule
+}
+
+TableGroup D_care_pipeline {
+  care_intake
+  care_item
+  care_assignment
+  care_exception
+  care_handoff
+}
+
+TableGroup E_notifications_settings {
+  notification
+  family_data_permission
+  notification_preference
+}
+
+TableGroup F_usage_ai {
+  daily_usage
+  assistant_message
+}
+
+TableGroup G_emergency_media_devices {
+  emergency_request
+  media_asset
+  device_alert_outbox
+  push_device_token
+}
+
+TableGroup H_benefits_subscription_payment {
+  member_benefit_location
+  family_subscription
+  payment_transaction
+}
+
+TableGroup I_calendar_integration {
+  calendar_oauth_state
+  calendar_connection
+}

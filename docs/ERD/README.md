@@ -9,6 +9,8 @@
 - 구현 물리 ERD DBML: [`01_구현스키마_ERD.dbml`](./01_구현스키마_ERD.dbml)
 - MVP 핵심 기능 ERD 원본: [`02_MVP_핵심기능_ERD.mmd`](./02_MVP_핵심기능_ERD.mmd)
 - MVP 핵심 기능 DBML: [`02_MVP_핵심기능_ERD.dbml`](./02_MVP_핵심기능_ERD.dbml)
+- 문서 순서대로 묶은 영역별 구조도: [`03_영역별_구조도.mmd`](./03_영역별_구조도.mmd)
+- 전체 테이블 설명: [`테이블_설명.md`](./테이블_설명.md)
 - 요구사항 논리 ERD: 27개 객체
 - 구현 물리 ERD: 29개 테이블
 - MVP 핵심 기능 ERD: 12개 객체
@@ -24,6 +26,8 @@
 4. 왼쪽 편집기에 기존 내용을 지우고 DBML을 붙여넣는다.
 
 현재 열어둔 `.mmd` 파일은 Mermaid 문법이라 dbdiagram.io에 붙여넣으면 안 된다. dbdiagram.io에는 `.dbml` 파일 내용을 넣어야 한다.
+
+DBML의 `TableGroup`은 A~I 업무 영역을 표시하지만 테이블의 정확한 화면 좌표를 저장하지는 않는다. dbdiagram.io에서 처음 불러온 뒤 원하는 위치로 직접 드래그하면 된다. Mermaid `erDiagram`도 자동 배치 방식이므로, 영역별 묶음을 우선해서 볼 때는 `03_영역별_구조도.mmd`를 사용한다.
 
 - `PK`, `FK`, `UK`는 기본키·외래키·유니크 키다.
 - `family_group`이 테넌트 경계이며 대부분의 기능 테이블이 `family_id`로 연결된다.

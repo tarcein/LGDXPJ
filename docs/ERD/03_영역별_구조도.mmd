@@ -1,0 +1,90 @@
+flowchart LR
+    subgraph A["A. 가족·구성원·자녀"]
+        direction TB
+        family_group[가족 그룹]
+        family_location[가족 활동 지역]
+        family_member[가족 구성원]
+        child[자녀]
+        family_group --> family_location
+        family_group --> family_member
+        family_group --> child
+    end
+
+    subgraph B["B. 인증·초대"]
+        direction TB
+        family_invite_link[재사용 초대 코드·링크]
+        family_session[로그인 세션]
+    end
+
+    subgraph C["C. 일정"]
+        direction TB
+        personal_schedule[개인 일정]
+        child_schedule[아이 일정]
+    end
+
+    subgraph D["D. 돌봄 처리 파이프라인"]
+        direction TB
+        care_intake[돌봄 정보 원문]
+        care_item[구조화된 돌봄 항목]
+        care_assignment[돌봄 배정]
+        care_exception[예외 상황]
+        care_handoff[돌봄 인수인계]
+        care_intake --> care_item --> care_assignment
+        care_assignment --> care_exception
+        care_assignment --> care_handoff
+    end
+
+    subgraph E["E. 알림·설정"]
+        direction TB
+        notification[알림]
+        family_data_permission[정보 공개 권한]
+        notification_preference[알림 수신 설정]
+    end
+
+    subgraph F["F. 사용량·AI"]
+        direction TB
+        daily_usage[기능 사용량]
+        assistant_message[AI 채팅 메시지]
+    end
+
+    subgraph G["G. 긴급·미디어·디바이스"]
+        direction TB
+        emergency_request[긴급 도움 요청]
+        media_asset[미디어 자산]
+        device_alert_outbox[가전 알림 대기열]
+        push_device_token[푸시 토큰]
+    end
+
+    subgraph H["H. 혜택·구독·결제"]
+        direction TB
+        member_benefit_location[구성원별 혜택 검색 지역]
+        family_subscription[가족 구독]
+        payment_transaction[결제 거래]
+        family_subscription --> payment_transaction
+    end
+
+    subgraph I["I. 캘린더 연동"]
+        direction TB
+        calendar_oauth_state[캘린더 인증 상태]
+        calendar_connection[캘린더 연결]
+        calendar_oauth_state --> calendar_connection
+    end
+
+    family_group --> family_invite_link
+    family_member --> family_session
+    family_member --> personal_schedule
+    child --> child_schedule
+    child_schedule --> care_item
+    care_assignment --> notification
+    care_assignment --> emergency_request
+    care_assignment --> media_asset
+    notification --> device_alert_outbox
+    family_member --> push_device_token
+    family_member --> family_data_permission
+    family_member --> notification_preference
+    family_member --> assistant_message
+    family_group --> daily_usage
+    family_member --> member_benefit_location
+    family_group --> family_subscription
+    family_member --> calendar_oauth_state
+    calendar_connection --> personal_schedule
