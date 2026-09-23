@@ -728,6 +728,34 @@ class ExtendedFlowTest(unittest.TestCase):
             self.assertEqual(callback.status_code, 307)
             self.assertEqual(callback.headers["location"], "http://192.168.0.20:5173/?calendar=google-connected")
 
+    def test_calendar_oauth_returns_to_android_app_deep_link(self):
+        with patch.dict(os.environ, {
+            "GOOGLE_CLIENT_ID": "google-client", "GOOGLE_CLIENT_SECRET": "google-secret",
+            "CALENDAR_REDIRECT_BASE": "http://127.0.0.1:8000",
+            "ANDROID_APP_RETURN_URL": "com.lgdx.family://calendar",
+        }):
+            rejected = self.client.post(
+                "/api/calendar-connections/google/authorize",
+                json={"return_url": "https://evil.example"},
+            )
+            self.assertEqual(rejected.status_code, 400)
+
+            authorization_url = self.client.post(
+                "/api/calendar-connections/google/authorize",
+                json={"return_url": "com.lgdx.family://calendar"},
+            ).json()["authorization_url"]
+            state = parse_qs(urlparse(authorization_url).query)["state"][0]
+            token_response = httpx.Response(200, request=httpx.Request("POST", "https://oauth2.googleapis.com/token"), json={
+                "access_token": "access", "refresh_token": "refresh", "expires_in": 3600,
+            })
+            with patch("app.calendar.httpx.post", return_value=token_response):
+                callback = self.client.get(
+                    f"/api/calendar-connections/google/callback?code=demo-code&state={state}",
+                    follow_redirects=False,
+                )
+            self.assertEqual(callback.status_code, 307)
+            self.assertEqual(callback.headers["location"], "com.lgdx.family://calendar/?calendar=google-connected")
+
     def test_calendar_oauth_accepts_legacy_registered_callback_path(self):
         with patch.dict(os.environ, {
             "GOOGLE_CLIENT_ID": "google-client", "GOOGLE_CLIENT_SECRET": "google-secret",

@@ -1,5 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { App as CapacitorApp } from '@capacitor/app'
+import { Browser } from '@capacitor/browser'
+import { Capacitor } from '@capacitor/core'
 import { api, send, upload, setFamilyToken, hasFamilyToken, ApiError, formatDate, formatTime, type Assignment, type Bootstrap, type CareItem, type Child, type Screen, type Suggestion, type FamilyMe, type FamilySession, type ChatAnswer, type EmergencyRequest, type CalendarConnection, type Notice, type AlbumPhoto, type Benefit, type BenefitLocation, type CareInstitution, type EligibilityCriteria, type BillingConfig, type BillingOrder, type ChatCard, type DeviceAlertsResponse, type DeviceAlertTestResult } from './api'
 import { speechMessageFor } from './deviceAlertShared'
 import voiceIcon from '../../asset/assistant-main-logo-centered.png'
@@ -52,6 +55,8 @@ import { AppHeader, BottomNav, FloatingAssistant, MobileStatusBar } from './comp
 import { LockscreenPreview, ServiceLoading, ThinQEntry, ThinQHomeSelector } from './components/EntryScreens'
 import { BottomSheet, Card, Empty, Pro, Section } from './components/ui'
 import { setupNativeNotifications, showNativeNotice, syncPushToken, updateLiveCareStatus, clearLiveCareStatus } from './nativeNotifications'
+
+const nativeCalendarReturnUrl = 'com.lgdx.family://calendar'
 
 const groups: { title: string; pages: [Screen, string][] }[] = [
   { title: 'ThinQ 진입 · 외부 화면', pages: [['thinq', 'ThinQ 홈'], ['lockscreen', '잠금화면 동선']] },
@@ -260,6 +265,7 @@ function App() {
   const [screen, setScreen] = useState<Screen>(() => invitationFromUrl ? 'onboarding' : debugScreen ?? (hasFamilyToken() && billingResultFromUrl ? 'plan' : hasFamilyToken() && initialQuery.has('calendar') ? 'calendar' : 'thinq'))
   const [error, setError] = useState('')
   const [toast, setToast] = useState('')
+  const [calendarResult, setCalendarResult] = useState(calendarResultFromUrl)
   const [noticeScope, setNoticeScope] = useState<'mine' | 'family'>('mine')
   const [filter, setFilter] = useState('all')
   const [viewer, setViewer] = useState('mom')
@@ -497,7 +503,31 @@ function App() {
     }
   }, [billingResultFromUrl])
   useEffect(() => {
-    const provider = calendarResultFromUrl.replace(/-connected$/, '')
+    if (!Capacitor.isNativePlatform()) return
+    let listener: { remove: () => Promise<void> } | undefined
+    let disposed = false
+    const handleReturn = (url?: string) => {
+      if (!url) return
+      try {
+        const parsed = new URL(url)
+        if (parsed.protocol !== 'com.lgdx.family:' || parsed.host !== 'calendar') return
+        const result = parsed.searchParams.get('calendar') ?? ''
+        if (!['google-connected', 'microsoft-connected'].includes(result)) return
+        calendarSyncHandledRef.current = false
+        setCalendarResult(result)
+        setScreen('calendar')
+        void Browser.close().catch(() => undefined)
+      } catch { /* ignore unrelated app links */ }
+    }
+    void CapacitorApp.addListener('appUrlOpen', event => handleReturn(event.url)).then(handle => {
+      if (disposed) void handle.remove()
+      else listener = handle
+    })
+    void CapacitorApp.getLaunchUrl().then(result => handleReturn(result?.url))
+    return () => { disposed = true; void listener?.remove() }
+  }, [])
+  useEffect(() => {
+    const provider = calendarResult.replace(/-connected$/, '')
     if (!activeFamilyId || calendarSyncHandledRef.current || !['google', 'microsoft'].includes(provider)) return
     calendarSyncHandledRef.current = true
     send<{ imported: number }>(`/calendar-connections/${provider}/sync`, 'POST')
@@ -510,7 +540,7 @@ function App() {
         setToast(`${provider === 'google' ? 'Google' : 'Outlook'} 일정 ${result.imported}건을 동기화했어요`)
       })
       .catch(reportError)
-  }, [activeFamilyId, calendarResultFromUrl])
+  }, [activeFamilyId, calendarResult])
   useEffect(() => {
     if (!billingOpen || screen !== 'plan' || subscription?.status === 'ACTIVE') return
     let cancelled = false
@@ -1538,8 +1568,10 @@ function App() {
   }
   const connectCalendar = async (provider: 'google' | 'microsoft') => {
     try {
-      const result = await send<{ authorization_url: string }>('/calendar-connections/' + provider + '/authorize', 'POST')
-      location.assign(result.authorization_url)
+      const native = Capacitor.isNativePlatform()
+      const result = await send<{ authorization_url: string }>('/calendar-connections/' + provider + '/authorize', 'POST', native ? { return_url: nativeCalendarReturnUrl } : {})
+      if (native) await Browser.open({ url: result.authorization_url })
+      else location.assign(result.authorization_url)
     } catch (e) {
       reportError(e)
     }

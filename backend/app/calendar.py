@@ -9,6 +9,7 @@ from urllib.parse import urlencode, urlsplit
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from .config import setting
 from .db import database
@@ -18,6 +19,10 @@ from .family import family_id, member_id
 router = APIRouter(prefix="/api/calendar-connections", tags=["calendar connections"])
 legacy_router = APIRouter(tags=["calendar connections"])
 PROVIDERS = {"google", "microsoft"}
+
+
+class CalendarAuthorizeRequest(BaseModel):
+    return_url: str | None = None
 
 
 def _now() -> datetime:
@@ -39,7 +44,12 @@ def _redirect_uri(provider: str) -> str:
     return configured.rstrip("/") + f"/api/calendar-connections/{provider}/callback"
 
 
-def _frontend_return_url(request: Request) -> str:
+def _frontend_return_url(request: Request, requested_url: str | None = None) -> str:
+    if requested_url:
+        app_return_url = setting("ANDROID_APP_RETURN_URL", "com.lgdx.family://calendar").rstrip("/")
+        if requested_url.rstrip("/") != app_return_url:
+            raise HTTPException(400, "허용되지 않은 캘린더 복귀 주소입니다")
+        return app_return_url
     origin = request.headers.get("origin", "").strip()
     parsed = urlsplit(origin)
     if parsed.scheme in {"http", "https"} and parsed.netloc and not parsed.username and not parsed.password:
@@ -71,7 +81,7 @@ def connections():
 
 
 @router.post("/{provider}/authorize")
-def authorize(provider: str, request: Request):
+def authorize(provider: str, request: Request, payload: CalendarAuthorizeRequest | None = None):
     provider = _provider(provider)
     client_id, client_secret = _credentials(provider)
     if not client_id or not client_secret:
@@ -86,7 +96,7 @@ def authorize(provider: str, request: Request):
             """INSERT INTO calendar_oauth_state
                (state, family_id, member_id, provider, expires_at, return_url) VALUES (?, ?, ?, ?, ?, ?)""",
             (state, family_id(), member_id(), provider, (_now() + timedelta(minutes=10)).isoformat(),
-             _frontend_return_url(request)),
+             _frontend_return_url(request, payload.return_url if payload else None)),
         )
     if provider == "google":
         base = "https://accounts.google.com/o/oauth2/v2/auth"
