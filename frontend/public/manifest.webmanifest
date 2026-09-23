@@ -1,0 +1,20 @@
+{
+  "name": "ZIPPY - 가족 돌봄",
+  "short_name": "ZIPPY",
+  "description": "가족 일정과 돌봄을 함께 관리하는 앱",
+  "lang": "ko-KR",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f6fc",
+  "theme_color": "#f4f6fc",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/app-icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

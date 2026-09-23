@@ -12,3 +12,7 @@ createRoot(document.getElementById('root')!).render(
     {debugScreen === 'tv' ? <TvDisplay /> : debugScreen === 'voice' ? <VoiceDeviceDisplay /> : <App />}
   </StrictMode>,
 )
+
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'))
+}

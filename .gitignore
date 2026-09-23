@@ -2,6 +2,9 @@ frontend/node_modules/
 frontend/dist/
 frontend/src/assets/
 frontend/public/*
+!frontend/public/app-icon.png
+!frontend/public/manifest.webmanifest
+!frontend/public/sw.js
 !frontend/public/YTDown.com_YouTube_Media_enRjBDUlWGo_001_720p.mp4
 frontend/README.md
 backend/.venv/
