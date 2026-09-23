@@ -1,9 +1,8 @@
 erDiagram
-    %% Source of truth: backend/app/db.py :: SCHEMA + initialize() migrations
-    %% This diagram describes the currently implemented SQLite/PostgreSQL-compatible schema.
-    %% 29 physical tables, including legacy family_invite_code and dev-only plan_preview.
-    %% personalSchedule has a conditional composite UK on
-    %% (family_id, member_id, external_source, external_id) when external_id is present.
+    %% 요구사항 객체정의서 기준 논리 ERD: 27개 객체
+    %% 레거시 family_invite_code와 개발용 plan_preview는 제외한다.
+    %% personal_schedule conditional composite UK:
+    %% (family_id, member_id, external_source, external_id), when external_id is present.
     direction LR
 
     familyGroup["Family Group"] {
@@ -24,7 +23,7 @@ erDiagram
         string name
         string role
         string status
-        bool is_owner
+        boolean is_owner
         datetime created_at
     }
     child["Child"] {
@@ -35,6 +34,23 @@ erDiagram
         string photo_storage_path
         string photo_mime_type
         datetime photo_updated_at
+    }
+    familyInviteLink["Reusable Invite Code / Link"] {
+        string code_hash PK
+        string family_id FK
+        string created_by_member_id FK
+        datetime expires_at
+        datetime created_at
+        int join_count
+        int max_uses
+        datetime revoked_at
+    }
+    familySession["Family Session"] {
+        string token_hash PK
+        string family_id FK
+        string member_id FK
+        datetime expires_at
+        datetime last_seen_at
     }
     personalSchedule["Personal Schedule"] {
         string id PK
@@ -81,9 +97,9 @@ erDiagram
         string item_type
         string title
         string detail
+        datetime starts_at
         string confidence
         string status
-        datetime starts_at
         datetime created_at
     }
     careAssignment["Care Assignment"] {
@@ -104,8 +120,8 @@ erDiagram
         string id PK
         string family_id FK
         string assignment_id FK
-        string alternative_member_id FK
         string reason
+        string alternative_member_id FK
         string status
         datetime created_at
     }
@@ -127,7 +143,7 @@ erDiagram
         string title
         string body
         string level
-        bool is_read
+        boolean is_read
         string action_type
         string action_id
         datetime created_at
@@ -135,35 +151,13 @@ erDiagram
     familyDataPermission["Family Data Permission"] {
         string member_id PK, FK
         string scope PK
-        bool is_allowed
+        boolean is_allowed
     }
     notificationPreference["Notification Preference"] {
         string member_id PK, FK
-        bool app_enabled
-        bool daily_digest_enabled
-        bool device_enabled
-    }
-    familyInviteCode["Family Invite Code"] {
-        string family_id PK, FK
-        string code_hash UK
-        datetime expires_at
-    }
-    familyInviteLink["Family Invite Link"] {
-        string code_hash PK
-        string family_id FK
-        string created_by_member_id FK
-        datetime expires_at
-        datetime created_at
-        int join_count
-        int max_uses
-        datetime revoked_at
-    }
-    familySession["Family Session"] {
-        string token_hash PK
-        string family_id FK
-        string member_id FK
-        datetime expires_at
-        datetime last_seen_at
+        boolean app_enabled
+        boolean daily_digest_enabled
+        boolean device_enabled
     }
     dailyUsage["Daily Usage"] {
         string family_id PK, FK
@@ -179,18 +173,14 @@ erDiagram
         string content
         datetime created_at
     }
-    planPreview["Plan Preview"] {
-        string family_id PK, FK
-        bool enabled
-    }
     emergencyRequest["Emergency Request"] {
         string id PK
         string family_id FK
         string assignment_id FK
         string requested_by_member_id FK
-        string claimed_by_member_id FK
         string reason
         string status
+        string claimed_by_member_id FK
         datetime created_at
         datetime resolved_at
     }
@@ -201,11 +191,11 @@ erDiagram
         string assignment_id FK
         string uploaded_by_member_id FK
         string kind
+        string storage_path
+        string date_folder
         string file_name
         string mime_type
         string content_base64
-        string storage_path
-        string date_folder
         string caption
         datetime created_at
     }
@@ -244,7 +234,7 @@ erDiagram
         datetime current_period_start
         datetime current_period_end
         datetime next_billing_at
-        bool cancel_at_period_end
+        boolean cancel_at_period_end
         datetime canceled_at
         int renewal_failure_count
         string last_renewal_error
@@ -281,62 +271,61 @@ erDiagram
         datetime synced_at
     }
 
-    familyGroup ||--o| familyLocation : "has"
-    familyGroup ||--o{ familyMember : "contains"
-    familyGroup ||--o{ child : "cares_for"
-    familyGroup ||--o{ personalSchedule : "scopes"
-    familyGroup ||--o{ childSchedule : "scopes"
-    familyGroup ||--o{ careIntake : "receives"
-    familyGroup ||--o{ careItem : "owns"
-    familyGroup ||--o{ careAssignment : "owns"
-    familyGroup ||--o{ careException : "owns"
-    familyGroup ||--o{ careHandoff : "owns"
-    familyGroup ||--o{ notification : "emits"
-    familyGroup ||--o| familyInviteCode : "issues"
-    familyGroup ||--o{ familyInviteLink : "issues"
-    familyGroup ||--o{ familySession : "scopes"
-    familyGroup ||--o{ dailyUsage : "tracks"
-    familyGroup ||--o{ assistantMessage : "contains"
-    familyGroup ||--o| planPreview : "previews"
-    familyGroup ||--o{ emergencyRequest : "raises"
-    familyGroup ||--o{ mediaAsset : "owns"
-    familyGroup ||--o{ deviceAlertOutbox : "queues"
-    familyGroup ||--o{ pushDeviceToken : "registers"
-    familyGroup ||--o{ memberBenefitLocation : "has"
-    familyGroup ||--o| familySubscription : "subscribes"
-    familyGroup ||--o{ paymentTransaction : "records"
-    familyGroup ||--o{ calendarOauthState : "authorizes"
-    familyGroup ||--o{ calendarConnection : "connects"
+    familyGroup ||--o| familyLocation : has
+    familyGroup ||--o{ familyMember : contains
+    familyGroup ||--o{ child : cares_for
+    familyGroup ||--o{ familyInviteLink : issues
+    familyGroup ||--o{ familySession : scopes
+    familyGroup ||--o{ personalSchedule : scopes
+    familyGroup ||--o{ childSchedule : scopes
+    familyGroup ||--o{ careIntake : receives
+    familyGroup ||--o{ careItem : owns
+    familyGroup ||--o{ careAssignment : owns
+    familyGroup ||--o{ careException : owns
+    familyGroup ||--o{ careHandoff : owns
+    familyGroup ||--o{ notification : emits
+    familyGroup ||--o{ dailyUsage : tracks
+    familyGroup ||--o{ assistantMessage : contains
+    familyGroup ||--o{ emergencyRequest : raises
+    familyGroup ||--o{ mediaAsset : owns
+    familyGroup ||--o{ deviceAlertOutbox : queues
+    familyGroup ||--o{ pushDeviceToken : registers
+    familyGroup ||--o{ memberBenefitLocation : locates
+    familyGroup ||--o| familySubscription : subscribes
+    familyGroup ||--o{ paymentTransaction : records
+    familyGroup ||--o{ calendarOauthState : authorizes
+    familyGroup ||--o{ calendarConnection : connects
 
-    familyMember ||--o{ personalSchedule : "creates"
-    child ||--o{ childSchedule : "has"
-    child o|--o{ careIntake : "concerns"
-    child o|--o{ careItem : "concerns"
-    childSchedule o|--o{ careItem : "informs"
-    careIntake o|--o{ careItem : "extracts"
-    careItem ||--o{ careAssignment : "assigned_as"
-    familyMember ||--o{ careAssignment : "assigned_to"
-    familyMember o|--o{ careAssignment : "requests"
-    careAssignment ||--o{ careException : "triggers"
-    familyMember ||--o{ careException : "may_replace"
-    careAssignment ||--o{ careHandoff : "transfers"
-    familyMember ||--o{ careHandoff : "hands_off"
-    familyMember ||--o{ careHandoff : "receives"
-    familyMember o|--o{ notification : "receives"
-    familyMember ||--o{ familyDataPermission : "configures"
-    familyMember ||--o| notificationPreference : "configures"
-    familyMember o|--o{ familyInviteLink : "creates"
-    familyMember ||--o{ familySession : "authenticates"
-    familyMember o|--o{ assistantMessage : "sends"
-    familyMember ||--o{ emergencyRequest : "requests"
-    familyMember o|--o{ emergencyRequest : "claims"
-    familyMember o|--o{ mediaAsset : "uploads"
-    familyMember ||--o{ deviceAlertOutbox : "targets"
-    familyMember ||--o{ pushDeviceToken : "registers"
-    familyMember ||--o{ memberBenefitLocation : "locates"
-    familyMember ||--o{ calendarOauthState : "authorizes"
-    familyMember ||--o{ calendarConnection : "connects"
-    careAssignment ||--o{ emergencyRequest : "escalates"
-    careAssignment o|--o{ mediaAsset : "proves"
-    careAssignment o|--o{ deviceAlertOutbox : "alerts"
-    child o|--o{ mediaAsset : "appears_in"
+    familyMember ||--o{ personalSchedule : owns
+    familyMember o|--o{ familyInviteLink : creates
+    familyMember ||--o{ familySession : authenticates
+    familyMember ||--o{ careAssignment : assigned_to
+    familyMember o|--o{ careAssignment : requests
+    familyMember ||--o{ careException : may_replace
+    familyMember o|--o{ careHandoff : hands_off
+    familyMember ||--o{ careHandoff : receives
+    familyMember o|--o{ notification : receives
+    familyMember ||--o{ familyDataPermission : configures
+    familyMember ||--o| notificationPreference : configures
+    familyMember o|--o{ assistantMessage : converses
+    familyMember ||--o{ emergencyRequest : requests
+    familyMember o|--o{ emergencyRequest : claims
+    familyMember o|--o{ mediaAsset : uploads
+    familyMember ||--o{ deviceAlertOutbox : targets
+    familyMember ||--o{ pushDeviceToken : registers
+    familyMember ||--o| memberBenefitLocation : locates
+    familyMember ||--o{ calendarOauthState : authorizes
+    familyMember ||--o{ calendarConnection : connects
+
+    child ||--o{ childSchedule : has
+    child o|--o{ careIntake : concerns
+    child o|--o{ careItem : concerns
+    child o|--o{ mediaAsset : appears_in
+    childSchedule o|--o{ careItem : informs
+    careIntake o|--o{ careItem : extracts
+    careItem ||--o{ careAssignment : assigned_as
+    careAssignment ||--o{ careException : triggers
+    careAssignment ||--o{ careHandoff : transfers
+    careAssignment ||--o{ emergencyRequest : escalates
+    careAssignment o|--o{ mediaAsset : proves
+    careAssignment o|--o{ deviceAlertOutbox : alerts

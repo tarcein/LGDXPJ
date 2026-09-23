@@ -13,3 +13,5 @@ backend/firebase-service-account*.json
 *.pyc
 .env
 .DS_Store
+hs_err_pid*.log
+replay_pid*.log

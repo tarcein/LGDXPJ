@@ -1,0 +1,159 @@
+erDiagram
+    %% 요구사항 논리 ERD 27개 중 중심 흐름 12개 객체
+    %% 일정 -> 돌봄 입력 -> 항목화 -> 담당 배정 -> 예외/인수인계/긴급요청 -> 알림
+    direction LR
+
+    familyGroup["Family Group"] {
+        string id PK
+        string name
+        string plan
+        datetime created_at
+    }
+    familyMember["Family Member"] {
+        string id PK
+        string family_id FK
+        string name
+        string role
+        string status
+        boolean is_owner
+        datetime created_at
+    }
+    child["Child"] {
+        string id PK
+        string family_id FK
+        string name
+        string age_label
+    }
+    personalSchedule["Personal Schedule"] {
+        string id PK
+        string family_id FK
+        string member_id FK
+        string title
+        datetime starts_at
+        datetime ends_at
+        boolean has_end_time
+        string kind
+    }
+    childSchedule["Child Schedule"] {
+        string id PK
+        string family_id FK
+        string child_id FK
+        string title
+        string category
+        datetime starts_at
+        datetime ends_at
+        boolean has_end_time
+        string source
+        datetime created_at
+    }
+    careIntake["Care Intake"] {
+        string id PK
+        string family_id FK
+        string child_id FK
+        string raw_content
+        string input_type
+        datetime created_at
+    }
+    careItem["Care Item"] {
+        string id PK
+        string family_id FK
+        string intake_id FK
+        string child_id FK
+        string child_schedule_id FK
+        string item_type
+        string title
+        string detail
+        datetime starts_at
+        string confidence
+        string status
+        datetime created_at
+    }
+    careAssignment["Care Assignment"] {
+        string id PK
+        string family_id FK
+        string item_id FK
+        string assignee_id FK
+        string requested_by_member_id FK
+        string status
+        string source
+        datetime created_at
+        datetime responded_at
+        datetime completed_at
+        string note
+        datetime reminder_sent_at
+    }
+    careException["Care Exception"] {
+        string id PK
+        string family_id FK
+        string assignment_id FK
+        string reason
+        string alternative_member_id FK
+        string status
+        datetime created_at
+    }
+    careHandoff["Care Handoff"] {
+        string id PK
+        string family_id FK
+        string assignment_id FK
+        string from_member_id FK
+        string to_member_id FK
+        string briefing
+        string special_note
+        string status
+        datetime acknowledged_at
+    }
+    emergencyRequest["Emergency Request"] {
+        string id PK
+        string family_id FK
+        string assignment_id FK
+        string requested_by_member_id FK
+        string claimed_by_member_id FK
+        string reason
+        string status
+        datetime created_at
+        datetime resolved_at
+    }
+    notification["Notification"] {
+        string id PK
+        string family_id FK
+        string member_id FK
+        string title
+        string body
+        string level
+        boolean is_read
+        string action_type
+        string action_id
+        datetime created_at
+    }
+
+    familyGroup ||--o{ familyMember : contains
+    familyGroup ||--o{ child : cares_for
+    familyGroup ||--o{ personalSchedule : scopes
+    familyGroup ||--o{ childSchedule : scopes
+    familyGroup ||--o{ careIntake : receives
+    familyGroup ||--o{ careItem : owns
+    familyGroup ||--o{ careAssignment : owns
+    familyGroup ||--o{ careException : owns
+    familyGroup ||--o{ careHandoff : owns
+    familyGroup ||--o{ emergencyRequest : raises
+    familyGroup ||--o{ notification : emits
+
+    familyMember ||--o{ personalSchedule : owns
+    familyMember ||--o{ careAssignment : assigned_to
+    familyMember o|--o{ careAssignment : requests
+    familyMember ||--o{ careException : may_replace
+    familyMember o|--o{ careHandoff : hands_off
+    familyMember ||--o{ careHandoff : receives
+    familyMember ||--o{ emergencyRequest : requests
+    familyMember o|--o{ emergencyRequest : claims
+    familyMember o|--o{ notification : receives
+
+    child ||--o{ childSchedule : has
+    child o|--o{ careIntake : concerns
+    child o|--o{ careItem : concerns
+    childSchedule o|--o{ careItem : informs
+    careIntake o|--o{ careItem : extracts
+    careItem ||--o{ careAssignment : assigned_as
+    careAssignment ||--o{ careException : triggers
+    careAssignment ||--o{ careHandoff : transfers
+    careAssignment ||--o{ emergencyRequest : escalates
