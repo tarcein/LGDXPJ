@@ -1096,7 +1096,6 @@ function App() {
   const todayKey = dateKey(new Date())
   const todayCare = boot?.items.filter(i => !i.child_schedule_id && i.starts_at && dateKey(i.starts_at) === todayKey && i.item_type !== 'SUPPLY' && i.item_type !== 'HOMEWORK') ?? []
   const todayChildSchedules = boot?.child_schedules.filter(s => dateKey(s.starts_at) === todayKey) ?? []
-  const todayPersonal = boot?.schedules.filter(s => dateKey(s.starts_at) === todayKey) ?? []
   const dueDateOf = (item: CareItem) => {
     if (item.starts_at) return dateKey(item.starts_at)
     const nextDay = new Date(item.created_at); nextDay.setDate(nextDay.getDate() + 1)
@@ -1177,7 +1176,6 @@ function App() {
         return { id: `child-${careItem.id}`, time: careItem.starts_at ?? item.starts_at, title: careItem.title, meta: `${child(item.child_id)} · 담당 ${assignment ? member(assignment.assignee_id) : '미정'}`, active: isLiveAssignment(assignment), done: careItem.status === 'DONE', unassigned: !assignment, careItem }
       })
     }),
-    ...todayPersonal.map(item => ({ id: `personal-${item.id}`, time: item.starts_at, title: item.title, meta: member(item.member_id), active: false, done: false, unassigned: false, careItem: undefined as CareItem | undefined })),
   ].sort((left, right) => left.time.localeCompare(right.time))
   const visibleNotices = boot?.notifications.filter(notice => noticeScope === 'family' || !me?.member.id || !notice.member_id || notice.member_id === me.member.id) ?? []
   const yesterdayKey = dateKey(new Date(new Date().setDate(new Date().getDate() - 1)))
