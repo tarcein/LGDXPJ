@@ -1,5 +1,5 @@
-// Source of truth: backend/app/db.py (SCHEMA + initialize migrations)
-// 29 physical tables, including legacy family_invite_code and dev-only plan_preview.
+// 요구사항 객체정의서 기준 논리 ERD (27개 객체)
+// 레거시 family_invite_code와 개발용 plan_preview는 제외한다.
 // Paste this file directly into https://dbdiagram.io/
 
 Table family_group {
@@ -36,6 +36,27 @@ Table child {
   photo_updated_at datetime
 }
 
+Table family_invite_link {
+  code_hash text [pk]
+  family_id text [not null, ref: > family_group.id]
+  created_by_member_id text [ref: > family_member.id]
+  expires_at datetime [not null]
+  created_at datetime [not null]
+  join_count int [not null, default: 0]
+  max_uses int
+  revoked_at datetime
+
+  Note: '재사용 초대 코드와 ?invite=코드 형식의 공유 링크를 함께 관리한다.'
+}
+
+Table family_session {
+  token_hash text [pk]
+  family_id text [not null, ref: > family_group.id]
+  member_id text [not null, ref: > family_member.id]
+  expires_at datetime [not null]
+  last_seen_at datetime [not null]
+}
+
 Table personal_schedule {
   id text [pk]
   family_id text [not null, ref: > family_group.id]
@@ -54,7 +75,7 @@ Table personal_schedule {
     (family_id, member_id, external_source, external_id) [unique, name: 'uq_external_schedule']
   }
 
-  Note: '외부 일정 ID가 있는 경우에만 복합 UK를 적용한다.'
+  Note: '외부 일정 ID가 있는 경우에만 복합 UK를 적용해 같은 외부 일정을 중복 저장하지 않는다.'
 }
 
 Table child_schedule {
@@ -90,9 +111,9 @@ Table care_item {
   item_type text [not null]
   title text [not null]
   detail text [not null, default: '']
+  starts_at datetime
   confidence text [not null, default: 'LOW']
   status text [not null, default: 'NEEDS_REVIEW']
-  starts_at datetime
   created_at datetime [not null]
 }
 
@@ -115,8 +136,8 @@ Table care_exception {
   id text [pk]
   family_id text [not null, ref: > family_group.id]
   assignment_id text [not null, ref: > care_assignment.id]
-  alternative_member_id text [not null, ref: > family_member.id]
   reason text [not null]
+  alternative_member_id text [not null, ref: > family_member.id]
   status text [not null, default: 'PENDING']
   created_at datetime [not null]
 }
@@ -144,6 +165,8 @@ Table notification {
   action_type text
   action_id text
   created_at datetime [not null]
+
+  Note: 'action_type/action_id는 다형성 참조이므로 실제 FK를 두지 않는다.'
 }
 
 Table family_data_permission {
@@ -159,36 +182,13 @@ Table notification_preference {
   device_enabled boolean [not null, default: false]
 }
 
-Table family_invite_code {
-  family_id text [pk, ref: > family_group.id]
-  code_hash text [not null, unique]
-  expires_at datetime [not null]
-}
-
-Table family_invite_link {
-  code_hash text [pk]
-  family_id text [not null, ref: > family_group.id]
-  created_by_member_id text [ref: > family_member.id]
-  expires_at datetime [not null]
-  created_at datetime [not null]
-  join_count int [not null, default: 0]
-  max_uses int
-  revoked_at datetime
-}
-
-Table family_session {
-  token_hash text [pk]
-  family_id text [not null, ref: > family_group.id]
-  member_id text [not null, ref: > family_member.id]
-  expires_at datetime [not null]
-  last_seen_at datetime [not null]
-}
-
 Table daily_usage {
   family_id text [pk, ref: > family_group.id]
   day text [pk]
   feature text [pk]
   amount int [not null, default: 0]
+
+  Note: '일반 기능은 날짜, AI 채팅은 24시간 롤링 윈도우 시작 시각을 day에 저장한다.'
 }
 
 Table assistant_message {
@@ -200,19 +200,14 @@ Table assistant_message {
   created_at datetime [not null]
 }
 
-Table plan_preview {
-  family_id text [pk, ref: > family_group.id]
-  enabled boolean [not null, default: false]
-}
-
 Table emergency_request {
   id text [pk]
   family_id text [not null, ref: > family_group.id]
   assignment_id text [not null, ref: > care_assignment.id]
   requested_by_member_id text [not null, ref: > family_member.id]
-  claimed_by_member_id text [ref: > family_member.id]
   reason text [not null]
   status text [not null, default: 'OPEN']
+  claimed_by_member_id text [ref: > family_member.id]
   created_at datetime [not null]
   resolved_at datetime
 }
@@ -224,11 +219,11 @@ Table media_asset {
   assignment_id text [ref: > care_assignment.id]
   uploaded_by_member_id text [ref: > family_member.id]
   kind text [not null, default: 'ALBUM']
+  storage_path text
+  date_folder text
   file_name text [not null]
   mime_type text [not null]
   content_base64 text [not null]
-  storage_path text
-  date_folder text
   caption text [not null, default: '']
   created_at datetime [not null]
 }
@@ -310,5 +305,3 @@ Table calendar_connection {
   connected_at datetime [not null]
   synced_at datetime
 }
-
-// Polymorphic notification.action_type/action_id intentionally has no FK.

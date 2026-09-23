@@ -1,5 +1,6 @@
 // MVP 핵심 기능만 추린 ERD
 // 가족 운영의 중심 흐름: 일정 -> 돌봄 입력 -> 항목화 -> 담당 배정 -> 예외/인수인계 -> 알림
+// 요구사항 논리 ERD 27개 중 중심 흐름 12개 객체만 표시한다.
 
 Table family_group {
   id text [pk]
@@ -46,6 +47,7 @@ Table child_schedule {
   ends_at datetime [not null]
   has_end_time boolean [not null, default: true]
   source text [not null, default: 'MANUAL']
+  created_at datetime [not null]
 }
 
 Table care_intake {
@@ -69,6 +71,7 @@ Table care_item {
   confidence text [not null, default: 'LOW']
   status text [not null, default: 'NEEDS_REVIEW']
   starts_at datetime
+  created_at datetime [not null]
 }
 
 Table care_assignment {
@@ -79,7 +82,11 @@ Table care_assignment {
   requested_by_member_id text [ref: > family_member.id]
   status text [not null, default: 'PROPOSED']
   source text [not null]
+  created_at datetime [not null]
+  responded_at datetime
   completed_at datetime
+  note text [not null, default: '']
+  reminder_sent_at datetime
 }
 
 Table care_exception {
@@ -98,6 +105,7 @@ Table care_handoff {
   assignment_id text [not null, ref: > care_assignment.id]
   from_member_id text [ref: > family_member.id]
   to_member_id text [not null, ref: > family_member.id]
+  briefing text [not null]
   special_note text [not null, default: '']
   status text [not null, default: 'PENDING']
   acknowledged_at datetime
@@ -111,6 +119,7 @@ Table emergency_request {
   claimed_by_member_id text [ref: > family_member.id]
   reason text [not null]
   status text [not null, default: 'OPEN']
+  created_at datetime [not null]
   resolved_at datetime
 }
 

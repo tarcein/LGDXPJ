@@ -51,7 +51,7 @@ import memberInactiveIcon from '../../asset/구성원프로필/활동중아님.p
 import { AppHeader, BottomNav, FloatingAssistant, MobileStatusBar } from './components/AppChrome'
 import { LockscreenPreview, ServiceLoading, ThinQEntry, ThinQHomeSelector } from './components/EntryScreens'
 import { BottomSheet, Card, Empty, Pro, Section } from './components/ui'
-import { setupNativeNotifications, showNativeNotice, syncPushToken, updateLiveCareStatus, clearLiveCareStatus } from './nativeNotifications'
+import { setupNativeNotifications, showNativeNotice, syncPushToken, updateLiveCareStatus, clearLiveCareStatus, isAndroidApp } from './nativeNotifications'
 
 const groups: { title: string; pages: [Screen, string][] }[] = [
   { title: 'ThinQ 진입 · 외부 화면', pages: [['thinq', 'ThinQ 홈'], ['lockscreen', '잠금화면 동선']] },
@@ -869,7 +869,7 @@ function App() {
   const plan = boot?.family.plan ?? 'FREE'
   const inviteLink = inviteCode ? (() => {
     const publicAppUrl = (import.meta.env.VITE_PUBLIC_APP_URL ?? '').trim()
-    const url = new URL(location.pathname, publicAppUrl || location.origin)
+    const url = new URL(location.pathname, isAndroidApp() && publicAppUrl ? publicAppUrl : location.origin)
     url.searchParams.set('invite', inviteCode)
     url.searchParams.set('role', inviteRole)
     return url.toString()
