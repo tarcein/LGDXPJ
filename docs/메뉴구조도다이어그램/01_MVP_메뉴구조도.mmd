@@ -21,6 +21,8 @@ flowchart TB
     subgraph careTop[" "]
       direction LR
       inbox["Family Inbox"] --> s5[["돌봄 정보 등록 화면 (Family Inbox)<br/>SCR-05<br/>FR-008, FR-009, FR-010"]]
+      inbox --> s20[["준비물 확인 화면<br/>SCR-20<br/>FR-010"]]
+      inbox --> s21[["숙제 확인 화면<br/>SCR-21<br/>FR-010"]]
       roleMatch["Role Match"] --> s6[["가족 역할 배정 화면 (Role Match 결과)<br/>SCR-06<br/>FR-011, FR-012, FR-013"]]
     end
     complete["완료"] --> s11[["돌봄 완료 확인 화면 (특이사항 입력 팝업 포함)<br/>SCR-11<br/>FR-026, FR-027, FR-028"]]
@@ -66,7 +68,7 @@ flowchart TB
   class homeMenu,calendar,personalSchedule,complete,notificationCenter,integration,familySettings,privacy,plan depth2Base
   class inbox,roleMatch depth2Core
   class s1,s2,s3,s4,s11,s12,s13,s14,s19 screenBase
-  class s5,s6 screenCore
+  class s5,s6,s20,s21 screenCore
   style homeRow fill:transparent,stroke:transparent
   style scheduleRow fill:transparent,stroke:transparent
   style careRow fill:transparent,stroke:transparent

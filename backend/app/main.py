@@ -1367,6 +1367,7 @@ from .emergency import router as emergency_router
 from .calendar import legacy_router as legacy_calendar_router, router as calendar_router
 from .benefits import router as benefits_router
 from .payment import router as payment_router
+from .devices import router as devices_router
 
 app.include_router(extended_router)
 app.include_router(emergency_router)
@@ -1374,3 +1375,4 @@ app.include_router(calendar_router)
 app.include_router(legacy_calendar_router)
 app.include_router(benefits_router)
 app.include_router(payment_router)
+app.include_router(devices_router)

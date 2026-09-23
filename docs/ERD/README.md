@@ -33,7 +33,8 @@ DBML의 `TableGroup`은 A~I 업무 영역을 표시하지만 테이블의 정확
 - `family_group`이 테넌트 경계이며 대부분의 기능 테이블이 `family_id`로 연결된다.
 - `notification.action_type/action_id`는 다형성 참조라 실제 FK를 만들지 않는다.
 - `family_subscription`과 `payment_transaction`은 구현상 `family_id`를 통해 연결된다. 결제 거래가 구독 행을 직접 참조하지 않는 현재 코드 구조를 그대로 표시했다.
-- `media_asset.storage_path`, `date_folder`, `care_handoff.special_note`처럼 `initialize()`에서 후속 추가된 핵심 컬럼도 포함했다. (가독성을 위해 모든 운영 컬럼을 전부 나열하지는 않았다.)
+- `media_asset.storage_path`, `date_folder`, `care_handoff.special_note`, `child.photo_storage_path/photo_mime_type/photo_updated_at`(아이 프로필 사진), `notification_preference.device_enabled`(TV 가전 알림 토글), `personal_schedule.has_end_time`/`child_schedule.has_end_time`(시간 없는 종일 일정 여부)처럼 `initialize()`에서 후속 추가된 핵심 컬럼도 포함했다. (가독성을 위해 모든 운영 컬럼을 전부 나열하지는 않았다.)
+- `push_device_token`(Android 푸시 토큰 등록) 테이블을 포함했다. 이전 버전 ERD에는 누락돼 있었다.
 
 ## 설계 문서와의 차이
 

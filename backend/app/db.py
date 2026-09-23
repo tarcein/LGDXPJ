@@ -300,6 +300,20 @@ CREATE TABLE IF NOT EXISTS calendar_connection (
   connected_at TEXT NOT NULL, synced_at TEXT,
   PRIMARY KEY (family_id, member_id, provider)
 );
+CREATE TABLE IF NOT EXISTS device_alert_setting (
+  family_id TEXT PRIMARY KEY REFERENCES family_group(id),
+  devices TEXT NOT NULL DEFAULT '[]',
+  priority TEXT NOT NULL DEFAULT '[]',
+  content_matrix TEXT NOT NULL DEFAULT '{}',
+  emergency_tv_sound INTEGER NOT NULL DEFAULT 1,
+  speech_volume INTEGER NOT NULL DEFAULT 60,
+  quiet_start TEXT NOT NULL DEFAULT '22:00',
+  quiet_end TEXT NOT NULL DEFAULT '07:00',
+  mute_during_naptime INTEGER NOT NULL DEFAULT 1,
+  tv_status TEXT NOT NULL DEFAULT 'off',
+  tv_status_at TEXT,
+  updated_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_item_family_status ON care_item(family_id, status);
 CREATE INDEX IF NOT EXISTS idx_child_schedule_family ON child_schedule(family_id, child_id, starts_at);
 CREATE INDEX IF NOT EXISTS idx_assignment_family ON care_assignment(family_id, status);

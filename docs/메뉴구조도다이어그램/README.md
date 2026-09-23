@@ -21,17 +21,17 @@
 
 최종 화면 노드는 다음 순서로 표기했다.
 
-`화면명 | SCR-01~SCR-19 | 주요 FR ID`
+`화면명 | SCR-01~SCR-21 | 주요 FR ID`
 
-화면 ID는 기능요구사항명세서의 S1~S19를 현재 요청의 규칙에 따라 `SCR-01`~`SCR-19`로 변환했다.
+화면 ID는 기능요구사항명세서의 S1~S21을 현재 요청의 규칙에 따라 `SCR-01`~`SCR-21`로 변환했다. S15(돌봄 동선 확인)는 서비스 범위에서 제외되어 결번이며, S20·S21(준비물 확인·숙제 확인)은 Family Inbox에서 분리된 화면으로 이후 추가됐다.
 
 ## 색상 범례
 
 | 색상 | 의미 |
 |---|---|
-| 보라색 `#E8DDF8` / `#7E57C2` | MVP 핵심: Family Inbox, Role Match |
+| 보라색 `#E8DDF8` / `#7E57C2` | MVP 핵심: Family Inbox(준비물·숙제 확인 포함), Role Match |
 | 노란색 `#FFF4CC` / `#D6A800` | MVP 필수 기반: 계정·가족 설정·일정·홈·알림·완료·플랜 |
-| 회색 `#EEEEEE` / `#999999` | MVP 이후: Care Handoff, Exception Care, AI 채팅, 긴급 도움 요청, 동선, 부가 서비스 |
+| 회색 `#EEEEEE` / `#999999` | MVP 이후: Care Handoff, Exception Care, AI 채팅, 긴급 도움 요청, 부가 서비스 |
 | 남색 `#243B64` | 서비스 Root |
 
 ## 기준 및 확인 사항
