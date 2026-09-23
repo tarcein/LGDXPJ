@@ -32,6 +32,7 @@ Table personal_schedule {
   title text [not null]
   starts_at datetime [not null]
   ends_at datetime [not null]
+  has_end_time boolean [not null, default: true]
   kind text [not null, default: 'ROUTINE']
 }
 
@@ -43,6 +44,7 @@ Table child_schedule {
   category text [not null]
   starts_at datetime [not null]
   ends_at datetime [not null]
+  has_end_time boolean [not null, default: true]
   source text [not null, default: 'MANUAL']
 }
 

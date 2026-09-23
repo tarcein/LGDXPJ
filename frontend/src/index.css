@@ -1481,3 +1481,47 @@ a, a:link, a:visited, a:active { color: inherit; text-decoration: inherit; }
   .app-shell .supply-item-card small { font-size: 11px; }
   .app-shell .care-status-kicker { font-size: 15px; }
 }
+
+/* 가전 알림 우선순위 설정 */
+.device-alert-page { padding-bottom: 12px; }
+.settings-device-alert-link { display: block; margin: -6px 0 4px 15px; font-size: 11px; font-weight: 700; color: var(--fc-brand); }
+.device-alert-summary-list { display: grid; gap: 8px; margin: 10px 0 18px; }
+.device-alert-summary-row { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 14px; background: #fff; box-shadow: var(--fc-shadow); }
+.device-alert-summary-row span { display: grid; gap: 2px; min-width: 0; }
+.device-alert-summary-row strong { font-size: 12px; }
+.device-alert-summary-row small { color: #8b9099; font-size: 10px; overflow-wrap: anywhere; }
+.device-alert-menu { margin-bottom: 14px; }
+.device-alert-menu button small { margin-left: auto; margin-right: 4px; color: #9297a0; font-size: 10px; }
+.device-alert-list { display: grid; gap: 8px; margin-bottom: 14px; }
+.device-alert-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 13px 15px; border: 1.5px solid #eceef1; border-radius: 14px; background: #fff; text-align: left; }
+.device-alert-row.checked { border-color: var(--fc-brand); background: #fceaf0; }
+.device-alert-row strong { display: block; font-size: 12px; }
+.device-alert-row small { color: #8b9099; font-size: 10px; }
+.device-alert-row i { flex: none; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: var(--fc-brand); font-style: normal; font-size: 11px; }
+.device-alert-none-note { margin: 4px 2px 14px; }
+.device-alert-rule-card { display: grid; gap: 10px; margin-bottom: 14px; padding: 16px; }
+.device-alert-rule-card > strong { font-size: 13px; }
+.device-alert-rule-card .permission-row.inline { padding: 6px 0; }
+.device-alert-priority-list { display: grid; gap: 8px; }
+.device-alert-priority-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: #f4f6fc; }
+.device-alert-priority-row.disabled { opacity: .5; }
+.device-alert-priority-row b { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: #fff; background: var(--fc-brand); font-size: 11px; }
+.device-alert-priority-row span { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.device-alert-priority-row strong { font-size: 12px; }
+.device-alert-priority-row small { color: #8b9099; font-size: 10px; }
+.device-alert-priority-move { display: flex; flex-direction: column; gap: 2px; }
+.device-alert-priority-move button { width: 26px; height: 20px; border-radius: 6px; background: #fff; color: #6a7282; font-size: 10px; box-shadow: var(--fc-shadow); }
+.device-alert-matrix { width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 11px; }
+.device-alert-matrix th { padding: 6px 4px; color: #9297a0; font-size: 9px; font-weight: 700; text-align: center; }
+.device-alert-matrix th:first-child { text-align: left; }
+.device-alert-matrix td { padding: 10px 4px; border-top: 1px solid #eceef1; text-align: center; }
+.device-alert-matrix td:first-child { text-align: left; }
+.device-alert-matrix strong { display: block; font-size: 11.5px; }
+.device-alert-matrix small { color: var(--fc-brand); font-size: 9px; font-weight: 700; }
+.device-alert-preview-text { padding: 10px 12px; border-radius: 12px; background: #fceaf0; color: #7a1030; font-size: 12px; font-weight: 600; }
+.device-alert-quiet-range > div { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.device-alert-quiet-range input { flex: 1; min-width: 0; }
+.device-alert-test-result { display: grid; gap: 6px; margin-bottom: 14px; padding: 16px; }
+.device-alert-test-result.voice { background: #fff8ee; }
+.device-alert-test-result p { font-size: 13px; font-weight: 600; }
+

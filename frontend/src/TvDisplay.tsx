@@ -1,63 +1,26 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, formatDate, formatTime, type Assignment, type Bootstrap, type EmergencyRequest, type FamilyMe, type Notice } from './api'
+import { api, send, formatDate, formatTime, type Assignment, type Bootstrap, type EmergencyRequest, type FamilyMe } from './api'
+import { beep, contentKeyForNotice, speak, speechMessageFor, tierForNotice, type DeviceAlert } from './deviceAlertShared'
 import './tv.css'
 import tvNewsBackground from '../../asset/tv-news-background.png'
 
 const tvNewsVideo = '/YTDown.com_YouTube_Media_enRjBDUlWGo_001_720p.mp4'
 
-type Tier = 1 | 2 | 3 | 4
-type TvAlert = {
-  key: string
-  tier: Tier
-  title: string
-  body: string
-  meta: string
-  kind: 'notice' | 'schedule' | 'emergency'
-}
+type TvAlert = DeviceAlert
 
-const tierForNotice = (notice: Notice): Tier => {
-  if (notice.action_type === 'HANDOFF' || notice.action_type === 'ASSIGNMENT_REQUEST') return 3
-  if (notice.action_type === 'ASSIGNMENT_RESULT' && /완료/.test(notice.title)) return 1
-  if (notice.level === 'IMPORTANT') return 2
-  return 1
-}
-
-const beep = (strong = false) => {
-  try {
-    const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-    if (!AudioContextClass) return
-    const context = new AudioContextClass()
-    const oscillator = context.createOscillator()
-    const gain = context.createGain()
-    oscillator.type = 'sine'
-    oscillator.frequency.value = strong ? 720 : 520
-    gain.gain.setValueAtTime(0.0001, context.currentTime)
-    gain.gain.exponentialRampToValueAtTime(strong ? 0.16 : 0.08, context.currentTime + 0.02)
-    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + (strong ? 0.42 : 0.22))
-    oscillator.connect(gain).connect(context.destination)
-    oscillator.start()
-    oscillator.stop(context.currentTime + (strong ? 0.45 : 0.25))
-    oscillator.addEventListener('ended', () => void context.close())
-  } catch { /* browser audio is optional for the display */ }
-}
-
-const speakAlert = (next: TvAlert, enabled = true) => {
-  if (!enabled) return
-  if (!('speechSynthesis' in window)) return
-  window.speechSynthesis.cancel()
-  const message = next.kind === 'emergency'
-    ? '긴급 돌봄 요청이 발생했어요. 확인이 필요합니다.'
-    : next.kind === 'schedule'
-      ? '픽업 시간이 가까워졌어요. 일정을 확인해주세요.'
-      : next.title
-  const utterance = new SpeechSynthesisUtterance(message)
-  utterance.lang = 'ko-KR'
-  const koreanVoice = window.speechSynthesis.getVoices().find(voice => voice.lang.toLowerCase().startsWith('ko'))
-  if (koreanVoice) utterance.voice = koreanVoice
-  utterance.rate = 1.02
-  utterance.pitch = 1.32
-  utterance.volume = 1
-  window.speechSynthesis.speak(utterance)
+// Reports whether this screen is actually visible (not locked/minimized) so the
+// backend's "TV on/off" rule can decide whether to pop it up here or speak it
+// through the priority voice appliance instead. Windows screen lock (Win+L)
+// does NOT reliably fire visibilitychange on every Chromium build — the OS lock
+// screen is a separate secure desktop, so the browser tab can stay "visible" as
+// far as the Page Visibility API is concerned. Losing window focus is the more
+// reliable signal for that case, so a screen only counts as "on" when it is
+// both visible AND focused, and both the visibilitychange/blur/focus events and
+// the regular poll loop re-check and re-report this on every tick instead of
+// only ever reporting "on" and waiting for a one-shot event to report "off".
+const isTvScreenActive = () => document.visibilityState === 'visible' && document.hasFocus()
+const reportTvStatus = (status: 'on' | 'off') => {
+  void send('/device-alerts/tv-status', 'POST', { status, device_id: 'tv_living' }).catch(() => {})
 }
 
 const asAssignmentKey = (assignment: Assignment) => `schedule:${assignment.id}`
@@ -74,15 +37,29 @@ function TvDisplay() {
   const alertRef = useRef<TvAlert | null>(null)
   const startedRef = useRef(false)
   const videoRef = useRef<HTMLVideoElement>(null)
+  // TV is a visual channel now — it only makes sound for emergencies, and only
+  // when "긴급 알림은 TV 화면에도 소리로 함께" is on (see 가전 알림 우선순위 설정 · 우선순위)
+  // AND this screen currently counts as "on" — otherwise a locked/backgrounded
+  // TV would keep beeping out loud even though the alert should have moved to
+  // the priority voice appliance instead.
+  const emergencyTvSoundRef = useRef(true)
+  const tvActiveRef = useRef(true)
+  // Real Windows session lock (Win+L) does not reliably fire visibilitychange or
+  // blur/focus on every Chromium build — the lock screen is a separate "secure
+  // desktop" that some Windows/Chrome combinations never tell the page about, so
+  // automatic detection alone can't be trusted for a live demo. This lets the
+  // presenter force the reported status directly instead of depending on it.
+  const [manualForceOff, setManualForceOff] = useState(false)
+  const manualForceOffRef = useRef(false)
 
   const showAlert = (next: TvAlert) => {
     if (activeAlertKey.current === next.key || dismissedAlertKeys.current.has(next.key)) return
     activeAlertKey.current = next.key
     alertRef.current = next
     setAlert(next)
-    if (startedRef.current) {
-      if (!voiceMuted) beep(next.tier === 4)
-      speakAlert(next, !voiceMuted)
+    if (startedRef.current && next.tier === 4 && emergencyTvSoundRef.current && tvActiveRef.current) {
+      if (!voiceMuted) beep(true)
+      if (!voiceMuted) speak(speechMessageFor(next))
     }
     const timeout = next.tier === 4 ? 0 : next.tier === 3 ? 25_000 : next.tier === 2 ? 12_000 : 5_000
     if (timeout) window.setTimeout(() => {
@@ -94,22 +71,50 @@ function TvDisplay() {
     }, timeout)
   }
 
+  const reportTvStatusNow = () => {
+    const active = !manualForceOffRef.current && isTvScreenActive()
+    tvActiveRef.current = active
+    reportTvStatus(active ? 'on' : 'off')
+  }
+
   useEffect(() => {
     startedRef.current = started
   }, [started])
+
+  useEffect(() => {
+    manualForceOffRef.current = manualForceOff
+    reportTvStatusNow()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manualForceOff])
+
+  useEffect(() => {
+    reportTvStatusNow()
+    document.addEventListener('visibilitychange', reportTvStatusNow)
+    window.addEventListener('blur', reportTvStatusNow)
+    window.addEventListener('focus', reportTvStatusNow)
+    window.addEventListener('pagehide', () => { tvActiveRef.current = false; reportTvStatus('off') })
+    return () => {
+      document.removeEventListener('visibilitychange', reportTvStatusNow)
+      window.removeEventListener('blur', reportTvStatusNow)
+      window.removeEventListener('focus', reportTvStatusNow)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     const load = async () => {
       try {
         const fresh = `?tv_refresh=${Date.now()}`
-        const [nextMe, nextSnapshot, emergencyResult] = await Promise.all([
+        const [nextMe, nextSnapshot, emergencyResult, deviceAlertResult] = await Promise.all([
           api<FamilyMe>(`/families/me${fresh}`),
           api<Bootstrap>(`/bootstrap${fresh}`),
           api<{ requests: EmergencyRequest[] }>(`/emergency-requests${fresh}`),
+          api<{ settings: { emergency_tv_sound: boolean } }>(`/device-alerts${fresh}`).catch(() => null),
         ])
         if (cancelled) return
         setConnected(true)
+        if (deviceAlertResult) emergencyTvSoundRef.current = deviceAlertResult.settings.emergency_tv_sound
+        reportTvStatusNow()
         if (!nextSnapshot.notification_preferences.find(item => item.member_id === nextMe.member.id)?.device_enabled) {
           nextSnapshot.notifications.forEach(notice => seenNoticeIds.current.add(notice.id))
           if (alertRef.current) {
@@ -126,6 +131,7 @@ function TvDisplay() {
             key: `emergency:${openEmergency.id}`,
             tier: 4,
             kind: 'emergency',
+            contentKey: 'emergency_request',
             title: `🚨 ${openEmergency.item_title}`,
             body: openEmergency.reason,
             meta: '지금 대응 가능한 가족이 있나요?',
@@ -147,6 +153,7 @@ function TvDisplay() {
               key: `notice:${incoming.id}`,
               tier: tierForNotice(incoming),
               kind: 'notice',
+              contentKey: contentKeyForNotice(incoming),
               title: incoming.title,
               body: incoming.body,
               meta: incoming.level === 'IMPORTANT' ? '휴대폰에서 확인해주세요' : '가족 돌봄 현황에 반영됐어요',
@@ -170,6 +177,7 @@ function TvDisplay() {
               key: asAssignmentKey(soon.assignment),
               tier: 2,
               kind: 'schedule',
+              contentKey: 'departure_reminder',
               title: `${soon.careItem.title} 픽업 시간이에요`,
               body: `${formatDate(soon.careItem.starts_at)} ${formatTime(soon.careItem.starts_at)} · 담당 ${member}`,
               meta: '출발 준비를 확인해주세요',
@@ -221,6 +229,9 @@ function TvDisplay() {
       }}>{newsMuted ? '🔇 뉴스 소리 켜기' : '🔊 뉴스 소리 끄기'}</button>
       <button type="button" onClick={() => setVoiceMuted(value => !value)}>
         {voiceMuted ? '🔇 안내 음성 켜기' : '🔊 안내 음성 끄기'}
+      </button>
+      <button type="button" className={manualForceOff ? 'tv-force-off active' : 'tv-force-off'} onClick={() => setManualForceOff(value => !value)}>
+        {manualForceOff ? '🔒 TV 꺼짐으로 표시 중 · 되돌리기' : '시연용: TV 꺼짐으로 표시'}
       </button>
     </div>
 

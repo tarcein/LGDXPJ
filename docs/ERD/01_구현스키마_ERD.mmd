@@ -29,6 +29,9 @@ erDiagram
         string family_id FK
         string name
         string age_label
+        string photo_storage_path
+        string photo_mime_type
+        datetime photo_updated_at
     }
     personalSchedule["Personal Schedule"] {
         string id PK
@@ -37,6 +40,7 @@ erDiagram
         string title
         datetime starts_at
         datetime ends_at
+        bool has_end_time
         string kind
         string external_source
         string external_id
@@ -51,6 +55,7 @@ erDiagram
         string category
         datetime starts_at
         datetime ends_at
+        bool has_end_time
         string source
         string recurrence_id
         string recurrence_rule
@@ -124,6 +129,7 @@ erDiagram
         string member_id PK, FK
         bool app_enabled
         bool daily_digest_enabled
+        bool device_enabled
     }
     familyInviteCode["Family Invite Code"] {
         string family_id PK, FK
@@ -196,6 +202,14 @@ erDiagram
         string status
         datetime created_at
     }
+    pushDeviceToken["Push Device Token"] {
+        string token PK
+        string family_id FK
+        string member_id FK
+        string platform
+        datetime created_at
+        datetime updated_at
+    }
     memberBenefitLocation["Member Benefit Location"] {
         string family_id PK, FK
         string member_id PK, FK
@@ -261,6 +275,7 @@ erDiagram
     familyGroup ||--o{ emergencyRequest : "raises"
     familyGroup ||--o{ mediaAsset : "owns"
     familyGroup ||--o{ deviceAlertOutbox : "queues"
+    familyGroup ||--o{ pushDeviceToken : "registers"
     familyGroup ||--o{ memberBenefitLocation : "has"
     familyGroup ||--o| familySubscription : "subscribes"
     familyGroup ||--o{ paymentTransaction : "records"
@@ -291,6 +306,7 @@ erDiagram
     familyMember o|--o{ emergencyRequest : "claims"
     familyMember o|--o{ mediaAsset : "uploads"
     familyMember ||--o{ deviceAlertOutbox : "targets"
+    familyMember ||--o{ pushDeviceToken : "holds"
     familyMember ||--o{ memberBenefitLocation : "locates"
     familyMember ||--o{ calendarOauthState : "authorizes"
     familyMember ||--o{ calendarConnection : "connects"

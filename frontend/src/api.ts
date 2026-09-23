@@ -2,7 +2,7 @@ export type Screen =
   | 'thinq' | 'serviceLoading' | 'lockscreen' | 'home' | 'careHub' | 'familyHub' | 'more' | 'family' | 'capture' | 'review' | 'assignments' | 'suggestion'
   | 'schedule' | 'exception' | 'tasks' | 'notifications'
   | 'members' | 'permissions' | 'plan' | 'chat' | 'emergency'
-  | 'assignmentDetail' | 'album' | 'programs' | 'settings' | 'onboarding' | 'calendar' | 'gap' | 'supplies' | 'homework'
+  | 'assignmentDetail' | 'album' | 'programs' | 'settings' | 'onboarding' | 'calendar' | 'gap' | 'supplies' | 'homework' | 'deviceAlerts'
 
 export interface Family { id: string; name: string; plan: string }
 export interface Member { id: string; name: string; role: string; status: string; is_owner: boolean; created_at?: string; is_online?: boolean | number }
@@ -43,6 +43,19 @@ export interface ChatAnswer {
   usage: { total_tokens: number; used_today: number; limit: number; remaining: number }; plan: string
 }
 export interface EmergencyRequest { id: string; assignment_id: string; requested_by_member_id: string; claimed_by_member_id: string | null; reason: string; status: string; item_title: string }
+export interface DeviceCatalogItem { id: string; name: string; type: 'SCREEN' | 'VOICE' | 'NONE'; location: string; note?: string }
+export interface ContentKeyMeta { id: string; label: string; locked: boolean }
+export type ContentMatrixScope = Record<string, { tv: boolean; voice: boolean }>
+export interface DeviceAlertSettings {
+  devices: string[]; priority: string[]
+  content_matrix: ContentMatrixScope
+  emergency_tv_sound: boolean
+  speech_volume: number
+  quiet_start: string; quiet_end: string; mute_during_naptime: boolean
+  tv_status: 'on' | 'off'; tv_status_at: string | null
+}
+export interface DeviceAlertsResponse { settings: DeviceAlertSettings; catalog: DeviceCatalogItem[]; content_keys: ContentKeyMeta[]; tv_online: boolean }
+export interface DeviceAlertTestResult { channel: 'TV' | 'VOICE' | null; device_id: string | null; device_name: string | null; title: string; message: string }
 export interface CalendarConnection { provider: 'google' | 'microsoft'; configured: boolean; api_key_configured?: boolean; connected: boolean; connected_at: string | null; synced_at: string | null }
 export interface AlbumPhoto { id: string; child_id: string | null; assignment_id: string | null; kind: string; file_name: string; mime_type: string; data_url: string; caption: string; created_at: string; date_folder?: string; storage_path?: string; uploaded_by_member_id?: string | null; can_delete: boolean }
 export interface BillingConfig { provider: 'TOSS'; configured: boolean; integration_mode: 'WIDGET' | 'BILLING_AUTH'; client_key: string; customer_key: string; amount: number; currency: 'KRW'; status: string; next_billing_at: string | null }

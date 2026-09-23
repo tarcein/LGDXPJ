@@ -9,13 +9,15 @@ flowchart TD
     C0 -- "이내" --> C["사용자: 사진 촬영/첨부"]:::user
     C --> D["시스템: OCR 텍스트 인식"]:::system
     D --> D1["시스템: 당일 OCR 사용 횟수 차감"]:::system
-    D1 --> E["시스템: 정보 구조화\n(일정/준비물/할 일/변경사항)"]:::system
+    D1 --> E["시스템: 정보 구조화\n(일정/준비물/숙제/할 일/변경사항)"]:::system
     B --> E
     E --> F{"시스템: 기존 정보와 중복?"}:::decision
     F -- "예" --> G["시스템: 병합 여부 확인 요청"]:::system
     F -- "아니오" --> H["시스템: 가족 공용 데이터 반영"]:::system
     G --> H
-    H --> End(["돌봄 정보 등록 완료\n→ 가족 역할 조율(Role Match)로 전달"]):::terminal
+    H --> I{"시스템: 날짜가 있는\n일정·변경사항인가?"}:::decision
+    I -- "예" --> End(["등록 완료\n→ 가족 역할 조율(Role Match)로 전달"]):::terminal
+    I -- "아니오\n(준비물·숙제·기타 할 일)" --> End2(["등록 완료\n→ 준비물/숙제 확인 화면에 마감일별로 표시"]):::terminal
 
     classDef user fill:#DCEEFB,stroke:#4A90D9,stroke-width:1px,color:#1a1a1a;
     classDef system fill:#F0F0F0,stroke:#888888,stroke-width:1px,color:#1a1a1a;

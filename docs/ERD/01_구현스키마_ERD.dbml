@@ -30,6 +30,9 @@ Table child {
   family_id text [not null, ref: > family_group.id]
   name text [not null]
   age_label text [not null]
+  photo_storage_path text
+  photo_mime_type text
+  photo_updated_at datetime
 }
 
 Table personal_schedule {
@@ -39,6 +42,7 @@ Table personal_schedule {
   title text [not null]
   starts_at datetime [not null]
   ends_at datetime [not null]
+  has_end_time boolean [not null, default: true]
   kind text [not null, default: 'ROUTINE']
   external_source text
   external_id text
@@ -54,6 +58,7 @@ Table child_schedule {
   category text [not null]
   starts_at datetime [not null]
   ends_at datetime [not null]
+  has_end_time boolean [not null, default: true]
   source text [not null, default: 'MANUAL']
   recurrence_id text
   recurrence_rule text
@@ -137,6 +142,7 @@ Table notification_preference {
   member_id text [pk, ref: > family_member.id]
   app_enabled boolean [not null, default: true]
   daily_digest_enabled boolean [not null, default: true]
+  device_enabled boolean [not null, default: false]
 }
 
 Table family_invite_code {
@@ -218,6 +224,15 @@ Table device_alert_outbox {
   body text [not null]
   status text [not null, default: 'NOT_CONNECTED']
   created_at datetime [not null]
+}
+
+Table push_device_token {
+  token text [pk]
+  family_id text [not null, ref: > family_group.id]
+  member_id text [not null, ref: > family_member.id]
+  platform text [not null, default: 'ANDROID']
+  created_at datetime [not null]
+  updated_at datetime [not null]
 }
 
 Table member_benefit_location {

@@ -6,7 +6,7 @@
 - 원본 Mermaid: [`01_구현스키마_ERD.mmd`](./01_구현스키마_ERD.mmd)
 - dbdiagram.io용 DBML: [`01_구현스키마_ERD.dbml`](./01_구현스키마_ERD.dbml)
 - MVP 핵심 기능만 추린 DBML: [`02_MVP_핵심기능_ERD.dbml`](./02_MVP_핵심기능_ERD.dbml)
-- 현재 엔터티 수: 28개
+- 현재 엔터티 수: 29개
 - 저장소: 로컬 테스트 SQLite / `DATABASE_URL` 설정 시 PostgreSQL 호환 경로
 
 ## 읽는 법
@@ -24,8 +24,9 @@
 - `family_group`이 테넌트 경계이며 대부분의 기능 테이블이 `family_id`로 연결된다.
 - `notification.action_type/action_id`는 다형성 참조라 실제 FK를 만들지 않는다.
 - `family_subscription`과 `payment_transaction`은 구현상 `family_id`를 통해 연결된다. 결제 거래가 구독 행을 직접 참조하지 않는 현재 코드 구조를 그대로 표시했다.
-- `media_asset.storage_path`, `date_folder`, `care_handoff.special_note`처럼 `initialize()`에서 후속 추가된 핵심 컬럼도 포함했다. (가독성을 위해 모든 운영 컬럼을 전부 나열하지는 않았다.)
+- `media_asset.storage_path`, `date_folder`, `care_handoff.special_note`, `child.photo_storage_path/photo_mime_type/photo_updated_at`(아이 프로필 사진), `notification_preference.device_enabled`(TV 가전 알림 토글), `personal_schedule.has_end_time`/`child_schedule.has_end_time`(시간 없는 종일 일정 여부)처럼 `initialize()`에서 후속 추가된 핵심 컬럼도 포함했다. (가독성을 위해 모든 운영 컬럼을 전부 나열하지는 않았다.)
+- `push_device_token`(Android 푸시 토큰 등록) 테이블을 포함했다. 이전 버전 ERD에는 누락돼 있었다.
 
 ## 설계 문서와의 차이
 
-`docs/LG_가족_운영_에이전트_데이터객체정의서_완성.md`의 DBML은 PostgreSQL 목표 모델(34개 객체)이다. 반면 이 ERD는 현재 구현 모델(27개 테이블)이다. 따라서 `account`, `subscription_plan`, `care_alternative`, `care_completion`, `care_note`, `family_album` 등 목표 모델 전용 테이블은 이 구현 ERD에 넣지 않았다. 구현 DB를 목표 모델로 마이그레이션할 때는 두 문서를 함께 갱신해야 한다.
+`docs/LG_가족_운영_에이전트_데이터객체정의서_완성.md`의 DBML은 PostgreSQL 목표 모델(34개 객체)이다. 반면 이 ERD는 현재 구현 모델(29개 테이블)이다. 따라서 `account`, `subscription_plan`, `care_alternative`, `care_completion`, `care_note`, `family_album` 등 목표 모델 전용 테이블은 이 구현 ERD에 넣지 않았다. 구현 DB를 목표 모델로 마이그레이션할 때는 두 문서를 함께 갱신해야 한다.

@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, send, upload, setFamilyToken, hasFamilyToken, ApiError, formatDate, formatTime, type Assignment, type Bootstrap, type CareItem, type Child, type Screen, type Suggestion, type FamilyMe, type FamilySession, type ChatAnswer, type EmergencyRequest, type CalendarConnection, type Notice, type AlbumPhoto, type Benefit, type BenefitLocation, type CareInstitution, type EligibilityCriteria, type BillingConfig, type BillingOrder, type ChatCard } from './api'
+import { api, send, upload, setFamilyToken, hasFamilyToken, ApiError, formatDate, formatTime, type Assignment, type Bootstrap, type CareItem, type Child, type Screen, type Suggestion, type FamilyMe, type FamilySession, type ChatAnswer, type EmergencyRequest, type CalendarConnection, type Notice, type AlbumPhoto, type Benefit, type BenefitLocation, type CareInstitution, type EligibilityCriteria, type BillingConfig, type BillingOrder, type ChatCard, type DeviceAlertsResponse, type DeviceAlertTestResult } from './api'
+import { speechMessageFor } from './deviceAlertShared'
 import voiceIcon from '../../asset/assistant-main-logo-centered.png'
 import googleIcon from '../../asset/google.png'
 import outlookIcon from '../../asset/outlook.png'
@@ -38,6 +39,7 @@ import notificationsUiIcon from '../../asset/아이콘/알림함_web.png'
 import notificationSettingsUiIcon from '../../asset/아이콘/알림설정_web.png'
 import careGapUiIcon from '../../asset/아이콘/돌봄공백예측_web.png'
 import careProgramUiIcon from '../../asset/아이콘/돌봄제도.png'
+import deviceAlertPriorityUiIcon from '../../asset/아이콘/가전알림우선순위.png'
 import planPaymentUiIcon from '../../asset/아이콘/플랜결제_web.png'
 import proCharacter from '../../asset/프로안내화면/프로캐릭터.png'
 import proPlanBadge from '../../asset/프로안내화면/프로플랜.png'
@@ -57,7 +59,7 @@ const groups: { title: string; pages: [Screen, string][] }[] = [
   { title: '돌봄 정보', pages: [['family', '알림장·돌봄 정보'], ['capture', '알림장 등록'], ['review', '추출 결과 확인'], ['supplies', '준비물 확인'], ['homework', '숙제 확인'], ['assignments', '오늘의 배정'], ['assignmentDetail', '배정 상세'], ['suggestion', '배정 제안'], ['tasks', '오늘 할 일']] },
   { title: '돌봄 흐름', pages: [['schedule', '개인 일정'], ['exception', '예외 상황'], ['notifications', '알림함']] },
   { title: '가족 · 설정', pages: [['onboarding', '온보딩'], ['calendar', '캘린더 연동'], ['members', '가족 구성원'], ['permissions', '정보 공개 권한'], ['album', '모음ZIP'], ['settings', '알림 설정'], ['plan', '플랜 비교']] },
-  { title: '확장 화면', pages: [['chat', 'AI 채팅'], ['emergency', '긴급 요청'], ['gap', '돌봄 공백 예측'], ['programs', '돌봄 제도']] },
+  { title: '확장 화면', pages: [['chat', 'AI 채팅'], ['emergency', '긴급 요청'], ['gap', '돌봄 공백 예측'], ['programs', '돌봄 제도'], ['deviceAlerts', '가전 알림 우선순위']] },
 ]
 const typeLabel: Record<string, string> = { SCHEDULE: '일정', SUPPLY: '준비물', TODO: '할 일', CHANGE: '변경사항', HOMEWORK: '숙제' }
 const childScheduleLabel: Record<string, string> = { ACADEMY: '학원', SCHOOL: '학교', AFTER_SCHOOL: '방과후', ACTIVITY: '활동', OTHER: '기타' }
@@ -385,6 +387,12 @@ function App() {
   const [benefitDistrict, setBenefitDistrict] = useState('')
   const [benefitLocationBusy, setBenefitLocationBusy] = useState(false)
   const [deviceNoticeDemo, setDeviceNoticeDemo] = useState(false)
+  const [deviceAlertData, setDeviceAlertData] = useState<DeviceAlertsResponse | null>(null)
+  const [deviceAlertStep, setDeviceAlertStep] = useState<'main' | 'devices' | 'priority' | 'content' | 'quiet' | 'test'>('main')
+  const [deviceAlertDraftDevices, setDeviceAlertDraftDevices] = useState<string[]>([])
+  const [deviceAlertDraftPriority, setDeviceAlertDraftPriority] = useState<string[]>([])
+  const [deviceAlertTestResult, setDeviceAlertTestResult] = useState<DeviceAlertTestResult | null>(null)
+  const [deviceAlertTestForceOff, setDeviceAlertTestForceOff] = useState(false)
   const contentRef = useRef<HTMLElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const uploadInputRef = useRef<HTMLInputElement>(null)
@@ -533,12 +541,13 @@ function App() {
     }
   }, [billingOpen, screen, subscription?.status])
   useEffect(() => {
-    history.replaceState({ ...history.state, lgdxScreen: initialScreenRef.current, lgdxDepth: 0 }, '')
+    history.replaceState({ ...history.state, lgdxScreen: initialScreenRef.current, lgdxDepth: 0, lgdxDeviceAlertStep: undefined }, '')
     const handleBack = (event: PopStateEvent) => {
       setScheduleSheet('NONE'); setShowSheet(false); setSelectedAlbumPhoto(null)
       const target = event.state?.lgdxScreen as Screen | undefined
       if (target) {
         setError(''); setScreen(target)
+        if (target === 'deviceAlerts') setDeviceAlertStep((event.state?.lgdxDeviceAlertStep as typeof deviceAlertStep | undefined) ?? 'main')
         return
       }
       const fallback: Screen = hasFamilyToken() ? 'home' : 'thinq'
@@ -579,6 +588,8 @@ function App() {
       .then(result => setEmergencyRequests(result.requests)).catch(reportError)
     if (screen === 'calendar' && activeFamilyId) api<{ connections: CalendarConnection[] }>('/calendar-connections')
       .then(result => setCalendarConnections(result.connections)).catch(reportError)
+    if (screen === 'deviceAlerts' && activeFamilyId) api<DeviceAlertsResponse>('/device-alerts')
+      .then(result => { setDeviceAlertData(result); setDeviceAlertDraftDevices(result.settings.devices); setDeviceAlertDraftPriority(result.settings.priority) }).catch(reportError)
     if (screen === 'album' && activeFamilyId && boot?.family.plan === 'PRO') api<{ photos: AlbumPhoto[] }>('/album/photos')
       .then(result => setAlbumPhotos(result.photos)).catch(reportError)
     if (screen === 'programs' && activeFamilyId && boot?.family.plan === 'PRO' && !benefitsLoadedRef.current) {
@@ -625,7 +636,11 @@ function App() {
       setProGateFeature(paidFeatureNames[target]!)
       return
     }
-    if (target !== screen) history.pushState({ ...history.state, lgdxScreen: target, lgdxDepth: Number(history.state?.lgdxDepth ?? 0) + 1 }, '')
+    // lgdxDeviceAlertStep must never survive a jump to a different top-level screen —
+    // otherwise it leaks forward through this spread into every later history entry
+    // (including ones unrelated to deviceAlerts) and a later hardware/browser back
+    // press can resurrect a stale sub-step instead of landing on that screen's own start.
+    if (target !== screen) history.pushState({ ...history.state, lgdxScreen: target, lgdxDepth: Number(history.state?.lgdxDepth ?? 0) + 1, lgdxDeviceAlertStep: undefined }, '')
     setScreen(target)
     if (target === 'home') load().catch(reportError)
   }
@@ -635,7 +650,7 @@ function App() {
       history.back()
       return
     }
-    history.replaceState({ ...history.state, lgdxScreen: fallback, lgdxDepth: 0 }, '')
+    history.replaceState({ ...history.state, lgdxScreen: fallback, lgdxDepth: 0, lgdxDeviceAlertStep: undefined }, '')
     setScreen(fallback)
   }
   const openFamilyService = () => {
@@ -1546,6 +1561,13 @@ function App() {
       }, `개발용 플랜을 ${next}로 바꿨어요`)
     } finally { setPlanBusy(false) }
   }
+  const patchDeviceAlertSettings = (payload: Record<string, unknown>, message: string) => run(async () => {
+    const result = await send<DeviceAlertsResponse>('/device-alerts', 'PATCH', payload)
+    setDeviceAlertData(result)
+  }, message)
+  const runDeviceAlertTest = () => run(async () => {
+    setDeviceAlertTestResult(await send<DeviceAlertTestResult>('/device-alerts/test', 'POST', { assume_tv_off: deviceAlertTestForceOff }))
+  }, '테스트 알림을 보냈어요')
   const toggleBilling = async () => {
     if (billingBusy) return
     if (billingOpen) {
@@ -1896,6 +1918,7 @@ function App() {
       <button onClick={() => go('plan')}><i><img src={planPaymentUiIcon} alt="" /></i><span><strong>플랜·결제</strong><small>{plan === 'PRO' ? 'Pro 구독 중' : 'Free 이용 중'}</small></span><b>›</b></button>
       <button onClick={() => go('gap')}><i><img src={careGapUiIcon} alt="" /></i><span><strong>돌봄 공백 예측</strong><small>다음 주 공백 시간 미리 확인</small></span>{plan === 'PRO' ? <em className="small-badge ok">이용 가능</em> : <Pro />}<b>›</b></button>
       <button onClick={() => go('programs')}><i><img src={careProgramUiIcon} alt="" /></i><span><strong>돌봄 제도 안내</strong><small>정부 지원 제도 맞춤 안내</small></span>{plan === 'PRO' ? <em className="small-badge ok">이용 가능</em> : <Pro />}<b>›</b></button>
+      <button onClick={() => { setDeviceAlertStep('main'); go('deviceAlerts') }}><i><img src={deviceAlertPriorityUiIcon} alt="" /></i><span><strong>가전 알림 우선순위</strong><small>TV·정수기 등 어디로 먼저 보낼지 설정</small></span>{plan === 'PRO' ? <em className="small-badge ok">이용 가능</em> : <Pro />}<b>›</b></button>
     </div>
     <div className="more-policy-list"><button>🏳️ <span>서비스 이용 약관</span><b>›</b></button><button><img src={lockIcon} alt="" /> <span>개인정보 처리방침</span><b>›</b></button><button className="logout" onClick={logout}>↩️ <span>로그아웃</span><b>›</b></button></div>
     <small className="app-version">ZIPPY v0.9.1 · 개발 중</small>
@@ -1927,7 +1950,112 @@ function App() {
   if (screen === 'onboarding' && !invitationFromUrl && onboardStep === 'INVITE') page = <div className="onboard-flow invite-code-page"><span className="eyebrow">초대하기</span><h2 className="hero-title">가족 초대하기</h2><p className="hero-copy">아래 코드나 링크를 공유하면 ZIPPY에 함께할 수 있어요.</p><Card className="invite-code-card"><label>초대 코드</label><div><strong>{inviteCode || '코드 생성 중'}</strong><button onClick={() => { void navigator.clipboard?.writeText(inviteCode); setToast('초대 코드를 복사했어요.') }}>복사 ✓</button></div><small>코드는 만료 전까지 여러 가족이 사용할 수 있어요.</small></Card><Card className="invite-link-card"><label>초대 링크</label><div><input value={inviteLink} readOnly /><button onClick={() => void copyInvite()}>복사 ✓</button></div></Card><button className="kakao-share wide-button" onClick={() => void shareInvite('kakao')}><img src={inviteKakaoIcon} alt="" />카카오톡으로 공유하기</button><div className="invite-share-options"><button onClick={() => void shareInvite('sms')}><img src={inviteMessageIcon} alt="" />문자 메시지</button><button onClick={() => void copyInvite()}><img src={inviteLinkIcon} alt="" />링크 복사</button></div><Card className="permission-separation"><strong>권한은 분리됩니다</strong><p>ZIPPY에 초대해도 가전 제어 권한은 따라가지 않습니다.</p></Card><button className="primary-button wide-button" onClick={() => go('home')}>가족방으로 들어가기</button></div>
   if (boot && screen === 'calendar') page = <><div className="eyebrow">개인 캘린더 연동</div><h2 className="hero-title">개인 일정을<br />편하게 연동해보세요</h2><p className="hero-copy">Google Calendar나 Outlook을 연결하면 업무·약속·개인 일정을 가족 캘린더에서 한 번에 확인할 수 있어요.</p>{calendarConnections.map(connection => { const label = connection.provider === 'google' ? 'Google Calendar' : 'Outlook Calendar'; return <Card key={connection.provider} className="calendar-provider"><img className="provider-icon" src={connection.provider === 'google' ? googleIcon : outlookIcon} alt="" /><div><strong>{label}</strong><p>{connection.connected ? `연결됨${connection.synced_at ? ' · 최근 동기화 ' + formatDate(connection.synced_at) : ''}` : connection.configured ? '계정을 연결할 수 있어요' : 'OAuth 앱 설정이 필요해요'}</p></div>{connection.connected ? <button className="text-link" onClick={() => syncCalendar(connection.provider)}>동기화</button> : <button className="text-link" disabled={!connection.configured} onClick={() => connectCalendar(connection.provider)}>{connection.configured ? '연결' : '설정 전'}</button>}</Card> })}<Card className="info-note">{calendarsReady ? 'Google·Outlook OAuth 설정을 모두 확인했어요. 연결 버튼을 누르고 각 계정에서 일정 읽기 권한을 허용하면 동기화할 수 있어요.' : '사용할 캘린더의 OAuth Client ID와 Secret을 backend/.env에 설정하면 연결 버튼이 활성화돼요.'}</Card><button className="primary-button wide-button" onClick={() => { setScheduleForm('PERSONAL'); setScheduleKind('ROUTINE'); go('schedule') }}>개인 루틴 직접 등록</button></>
   if (boot && screen === 'permissions') { const targetMember = me?.member.id ?? viewer; page = <><div className="eyebrow">내 정보 공개 범위</div><h2 className="hero-title">보여주고 싶은 정보만<br />직접 선택해요</h2><p className="hero-copy">각 구성원이 자신의 정보 공개 범위를 직접 관리해요. 다른 가족의 설정은 변경할 수 없어요.</p><Section>{member(targetMember)}님의 공개 범위</Section>{[['SCHEDULE_DETAIL', '개인 일정 내용', '켜면 제목까지, 끄면 시간과 바쁨 여부만 표시'], ['WORK_DETAIL', '업무 내용', '켜면 제목까지, 끄면 시간과 바쁨 여부만 표시'], ['LOCATION', '현황', '돌봄 이동 현황']].map(([scope, name, detail]) => { const allowed = !!boot.permissions.find(p => p.member_id === targetMember && p.scope === scope)?.is_allowed; return <Card key={scope} className="permission-row"><div><strong>{name}</strong><p>{detail}</p></div><button className={'switch ' + (allowed ? 'on' : '')} role="switch" aria-checked={allowed} aria-label={name + ' 공개'} onClick={() => run(() => send('/members/' + targetMember + '/permissions', 'PATCH', { scope, is_allowed: !allowed }), '내 공개 범위를 변경했어요')}><span /></button></Card> })}<Card className="info-note">개인 일정 내용은 기본 비공개예요. 꺼두면 다른 가족에게 일정 제목 대신 ‘바쁨’으로 보여요.</Card></> }
-  if (boot && screen === 'settings') page = <><div className="eyebrow">알림 설정</div><h2 className="hero-title one-line">조용하지만 놓치지 않게</h2><p className="hero-copy">돌봄 요청이 오면 앱 알림함과 허용된 브라우저 알림으로 알려드려요.</p><Section>앱 알림</Section><Card className="permission-row"><div><strong>돌봄 알림 받기</strong><p>등록, 배정, 인수인계, 완료</p></div><button className={'switch ' + (appNotices ? 'on' : '')} role="switch" aria-checked={appNotices} aria-label="돌봄 알림 받기" onClick={() => run(() => send('/members/' + notificationMemberId + '/notification-preferences', 'PATCH', { app_enabled: !appNotices }), '알림 설정을 변경했어요')}><span /></button></Card><Card className="permission-row"><div><strong>이 기기 시스템 알림</strong><p>앱이 열려 있을 때 새 요청을 브라우저 알림으로 표시</p></div><button className="text-link" onClick={() => void enableBrowserNotifications()}>{'Notification' in window && Notification.permission === 'granted' ? '허용됨' : '허용하기'}</button></Card><Card className="permission-row"><div><strong>하루 1회 모아보기</strong><p>21:00에 확인할 정보만 요약</p></div><button className={'switch ' + (dailyDigest ? 'on' : '')} role="switch" aria-checked={dailyDigest} aria-label="하루 1회 모아보기" onClick={() => run(() => send('/members/' + notificationMemberId + '/notification-preferences', 'PATCH', { daily_digest_enabled: !dailyDigest }), '모아보기 설정을 변경했어요')}><span /></button></Card><Section>TV 가전 알림 <Pro /></Section><Card className="permission-row"><div><strong>우리 TV로 알림 받기</strong><p>{plan === 'PRO' ? '가전 알림을 켜면 우리 TV에서 돌봄 알림을 받아요.' : 'Pro 구독 후 우리 TV 가전 알림을 켤 수 있어요.'}</p></div><button className={'switch ' + (deviceNoticeDemo ? 'on' : '')} role="switch" aria-checked={deviceNoticeDemo} aria-label="우리 TV 가전 알림" onClick={() => { if (plan !== 'PRO') { go('plan'); return }; const next = !deviceNoticeDemo; setDeviceNoticeDemo(next); void run(() => send('/members/' + notificationMemberId + '/notification-preferences', 'PATCH', { device_enabled: next }), next ? '우리 TV 가전 알림을 켰어요' : '우리 TV 가전 알림을 껐어요') }}><span /></button></Card></>
+  if (boot && screen === 'settings') page = <><div className="eyebrow">알림 설정</div><h2 className="hero-title one-line">조용하지만 놓치지 않게</h2><p className="hero-copy">돌봄 요청이 오면 앱 알림함과 허용된 브라우저 알림으로 알려드려요.</p><Section>앱 알림</Section><Card className="permission-row"><div><strong>돌봄 알림 받기</strong><p>등록, 배정, 인수인계, 완료</p></div><button className={'switch ' + (appNotices ? 'on' : '')} role="switch" aria-checked={appNotices} aria-label="돌봄 알림 받기" onClick={() => run(() => send('/members/' + notificationMemberId + '/notification-preferences', 'PATCH', { app_enabled: !appNotices }), '알림 설정을 변경했어요')}><span /></button></Card><Card className="permission-row"><div><strong>이 기기 시스템 알림</strong><p>앱이 열려 있을 때 새 요청을 브라우저 알림으로 표시</p></div><button className="text-link" onClick={() => void enableBrowserNotifications()}>{'Notification' in window && Notification.permission === 'granted' ? '허용됨' : '허용하기'}</button></Card><Card className="permission-row"><div><strong>하루 1회 모아보기</strong><p>21:00에 확인할 정보만 요약</p></div><button className={'switch ' + (dailyDigest ? 'on' : '')} role="switch" aria-checked={dailyDigest} aria-label="하루 1회 모아보기" onClick={() => run(() => send('/members/' + notificationMemberId + '/notification-preferences', 'PATCH', { daily_digest_enabled: !dailyDigest }), '모아보기 설정을 변경했어요')}><span /></button></Card><Section>가전 알림 <Pro /></Section><Card className="permission-row"><div><strong>가전으로 알림 받기</strong><p>{plan === 'PRO' ? '켜면 TV·정수기 등 연동된 가전으로 돌봄 알림을 받아요.' : 'Pro 구독 후 가전 알림을 켤 수 있어요.'}</p></div><button className={'switch ' + (deviceNoticeDemo ? 'on' : '')} role="switch" aria-checked={deviceNoticeDemo} aria-label="가전으로 알림 받기" onClick={() => { if (plan !== 'PRO') { go('plan'); return }; const next = !deviceNoticeDemo; setDeviceNoticeDemo(next); void run(() => send('/members/' + notificationMemberId + '/notification-preferences', 'PATCH', { device_enabled: next }), next ? '가전 알림을 켰어요' : '가전 알림을 껐어요') }}><span /></button></Card>{plan === 'PRO' && deviceNoticeDemo && <button className="text-link settings-device-alert-link" onClick={() => { setDeviceAlertStep('main'); go('deviceAlerts') }}>어떤 가전에 어떤 알림을 보낼지 세부 설정 ›</button>}</>
+  if (boot && screen === 'deviceAlerts') {
+    const settings = deviceAlertData?.settings
+    const catalog = deviceAlertData?.catalog ?? []
+    const contentKeys = deviceAlertData?.content_keys ?? []
+    const deviceName = (id: string) => catalog.find(item => item.id === id)?.name ?? id
+    const screenDevices = catalog.filter(item => item.type === 'SCREEN')
+    const voiceDevices = catalog.filter(item => item.type === 'VOICE')
+    const noneDevices = catalog.filter(item => item.type === 'NONE')
+    const enabledPriority = settings ? settings.priority.filter(id => settings.devices.includes(id)) : []
+    const matrixOnCount = settings ? contentKeys.filter(key => settings.content_matrix[key.id]?.tv || settings.content_matrix[key.id]?.voice).length : 0
+    const goDeviceAlertStep = (step: Exclude<typeof deviceAlertStep, 'main'>) => {
+      setDeviceAlertStep(step)
+      history.pushState({ ...history.state, lgdxScreen: 'deviceAlerts', lgdxDeviceAlertStep: step }, '')
+    }
+    const back = () => history.back()
+    const patchMatrix = (keyId: string, channel: 'tv' | 'voice', value: boolean) => {
+      if (!settings) return
+      const nextMatrix = { ...settings.content_matrix, [keyId]: { ...settings.content_matrix[keyId], [channel]: value } }
+      patchDeviceAlertSettings({ content_matrix: nextMatrix }, '알림 받을 내용을 변경했어요')
+    }
+    const moveDraftPriority = (index: number, direction: -1 | 1) => {
+      const next = [...deviceAlertDraftPriority]
+      const target = index + direction
+      if (target < 0 || target >= next.length) return
+      ;[next[index], next[target]] = [next[target], next[index]]
+      setDeviceAlertDraftPriority(next)
+    }
+
+    if (!settings) {
+      page = <section className="device-alert-page"><div className="care-subscreen-title"><strong>가전 알림</strong></div><Empty title="설정을 불러오는 중이에요" text="잠시만 기다려주세요" /></section>
+    } else if (deviceAlertStep === 'devices') {
+      page = <section className="device-alert-page">
+        <div className="care-subscreen-title"><button aria-label="뒤로" onClick={back}>‹</button><strong>사용할 가전</strong><span /></div>
+        <p className="hero-copy">연결된 가전 {catalog.length}대를 찾았어요<br />화면이나 스피커가 있는 가전만 선택할 수 있어요</p>
+        <Section>화면 알림</Section>
+        <div className="device-alert-list">{screenDevices.map(device => { const checked = deviceAlertDraftDevices.includes(device.id); return <button key={device.id} className={'device-alert-row' + (checked ? ' checked' : '')} onClick={() => setDeviceAlertDraftDevices(prev => checked ? prev.filter(id => id !== device.id) : [...prev, device.id])}><span><strong>{device.name}</strong><small>{device.location}{device.id === 'tv_living' && settings.tv_status === 'on' ? ' · ● 켜짐' : device.type === 'SCREEN' ? ' · ○ 꺼짐' : ''}</small></span><i>{checked && '✓'}</i></button> })}</div>
+        <Section>음성 알림</Section>
+        <div className="device-alert-list">{voiceDevices.map(device => { const checked = deviceAlertDraftDevices.includes(device.id); return <button key={device.id} className={'device-alert-row' + (checked ? ' checked' : '')} onClick={() => setDeviceAlertDraftDevices(prev => checked ? prev.filter(id => id !== device.id) : [...prev, device.id])}><span><strong>{device.name}</strong><small>{device.location}</small></span><i>{checked && '✓'}</i></button> })}</div>
+        {!!noneDevices.length && <p className="helper-text device-alert-none-note">{noneDevices.map(device => device.name).join(' · ')} — 화면·스피커 없음 · 선택 불가</p>}
+        <button className="primary-button wide-button" onClick={() => { patchDeviceAlertSettings({ devices: deviceAlertDraftDevices }, '사용할 가전을 저장했어요'); back() }}>{deviceAlertDraftDevices.length}대 사용하기</button>
+      </section>
+    } else if (deviceAlertStep === 'priority') {
+      page = <section className="device-alert-page">
+        <div className="care-subscreen-title"><button aria-label="뒤로" onClick={back}>‹</button><strong>우선순위</strong><button className="text-link" onClick={() => { patchDeviceAlertSettings({ priority: deviceAlertDraftPriority }, '우선순위를 저장했어요'); back() }}>저장</button></div>
+        <p className="hero-copy">위에서부터 순서대로 확인해요<br />TV는 켜져 있을 때만, 나머지 가전은 항상 바로 알려드려요</p>
+        <Card className="device-alert-rule-card">
+          <p className="helper-text">버튼으로 순서를 바꿀 수 있어요 · 켜져 있지 않은 가전은 건너뛰고 다음 순위로 넘어가요</p>
+          <div className="device-alert-priority-list">{deviceAlertDraftPriority.map((id, index) => { const device = catalog.find(item => item.id === id); return <div key={id} className={'device-alert-priority-row' + (deviceAlertDraftDevices.includes(id) ? '' : ' disabled')}><b>{index + 1}</b><span><strong>{deviceName(id)}</strong><small>{device?.location}{device?.type === 'SCREEN' ? ' · 화면' : ' · 음성'}{!deviceAlertDraftDevices.includes(id) ? ' · 사용 안 함' : ''}</small></span><div className="device-alert-priority-move"><button aria-label="위로" disabled={index === 0} onClick={() => moveDraftPriority(index, -1)}>▲</button><button aria-label="아래로" disabled={index === deviceAlertDraftPriority.length - 1} onClick={() => moveDraftPriority(index, 1)}>▼</button></div></div> })}</div>
+        </Card>
+        <div className="permission-row inline"><div><strong>긴급 알림은 TV 화면에도 소리로 함께</strong><p>순위와 상관없이 TV가 켜져 있으면 항상 울려요</p></div><button className={'switch ' + (settings.emergency_tv_sound ? 'on' : '')} role="switch" aria-checked={settings.emergency_tv_sound} aria-label="긴급 알림은 TV 화면에도 소리로 함께" onClick={() => patchDeviceAlertSettings({ emergency_tv_sound: !settings.emergency_tv_sound }, '설정을 변경했어요')}><span /></button></div>
+      </section>
+    } else if (deviceAlertStep === 'content') {
+      const matrix = settings.content_matrix
+      page = <section className="device-alert-page">
+        <div className="care-subscreen-title"><button aria-label="뒤로" onClick={back}>‹</button><strong>알림 받을 내용</strong><span /></div>
+        <table className="device-alert-matrix"><thead><tr><th>내용</th><th>TV</th><th>음성</th></tr></thead><tbody>{contentKeys.map(key => { const value = matrix[key.id] ?? { tv: false, voice: false }; return <tr key={key.id}><td><strong>{key.label}</strong>{key.locked && <small>항상 켜짐</small>}</td><td><input type="checkbox" className="item-checkbox" checked={value.tv} disabled={key.locked} onChange={() => patchMatrix(key.id, 'tv', !value.tv)} /></td><td><input type="checkbox" className="item-checkbox" checked={value.voice} disabled={key.locked} onChange={() => patchMatrix(key.id, 'voice', !value.voice)} /></td></tr> })}</tbody></table>
+      </section>
+    } else if (deviceAlertStep === 'quiet') {
+      const previewAlert = { key: 'preview', tier: 2 as const, kind: 'schedule' as const, contentKey: 'departure_reminder', title: '민솔이 하원 30분 전이에요', body: '', meta: '' }
+      const previewText = speechMessageFor(previewAlert)
+      page = <section className="device-alert-page">
+        <div className="care-subscreen-title"><button aria-label="뒤로" onClick={back}>‹</button><strong>음성 · 방해 금지</strong><span /></div>
+        <Section>음성 안내</Section>
+        <Card className="device-alert-rule-card">
+          <strong>말하는 내용 미리듣기</strong>
+          <p className="device-alert-preview-text">“{previewText}”</p>
+          <label className="form-label">음량 {settings.speech_volume}%</label>
+          <input type="range" min={0} max={100} value={settings.speech_volume} onChange={event => setDeviceAlertData(prev => prev ? { ...prev, settings: { ...prev.settings, speech_volume: Number(event.target.value) } } : prev)} onMouseUp={() => patchDeviceAlertSettings({ speech_volume: settings.speech_volume }, '음량을 변경했어요')} onTouchEnd={() => patchDeviceAlertSettings({ speech_volume: settings.speech_volume }, '음량을 변경했어요')} />
+        </Card>
+        <Section>방해 금지</Section>
+        <Card className="device-alert-rule-card">
+          <div className="device-alert-quiet-range"><label className="form-label">가전 알림 끄는 시간</label><div><input type="time" className="form-control" value={settings.quiet_start} onChange={event => patchDeviceAlertSettings({ quiet_start: event.target.value }, '방해 금지 시간을 변경했어요')} /><span>–</span><input type="time" className="form-control" value={settings.quiet_end} onChange={event => patchDeviceAlertSettings({ quiet_end: event.target.value }, '방해 금지 시간을 변경했어요')} /></div></div>
+          <div className="permission-row inline"><div><strong>아이 낮잠 · 취침 중엔 음성 끄기</strong><p>루틴의 취침 시간 기준</p></div><button className={'switch ' + (settings.mute_during_naptime ? 'on' : '')} role="switch" aria-checked={settings.mute_during_naptime} aria-label="아이 낮잠 취침 중엔 음성 끄기" onClick={() => patchDeviceAlertSettings({ mute_during_naptime: !settings.mute_during_naptime }, '설정을 변경했어요')}><span /></button></div>
+        </Card>
+      </section>
+    } else if (deviceAlertStep === 'test') {
+      page = <section className="device-alert-page">
+        <div className="care-subscreen-title"><button aria-label="뒤로" onClick={back}>×</button><strong>테스트 알림</strong><span /></div>
+        <p className="hero-copy">지금 보내면 이렇게 울려요<br />우선순위 순서대로 확인해서 가장 먼저 사용 가능한 가전으로 알려드려요</p>
+        {deviceAlertTestResult && <Card className={'device-alert-test-result ' + (deviceAlertTestResult.channel === 'TV' ? 'tv' : 'voice')}>
+          <span className="small-badge ok">{deviceAlertTestResult.channel === 'TV' ? '화면 알림' : deviceAlertTestResult.channel === 'VOICE' ? '음성 알림' : '알림 없음'}</span>
+          <strong>{deviceAlertTestResult.device_name ?? '알림을 받을 가전이 없어요'}</strong>
+          <p>“{deviceAlertTestResult.message}”</p>
+        </Card>}
+        <button className="primary-button wide-button" onClick={runDeviceAlertTest}>지금 테스트로 보내기</button>
+        <button className="text-link centered" onClick={() => { setDeviceAlertTestForceOff(value => !value); setDeviceAlertTestResult(null) }}>{deviceAlertTestForceOff ? 'TV 켜짐 상태로 테스트' : 'TV 꺼짐 상태로 테스트'}</button>
+      </section>
+    } else {
+      page = <section className="device-alert-page">
+        <div className="care-subscreen-title"><strong>가전 알림</strong><Pro /></div>
+        <Card className="permission-row"><div><strong>가전으로 알림 받기</strong><p>본 스위치는 알림 설정과 항상 함께 갑니다</p></div><button className={'switch ' + (deviceNoticeDemo ? 'on' : '')} role="switch" aria-checked={deviceNoticeDemo} aria-label="가전으로 알림 받기" onClick={() => { const next = !deviceNoticeDemo; setDeviceNoticeDemo(next); void run(() => send('/members/' + notificationMemberId + '/notification-preferences', 'PATCH', { device_enabled: next }), next ? '가전 알림을 켰어요' : '가전 알림을 껐어요') }}><span /></button></Card>
+        <Section>지금 설정된 우선순위</Section>
+        <div className="device-alert-summary-list">
+          <div className="device-alert-summary-row"><span><strong>{enabledPriority.length ? enabledPriority.map((id, index) => `${index + 1} ${deviceName(id)}`).join(' → ') : '우선순위에 등록된 가전이 없어요'}</strong><small>맨 앞 가전부터 확인해서, 꺼져 있으면 자동으로 다음 순위로 넘어가요</small></span></div>
+        </div>
+        <div className="hub-list device-alert-menu">
+          <button onClick={() => { setDeviceAlertDraftDevices(settings.devices); goDeviceAlertStep('devices') }}><span><strong>사용할 가전</strong></span><small>{settings.devices.length}대 선택</small><b>›</b></button>
+          <button onClick={() => { setDeviceAlertDraftPriority(catalog.map(device => device.id).sort((a, b) => { const ai = settings.priority.indexOf(a); const bi = settings.priority.indexOf(b); return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi) })); goDeviceAlertStep('priority') }}><span><strong>우선순위</strong></span><b>›</b></button>
+          <button onClick={() => goDeviceAlertStep('content')}><span><strong>알림 받을 내용</strong></span><small>{matrixOnCount}/{contentKeys.length}</small><b>›</b></button>
+          <button onClick={() => goDeviceAlertStep('quiet')}><span><strong>음성 · 방해 금지</strong></span><small>{settings.quiet_start}-{settings.quiet_end}시</small><b>›</b></button>
+        </div>
+        <button className="outline-button wide-button" onClick={() => { setDeviceAlertTestResult(null); setDeviceAlertTestForceOff(false); goDeviceAlertStep('test') }}>테스트 알림 보내기</button>
+      </section>
+    }
+  }
   if (boot && screen === 'plan') page = <section className="pro-guide-page">
     <div className="pro-guide-hero">
       <button className="pro-guide-close" aria-label="플랜 화면 닫기" onClick={() => go('more')}>× <span>플랜</span></button>

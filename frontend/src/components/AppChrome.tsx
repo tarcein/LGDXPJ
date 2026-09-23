@@ -38,7 +38,7 @@ const navItems: { screen: Screen; label: string; icon: string; className?: strin
   { screen: 'careHub', label: '케어', icon: careTabIcon, active: ['careHub', 'assignments', 'assignmentDetail', 'suggestion', 'tasks', 'exception', 'emergency'] },
   { screen: 'schedule', label: '일정', icon: calendarTabIcon, active: ['schedule', 'calendar', 'capture', 'review', 'family', 'supplies'] },
   { screen: 'familyHub', label: '가족', icon: familyTabIcon, className: 'family-icon', active: ['familyHub', 'members', 'permissions', 'album'] },
-  { screen: 'more', label: '더보기', icon: moreTabIcon, active: ['more', 'notifications', 'settings', 'gap', 'programs', 'plan'] },
+  { screen: 'more', label: '더보기', icon: moreTabIcon, active: ['more', 'notifications', 'settings', 'gap', 'programs', 'plan', 'deviceAlerts'] },
 ]
 
 export function BottomNav({ screen, onNavigate }: Pick<ChromeProps, 'screen' | 'onNavigate'>) {
