@@ -123,12 +123,24 @@ def callback(provider: str, code: str = Query(min_length=1), state: str = Query(
         payload = {"client_id": client_id, "client_secret": client_secret, "code": code,
                    "redirect_uri": _redirect_uri(provider), "grant_type": "authorization_code",
                    "scope": "openid profile offline_access Calendars.Read"}
+    response: httpx.Response | None = None
     try:
         response = httpx.post(token_url, data=payload, timeout=30)
         response.raise_for_status()
         token = response.json()
     except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(502, detail={"code": "CALENDAR_OAUTH_FAILED", "message": "캘린더 인증을 완료하지 못했습니다"}) from exc
+        detail = {"code": "CALENDAR_OAUTH_FAILED", "message": "캘린더 인증을 완료하지 못했습니다"}
+        if response is not None:
+            try:
+                problem = response.json()
+            except ValueError:
+                problem = {}
+            if isinstance(problem, dict):
+                if problem.get("error"):
+                    detail["provider_error"] = str(problem["error"])
+                if problem.get("error_description"):
+                    detail["provider_error_description"] = str(problem["error_description"])[:500]
+        raise HTTPException(502, detail=detail) from exc
     expires_at = (_now() + timedelta(seconds=int(token.get("expires_in", 3600)))).isoformat()
     with database() as db:
         db.execute(

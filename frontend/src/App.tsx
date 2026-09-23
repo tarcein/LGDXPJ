@@ -51,7 +51,7 @@ import memberInactiveIcon from '../../asset/구성원프로필/활동중아님.p
 import { AppHeader, BottomNav, FloatingAssistant, MobileStatusBar } from './components/AppChrome'
 import { LockscreenPreview, ServiceLoading, ThinQEntry, ThinQHomeSelector } from './components/EntryScreens'
 import { BottomSheet, Card, Empty, Pro, Section } from './components/ui'
-import { setupNativeNotifications, showNativeNotice, syncPushToken, updateLiveCareStatus, clearLiveCareStatus, isAndroidApp } from './nativeNotifications'
+import { setupNativeNotifications, showNativeNotice, syncPushToken, updateLiveCareStatus, clearLiveCareStatus } from './nativeNotifications'
 
 const groups: { title: string; pages: [Screen, string][] }[] = [
   { title: 'ThinQ 진입 · 외부 화면', pages: [['thinq', 'ThinQ 홈'], ['lockscreen', '잠금화면 동선']] },
@@ -868,8 +868,7 @@ function App() {
   }
   const plan = boot?.family.plan ?? 'FREE'
   const inviteLink = inviteCode ? (() => {
-    const publicAppUrl = (import.meta.env.VITE_PUBLIC_APP_URL ?? '').trim()
-    const url = new URL(location.pathname, isAndroidApp() && publicAppUrl ? publicAppUrl : location.origin)
+    const url = new URL(location.pathname, 'https://zippy.dx6project.site')
     url.searchParams.set('invite', inviteCode)
     url.searchParams.set('role', inviteRole)
     return url.toString()
@@ -2126,7 +2125,7 @@ function App() {
     : ['assignments', 'assignmentDetail', 'suggestion', 'tasks', 'exception', 'emergency'].includes(screen) ? 'careHub'
       : ['members', 'permissions', 'album'].includes(screen) ? 'familyHub'
         : ['notifications', 'settings', 'gap', 'album', 'programs', 'plan'].includes(screen) ? 'more' : 'home'
-  return <div className="app-shell"><aside className="screen-index"><div className="brand"><span className="brand-mark">Z</span><div><strong>ZIPPY</strong><small>기능 목업 개발 버전</small></div></div><p className="index-intro">Figma 기능 페이지의 주요 흐름을 화면별로 확인할 수 있어요.</p>{groups.map(g => <div key={g.title} className="index-group"><h2>{g.title}</h2>{g.pages.map(([id, label]) => <button key={id} className={screen === id ? 'active' : ''} onClick={() => go(id)}>{label}</button>)}</div>)}</aside>
+  return <div className="app-shell"><aside className="screen-index"><div className="brand"><span className="brand-mark">Z</span><div><strong>ZIPPY</strong><small>기능 목업 개발 버전</small></div></div><p className="index-intro">Figma 기능 페이지의 주요 흐름을 화면별로 확인할 수 있어요.</p>{groups.map(g => <div key={g.title} className="index-group"><h2>{g.title}</h2>{g.pages.map(([id, label]) => <button key={id} className={screen === id ? 'active' : ''} onClick={() => go(id)}>{label}</button>)}</div>)}<div className="index-group"><h2>가전 화면</h2><button onClick={() => { window.location.search = '?screen=tv' }}>뉴스 화면</button><button onClick={() => { window.location.search = '?screen=voice' }}>정수기 화면</button></div></aside>
     <div className="phone-wrap"><div className="phone">
       {showStatus && <MobileStatusBar />}
       {showTabHeader && <AppHeader screen={screen} familyName={boot.family.name} memberName={me?.member.name ?? ''} profileColor={profileColorForMember(me?.member.id ?? viewer)} contextLine={`${today} · ${boot.children.map(c => c.name).join(' · ') || '아이 등록 전'}`} unread={unread} onNavigate={go} onOpenThinQHomes={openThinQHomes} />}

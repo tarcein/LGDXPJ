@@ -678,6 +678,34 @@ class ExtendedFlowTest(unittest.TestCase):
             self.assertIn("Calendars.Read", microsoft)
             self.assertIn("microsoft%2Fcallback", microsoft)
 
+    def test_calendar_oauth_exposes_provider_error_without_credentials(self):
+        with patch.dict(os.environ, {
+            "MICROSOFT_CLIENT_ID": "microsoft-client",
+            "MICROSOFT_CLIENT_SECRET": "microsoft-secret",
+            "MICROSOFT_REDIRECT_URI": "http://localhost:8000/api/calendar-connections/microsoft/callback",
+        }):
+            authorization_url = self.client.post(
+                "/api/calendar-connections/microsoft/authorize",
+            ).json()["authorization_url"]
+            state = parse_qs(urlparse(authorization_url).query)["state"][0]
+            token_response = httpx.Response(
+                400,
+                request=httpx.Request("POST", "https://login.microsoftonline.com/common/oauth2/v2.0/token"),
+                json={
+                    "error": "invalid_client",
+                    "error_description": "AADSTS7000215: Invalid client secret provided.",
+                },
+            )
+            with patch("app.calendar.httpx.post", return_value=token_response):
+                callback = self.client.get(
+                    f"/api/calendar-connections/microsoft/callback?code=demo-code&state={state}",
+                )
+            self.assertEqual(callback.status_code, 502)
+            detail = callback.json()["detail"]
+            self.assertEqual(detail["provider_error"], "invalid_client")
+            self.assertIn("AADSTS7000215", detail["provider_error_description"])
+            self.assertNotIn("microsoft-secret", str(detail))
+
     def test_calendar_oauth_returns_to_the_frontend_that_started_it(self):
         with patch.dict(os.environ, {
             "GOOGLE_CLIENT_ID": "google-client", "GOOGLE_CLIENT_SECRET": "google-secret",
