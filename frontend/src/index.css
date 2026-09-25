@@ -1610,6 +1610,16 @@ a, a:link, a:visited, a:active { color: inherit; text-decoration: inherit; }
 .routine-header > span { width: 62px; }
 .home-care-kicker { margin-top: 2px; }
 .home-care-status { margin-bottom: 13px; }
+.care-status-panel.emergency { border: 1px solid rgba(196,18,63,.22); background: #fff7f9; }
+.care-status-panel.emergency .care-avatar { background: #c4123f; }
+.care-status-panel.emergency .care-status-title small,
+.care-status-panel.emergency .care-status-title em,
+.care-status-panel.emergency .care-live-row span { color: #c4123f; }
+.exact-timeline .home-schedule-row.emergency-coordinating { border-radius: 10px; background: #fff3f6; }
+.exact-timeline .home-schedule-row.emergency-coordinating time,
+.exact-timeline .home-schedule-row.emergency-coordinating strong,
+.exact-timeline .home-schedule-row.emergency-coordinating small,
+.exact-timeline .home-schedule-row.emergency-coordinating b { color: #c4123f; }
 .home-no-assignee { display: grid; gap: 5px; padding: 14px; background: #f7f8fb; }
 .home-no-assignee strong { font-size: 14px; color: #20242b; }
 .home-no-assignee small { color: #858b95; line-height: 1.45; }

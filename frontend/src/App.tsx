@@ -667,7 +667,7 @@ function App() {
       api<SubscriptionState>('/subscription'),
       api<{ features: { id: string; available: boolean; backend_state: string }[] }>('/features'),
     ]).then(([current, available]) => { setSubscription(current); setFeatures(available.features) }).catch(reportError)
-    if (screen === 'emergency' && activeFamilyId) api<{ requests: EmergencyRequest[] }>('/emergency-requests')
+    if ((screen === 'emergency' || screen === 'home' || screen === 'careHub') && activeFamilyId) api<{ requests: EmergencyRequest[] }>('/emergency-requests')
       .then(result => setEmergencyRequests(result.requests)).catch(reportError)
     if ((screen === 'calendar' || screen === 'schedule') && activeFamilyId) api<{ connections: CalendarConnection[] }>('/calendar-connections')
       .then(result => setCalendarConnections(result.connections)).catch(reportError)
@@ -1261,10 +1261,14 @@ function App() {
     if (!activeFamilyId || !me?.authenticated) return
     const poll = async () => {
       try {
-        const next = await api<Bootstrap>('/bootstrap')
+        const [next, emergencyResult] = await Promise.all([
+          api<Bootstrap>('/bootstrap'),
+          api<{ requests: EmergencyRequest[] }>('/emergency-requests'),
+        ])
         const incoming = next.notifications.filter(notice => !notice.is_read && !seenNoticeIdsRef.current.has(notice.id))
         next.notifications.forEach(notice => seenNoticeIdsRef.current.add(notice.id))
         setBoot(next)
+        setEmergencyRequests(emergencyResult.requests)
         if (appNotices) {
           incoming.forEach(notice => {
             void showNativeNotice(notice.id, notice.title, notice.body, notice.action_type, notice.action_id)
@@ -1346,12 +1350,18 @@ function App() {
   const todayViewerAssignments = useMemo(() => todayAssignments.filter(a => a.assignee_id === careViewerId), [todayAssignments, careViewerId])
   const weekWindowEndKey = dateKey(supplyWindowEnd)
   const weekViewerAssignments = useMemo(() => viewerAssignments.filter(a => { const item = itemFor(a); const due = item?.starts_at ? dateKey(item.starts_at) : ''; return !!due && due >= todayKey && due <= weekWindowEndKey }), [viewerAssignments, todayKey, weekWindowEndKey])
+  const openEmergencyForAssignment = (assignment?: Assignment) => assignment
+    ? emergencyRequests.find(request => request.assignment_id === assignment.id && request.status === 'OPEN')
+    : undefined
+  const emergencyAssignment = todayAssignments.find(a => openEmergencyForAssignment(a) && (!careStatusChild || itemFor(a)?.child_id === careStatusChild))
   const movingAssignment = assignments.find(a => isLiveAssignment(a) && (!careStatusChild || itemFor(a)?.child_id === careStatusChild))
   const movingItem = movingAssignment ? itemFor(movingAssignment) : undefined
-  const careDisplayAssignment = movingAssignment
+  const careDisplayAssignment = emergencyAssignment
+    ?? movingAssignment
     ?? todayAssignments.find(a => a.status === 'ACCEPTED' && (!careStatusChild || itemFor(a)?.child_id === careStatusChild))
     ?? [...todayAssignments].reverse().find(a => a.status === 'COMPLETED' && (!careStatusChild || itemFor(a)?.child_id === careStatusChild))
   const careDisplayItem = careDisplayAssignment ? itemFor(careDisplayAssignment) : undefined
+  const careDisplayEmergency = openEmergencyForAssignment(careDisplayAssignment)
   const careRouteChildId = careStatusChild || careDisplayItem?.child_id || boot?.children[0]?.id
   const careRouteDate = movingItem?.starts_at ? dateKey(movingItem.starts_at) : todayKey
   const careRouteAssignment = (careItemId: string) => assignments.find(a => a.item_id === careItemId && a.status === 'COMPLETED')
@@ -1380,16 +1390,23 @@ function App() {
     careRouteSteps.push({ id: 'home', label: '집', startsAt: '9999', status: careRouteSteps.every(step => step.status === 'done') ? 'done' : 'future' })
   }
   const homeEventRows = [
-    ...todayCare.map(item => { const assignment = activeAssignmentForItem(item.id); const confirmed = confirmedAssignmentForItem(item.id); const assignedName = confirmed ? member(confirmed.assignee_id) : item.external_assignee_name?.trim(); return { id: `care-${item.id}`, time: item.starts_at!, title: item.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: item.status === 'DONE' || confirmed?.status === 'COMPLETED', unassigned: !assignment && !assignedName, careItem: item, assignment } }),
+    ...todayCare.map(item => {
+      const assignment = activeAssignmentForItem(item.id)
+      const confirmed = confirmedAssignmentForItem(item.id)
+      const emergency = openEmergencyForAssignment(confirmed ?? assignment)
+      const assignedName = confirmed ? member(confirmed.assignee_id) : item.external_assignee_name?.trim()
+      return { id: `care-${item.id}`, time: item.starts_at!, title: item.title, meta: emergency ? `${child(item.child_id)} · 긴급 도움 요청으로 조율 중` : assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: !emergency && (item.status === 'DONE' || confirmed?.status === 'COMPLETED'), unassigned: !assignment && !assignedName, careItem: item, assignment, emergency }
+    }),
     ...todayChildSchedules.flatMap(item => {
       const careItems = visibleCareItems.filter(candidate => candidate.child_schedule_id === item.id)
-      if (!careItems.length) return [{ id: `child-${item.id}`, time: item.starts_at, title: item.title, meta: child(item.child_id), completed: false, unassigned: false, careItem: undefined as CareItem | undefined, assignment: undefined as Assignment | undefined }]
+      if (!careItems.length) return [{ id: `child-${item.id}`, time: item.starts_at, title: item.title, meta: child(item.child_id), completed: false, unassigned: false, careItem: undefined as CareItem | undefined, assignment: undefined as Assignment | undefined, emergency: undefined as EmergencyRequest | undefined }]
       return careItems.map(careItem => {
         const assignment = activeAssignmentForItem(careItem.id)
         const confirmed = confirmedAssignmentForItem(careItem.id)
+        const emergency = openEmergencyForAssignment(confirmed ?? assignment)
         const externalName = careItem.external_assignee_name?.trim()
         const assignedName = confirmed ? member(confirmed.assignee_id) : externalName
-        return { id: `child-${careItem.id}`, time: careItem.starts_at ?? item.starts_at, title: careItem.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: careItem.status === 'DONE' || confirmed?.status === 'COMPLETED', unassigned: !assignment && !externalName, careItem, assignment }
+        return { id: `child-${careItem.id}`, time: careItem.starts_at ?? item.starts_at, title: careItem.title, meta: emergency ? `${child(item.child_id)} · 긴급 도움 요청으로 조율 중` : assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: !emergency && (careItem.status === 'DONE' || confirmed?.status === 'COMPLETED'), unassigned: !assignment && !externalName, careItem, assignment, emergency }
       })
     }),
   ].sort((left, right) => left.time.localeCompare(right.time))
@@ -2141,16 +2158,16 @@ function App() {
   }} />
   if (boot && screen === 'home') page = <div className="figma-home">
     <div className="care-status-kicker-row home-care-kicker"><div className="section-kicker care-status-kicker">돌봄 현황</div><div className="care-status-scope">{boot.children.map(childItem => <button key={childItem.id} className={careStatusChild === childItem.id ? 'active' : ''} onClick={() => setCareStatusChild(careStatusChild === childItem.id ? '' : childItem.id)}>{childItem.name}</button>)}</div></div>
-    <section className="care-status-panel home-care-status">
-      <div className="care-status-title"><span className="care-avatar">{careDisplayAssignment ? member(careDisplayAssignment.assignee_id).slice(0, 1) : '✓'}</span><div><strong>{careDisplayItem ? `${child(careDisplayItem.child_id)} · ${careDisplayItem.title}` : '오늘의 돌봄 현황'}</strong><small>{careDisplayAssignment ? `${member(careDisplayAssignment.assignee_id)} 담당` : '현재 이동 중인 돌봄이 없어요'}</small></div><em>{movingAssignment ? '실시간' : '오늘'}</em></div>
+    <section className={`care-status-panel home-care-status${careDisplayEmergency ? ' emergency' : ''}`}>
+      <div className="care-status-title"><span className="care-avatar">{careDisplayEmergency ? '!' : careDisplayAssignment ? member(careDisplayAssignment.assignee_id).slice(0, 1) : '✓'}</span><div><strong>{careDisplayItem ? `${child(careDisplayItem.child_id)} · ${careDisplayItem.title}` : '오늘의 돌봄 현황'}</strong><small>{careDisplayEmergency ? '긴급 도움 요청으로 조율 중' : careDisplayAssignment ? `${member(careDisplayAssignment.assignee_id)} 담당` : '현재 이동 중인 돌봄이 없어요'}</small></div><em>{careDisplayEmergency ? '조율 중' : movingAssignment ? '실시간' : '오늘'}</em></div>
       {!!careRouteSteps.length && <div className="care-route-assets">{careRouteSteps.map((step, index) => <Fragment key={step.id}>{index > 0 && <img src={careRouteSteps[index - 1].status === 'done' ? careDoneLine : careRouteSteps[index - 1].status === 'active' ? careActiveLine : careFutureLine} alt="" />}<span className={step.status}><img src={step.status === 'done' ? careDoneNode : step.status === 'active' ? careActiveNode : careFutureNode} alt={`${step.label} ${step.status === 'done' ? '완료' : step.status === 'active' ? '진행 중' : '예정'}`} /><small>{step.label}</small></span></Fragment>)}</div>}
-      <button className="care-live-row" onClick={() => go('assignments')}><span>{movingAssignment && movingItem ? `${member(movingAssignment.assignee_id)}와 함께 ${movingItem.title} 이동 중` : careDisplayItem ? `${child(careDisplayItem.child_id)}의 오늘 배정을 확인해보세요` : '오늘의 배정을 확인해보세요'}</span><small>자세히 ›</small></button>
+      <button className="care-live-row" onClick={() => go(careDisplayEmergency ? 'emergency' : 'assignments')}><span>{careDisplayEmergency ? '대체 담당자를 찾고 있어요' : movingAssignment && movingItem ? `${member(movingAssignment.assignee_id)}와 함께 ${movingItem.title} 이동 중` : careDisplayItem ? `${child(careDisplayItem.child_id)}의 오늘 배정을 확인해보세요` : '오늘의 배정을 확인해보세요'}</span><small>자세히 ›</small></button>
     </section>
     {allPending.length > 0 ? <button className="family-alert home-alert" onClick={() => openReview(allPending[0])}><span className="small-badge danger">확인 {allPending.length}</span><strong>{allPending[0].title}</strong><span>›</span></button> : activeExceptions.length > 0 ? <button className="family-alert home-alert" onClick={() => go('exception')}><span className="small-badge danger">확인 {activeExceptions.length}</span><strong>{activeExceptions[0].reason}</strong><span>›</span></button> : null}
     <Section>오늘 일정</Section>
     <Card className="home-timeline exact-timeline">
       {homeEvents.map(event => <div key={event.id} className="home-schedule-row-wrap">
-        <button className={`home-schedule-row ${event.completed ? 'completed' : event.active ? 'current' : event.elapsed ? 'elapsed' : 'upcoming'}`} onClick={() => { if (event.assignment && !['ACCEPTED', 'COMPLETED'].includes(event.assignment.status)) { setAssignmentId(event.assignment.id); setViewer(event.assignment.assignee_id); go('assignmentDetail') } else if (event.unassigned && event.careItem) void openSuggestion(event.careItem); else go('schedule') }}><time>{formatTime(event.time)}</time><span><strong>{event.title}</strong><small>{event.active ? `진행 중 · ${event.meta}` : event.meta}</small></span>{event.completed ? <b className="done"><img src={homeScheduleDoneIcon} alt="완료" /></b> : event.active || event.assignment ? <b>›</b> : null}</button>
+        <button className={`home-schedule-row ${event.emergency ? 'emergency-coordinating' : event.completed ? 'completed' : event.active ? 'current' : event.elapsed ? 'elapsed' : 'upcoming'}`} onClick={() => { if (event.emergency) go('emergency'); else if (event.assignment && !['ACCEPTED', 'COMPLETED'].includes(event.assignment.status)) { setAssignmentId(event.assignment.id); setViewer(event.assignment.assignee_id); go('assignmentDetail') } else if (event.unassigned && event.careItem) void openSuggestion(event.careItem); else go('schedule') }}><time>{formatTime(event.time)}</time><span><strong>{event.title}</strong><small>{event.emergency ? event.meta : event.active ? `진행 중 · ${event.meta}` : event.meta}</small></span>{event.completed ? <b className="done"><img src={homeScheduleDoneIcon} alt="완료" /></b> : event.emergency || event.active || event.assignment ? <b>›</b> : null}</button>
         {event.careItem && <button className="home-schedule-row-delete" aria-label="일정 삭제" onClick={() => deleteCareItem(event.careItem!)}>✕</button>}
       </div>)}
       {!homeEvents.length && <p className="empty-line">오늘 등록된 일정이 없어요</p>}
@@ -2275,10 +2292,10 @@ function App() {
     const confirmedToday = todayViewerAssignments.filter(a => ['ACCEPTED', 'COMPLETED'].includes(a.status))
     page = <>
       <div className="care-status-kicker-row"><div className="section-kicker care-status-kicker">돌봄 현황</div><div className="care-status-scope">{boot.children.map(childItem => <button key={childItem.id} className={careStatusChild === childItem.id ? 'active' : ''} onClick={() => setCareStatusChild(careStatusChild === childItem.id ? '' : childItem.id)}>{childItem.name}</button>)}</div></div>
-      <section className="care-status-panel">
-        <div className="care-status-title"><span className="care-avatar">{careDisplayAssignment ? member(careDisplayAssignment.assignee_id).slice(0, 1) : '✓'}</span><div><strong>{careDisplayItem ? `${child(careDisplayItem.child_id)} · ${careDisplayItem.title}` : '진행 중인 돌봄이 없어요'}</strong><small>{careDisplayAssignment ? `${member(careDisplayAssignment.assignee_id)} 담당` : '현재 확정된 이동 일정이 없습니다'}</small></div><em>{movingAssignment ? '실시간' : '오늘'}</em></div>
+      <section className={`care-status-panel${careDisplayEmergency ? ' emergency' : ''}`}>
+        <div className="care-status-title"><span className="care-avatar">{careDisplayEmergency ? '!' : careDisplayAssignment ? member(careDisplayAssignment.assignee_id).slice(0, 1) : '✓'}</span><div><strong>{careDisplayItem ? `${child(careDisplayItem.child_id)} · ${careDisplayItem.title}` : '진행 중인 돌봄이 없어요'}</strong><small>{careDisplayEmergency ? '긴급 도움 요청으로 조율 중' : careDisplayAssignment ? `${member(careDisplayAssignment.assignee_id)} 담당` : '현재 확정된 이동 일정이 없습니다'}</small></div><em>{careDisplayEmergency ? '조율 중' : movingAssignment ? '실시간' : '오늘'}</em></div>
         {!!careRouteSteps.length && <div className="care-route-assets">{careRouteSteps.map((step, index) => <Fragment key={step.id}>{index > 0 && <img src={careRouteSteps[index - 1].status === 'done' ? careDoneLine : careRouteSteps[index - 1].status === 'active' ? careActiveLine : careFutureLine} alt="" />}<span className={step.status}><img src={step.status === 'done' ? careDoneNode : step.status === 'active' ? careActiveNode : careFutureNode} alt={`${step.label} ${step.status === 'done' ? '완료' : step.status === 'active' ? '진행 중' : '예정'}`} /><small>{step.label}</small></span></Fragment>)}</div>}
-        <button className="care-live-row" onClick={() => { if (careDisplayAssignment) { setAssignmentId(careDisplayAssignment.id); setViewer(careDisplayAssignment.assignee_id) }; go(careDisplayAssignment ? 'assignmentDetail' : 'assignments') }}><span>{movingAssignment && movingItem ? `${member(movingAssignment.assignee_id)}와 함께 ${movingItem.title} 이동 중` : careDisplayItem ? `${child(careDisplayItem.child_id)}의 오늘 배정을 확인해보세요` : '오늘의 배정을 확인해보세요'}</span><small>자세히 ›</small></button>
+        <button className="care-live-row" onClick={() => { if (careDisplayEmergency) { go('emergency'); return }; if (careDisplayAssignment) { setAssignmentId(careDisplayAssignment.id); setViewer(careDisplayAssignment.assignee_id) }; go(careDisplayAssignment ? 'assignmentDetail' : 'assignments') }}><span>{careDisplayEmergency ? '대체 담당자를 찾고 있어요' : movingAssignment && movingItem ? `${member(movingAssignment.assignee_id)}와 함께 ${movingItem.title} 이동 중` : careDisplayItem ? `${child(careDisplayItem.child_id)}의 오늘 배정을 확인해보세요` : '오늘의 배정을 확인해보세요'}</span><small>자세히 ›</small></button>
       </section>
       <button className={'care-state-strip ' + (activeExceptions.length ? 'danger' : 'safe')} onClick={() => go('exception')}><b>{activeExceptions.length ? '!' : '✓'}</b><span><strong>{activeExceptions.length ? '지금 확인이 필요해요' : '충돌되는 일정이 없어요'}</strong><small>{activeExceptions.length ? `${activeExceptions.length}개의 예외 상황` : '등록된 가족 일정 기준'}</small></span><em>›</em></button>
       <Section action={<button className="text-link" onClick={() => go('tasks')}>전체 이력 ›</button>}>내 돌봄·요청</Section>
@@ -2286,7 +2303,7 @@ function App() {
       <Section>빠른 실행</Section><div className="care-quick-grid"><button className="urgent" onClick={() => go('emergency')}><i><img src={careEmergencyIcon} alt="" /></i><span><strong>긴급 도움 요청</strong><small>가족 전체에 도움 요청</small></span></button><button onClick={() => go('assignments')}><i><img src={careAssignmentIcon} alt="" /></i><span><strong>역할 배정</strong><small>오늘의 담당 확인</small></span></button></div>
     </>
   }
-  if (boot && screen === 'familyHub') page = <><div className="eyebrow">FAMILY</div><p className="hero-copy family-main-copy">구성원과 아이를 관리하고 누구에게 어떤 정보를 보여줄지 정해요.</p><Section>구성원</Section><div className="family-people exact-family-people">{members.map(person => <button key={person.id} onClick={() => go('members')}><i className="member-profile-initial" style={{ background: profileColorForMember(person.id) }}>{person.name.trim().slice(0, 1)}</i><span>{person.name}</span><small>{person.id === me?.member.id ? `${roleLabel[person.role] ?? '가족'} (나)` : roleLabel[person.role] ?? '가족'}</small><b className="member-presence"><img src={memberIsOnline(person.id) ? memberActiveIcon : memberInactiveIcon} alt={memberIsOnline(person.id) ? '활동 중' : '비활동 중'} /></b></button>)}<button className="invite-person" onClick={() => void openInviteShare()}><i>＋</i><span>초대</span><small>가족 추가</small></button></div><Section>아이</Section><div className="family-children exact-family-children">{boot.children.map(kid => <button key={kid.id} onClick={() => openChildProfile(kid)}><i className={kid.photo_url ? 'child-profile-asset' : ''}><img src={kid.photo_url || scheduleChildIcon} alt="" /></i><strong>{kid.name}</strong><small>{kid.age_label}</small></button>)}{!boot.children.length && <button className="family-child-empty" onClick={() => go('members')}><i>＋</i><strong>등록된 아이가 없어요</strong><small>가족 설정에서 아이를 추가해 주세요</small></button>}</div><div className="hub-list family-actions"><button onClick={() => go('members')}><i><img src={familySettingsUiIcon} alt="" /></i><span><strong>가족 설정</strong><small>가족 구성원 · 아이 · 초대코드</small></span><b>›</b></button><button aria-label="모음ZIP · 모음ZIP" onClick={() => go('album')}><i><img src={familyAlbumUiIcon} alt="" /></i><span><strong>모음ZIP {plan === 'PRO' ? <em className="small-badge ok">이용 가능</em> : <Pro />}</strong><small>돌봄 완료 사진 자동 모음</small></span><b>›</b></button><button onClick={() => go('permissions')}><i><img src={informationUiIcon} alt="" /></i><span><strong>정보 공개</strong><small>위치 · 건강 · 사진 권한</small></span><b>›</b></button></div><Card className="privacy-note">구성원마다 볼 수 있는 정보 범위를 따로 설정할 수 있어요. 기본값은 최소 공개입니다.</Card></>
+  if (boot && screen === 'familyHub') page = <><div className="eyebrow">FAMILY</div><p className="hero-copy family-main-copy">구성원과 아이를 관리하고 누구에게 어떤 정보를 보여줄지 정해요.</p><Section>구성원</Section><div className="family-people exact-family-people">{members.map(person => <button key={person.id} onClick={() => go('members')}><i className="member-profile-initial" style={{ background: profileColorForMember(person.id) }}>{person.name.trim().slice(0, 1)}</i><span>{person.name}</span><small>{person.id === me?.member.id ? `${roleLabel[person.role] ?? '가족'} (나)` : roleLabel[person.role] ?? '가족'}</small><b className="member-presence"><img src={memberIsOnline(person.id) ? memberActiveIcon : memberInactiveIcon} alt={memberIsOnline(person.id) ? '활동 중' : '비활동 중'} /></b></button>)}<button className="invite-person" onClick={() => void openInviteShare()}><i>＋</i><span>초대</span><small>가족 추가</small></button></div><Section>아이</Section><div className="family-children exact-family-children">{boot.children.map(kid => <button key={kid.id} onClick={() => openChildProfile(kid)}><i className={kid.photo_url ? 'child-profile-asset' : ''}><img src={kid.photo_url || scheduleChildIcon} alt="" /></i><strong>{kid.name}</strong><small>{kid.age_label}</small></button>)}{!boot.children.length && <button className="family-child-empty" onClick={() => go('members')}><i>＋</i><strong>등록된 아이가 없어요</strong><small>가족 설정에서 아이를 추가해 주세요</small></button>}</div><div className="hub-list family-actions"><button onClick={() => go('members')}><i><img src={familySettingsUiIcon} alt="" /></i><span><strong>가족 설정</strong><small>가족 구성원 · 아이 · 초대코드</small></span><b>›</b></button><button aria-label="모음ZIP · 모음ZIP" onClick={() => go('album')}><i><img src={familyAlbumUiIcon} alt="" /></i><span><strong>모음ZIP {plan === 'PRO' ? <em className="small-badge ok">이용 가능</em> : <Pro />}</strong><small>돌봄 완료 사진 자동 모음</small></span><b>›</b></button><button onClick={() => go('permissions')}><i><img src={informationUiIcon} alt="" /></i><span><strong>정보 공개</strong><small>일정 관련 내용 · 돌봄 이동 현황 권한</small></span><b>›</b></button></div><Card className="privacy-note">구성원마다 볼 수 있는 정보 범위를 따로 설정할 수 있어요. 기본값은 최소 공개입니다.</Card></>
   if (boot && screen === 'more') page = <div className={'figma-more ' + (plan === 'PRO' ? 'pro-enabled' : '')}>
     <button className="profile-summary" onClick={() => go('members')}>
       <span style={{ background: profileColorForMember(me?.member.id ?? viewer) }}>{(me?.member.name || member(viewer)).trim().slice(0, 1)}</span>
