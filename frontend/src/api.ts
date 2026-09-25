@@ -8,11 +8,19 @@ export interface Family { id: string; name: string; plan: string }
 export interface Member { id: string; name: string; role: string; status: string; is_owner: boolean; created_at?: string; is_online?: boolean | number }
 export interface Child { id: string; name: string; age_label: string; photo_url?: string | null }
 export interface Schedule { id: string; member_id: string; title: string; starts_at: string; ends_at: string; has_end_time?: number | boolean; kind: 'WORK' | 'ROUTINE'; external_source: string | null; recurrence_id?: string | null; recurrence_rule?: string | null }
-export interface ChildSchedule { id: string; child_id: string; title: string; category: string; starts_at: string; ends_at: string; has_end_time?: number | boolean; location_name?: string; merge_same_location?: number | boolean; source: string; recurrence_id?: string | null; recurrence_rule?: string | null }
+export interface ChildSchedule {
+  id: string; child_id: string; title: string; category: string; starts_at: string; ends_at: string;
+  has_end_time?: number | boolean; location_name?: string; merge_same_location?: number | boolean;
+  start_assignment_required?: number | boolean;
+  start_assignee_id?: string | null; start_external_assignee_name?: string;
+  end_assignment_required?: number | boolean;
+  end_assignee_id?: string | null; end_external_assignee_name?: string;
+  source: string; recurrence_id?: string | null; recurrence_rule?: string | null
+}
 export interface CareItem {
   id: string; intake_id: string | null; child_id: string | null; child_schedule_id?: string | null; item_type: string;
   title: string; detail: string; starts_at: string | null; confidence: string;
-  boundary_type?: 'START' | 'END' | null; status: string; created_at: string
+  boundary_type?: 'START' | 'END' | null; external_assignee_name?: string; status: string; created_at: string
 }
 export interface Assignment {
   id: string; item_id: string; assignee_id: string; status: string;

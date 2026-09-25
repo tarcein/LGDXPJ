@@ -164,6 +164,10 @@ CREATE TABLE IF NOT EXISTS child_schedule (
   has_end_time INTEGER NOT NULL DEFAULT 1,
   location_name TEXT NOT NULL DEFAULT '',
   merge_same_location INTEGER NOT NULL DEFAULT 1,
+  start_assignment_required INTEGER NOT NULL DEFAULT 1,
+  start_assignee_id TEXT, start_external_assignee_name TEXT NOT NULL DEFAULT '',
+  end_assignment_required INTEGER NOT NULL DEFAULT 1,
+  end_assignee_id TEXT, end_external_assignee_name TEXT NOT NULL DEFAULT '',
   source TEXT NOT NULL DEFAULT 'MANUAL', created_at TEXT NOT NULL,
   recurrence_id TEXT, recurrence_rule TEXT
 );
@@ -178,7 +182,7 @@ CREATE TABLE IF NOT EXISTS care_item (
   child_schedule_id TEXT REFERENCES child_schedule(id),
   item_type TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
   starts_at TEXT, confidence TEXT NOT NULL DEFAULT 'LOW',
-  boundary_type TEXT,
+  boundary_type TEXT, external_assignee_name TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'NEEDS_REVIEW', created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS care_assignment (
@@ -372,8 +376,15 @@ def initialize() -> None:
                 ("child_schedule", "has_end_time", "INTEGER NOT NULL DEFAULT 1"),
                 ("child_schedule", "location_name", "TEXT NOT NULL DEFAULT ''"),
                 ("child_schedule", "merge_same_location", "INTEGER NOT NULL DEFAULT 1"),
+                ("child_schedule", "start_assignment_required", "INTEGER NOT NULL DEFAULT 1"),
+                ("child_schedule", "start_assignee_id", "TEXT"),
+                ("child_schedule", "start_external_assignee_name", "TEXT NOT NULL DEFAULT ''"),
+                ("child_schedule", "end_assignment_required", "INTEGER NOT NULL DEFAULT 1"),
+                ("child_schedule", "end_assignee_id", "TEXT"),
+                ("child_schedule", "end_external_assignee_name", "TEXT NOT NULL DEFAULT ''"),
                 ("care_item", "child_schedule_id", "TEXT REFERENCES child_schedule(id)"),
                 ("care_item", "boundary_type", "TEXT"),
+                ("care_item", "external_assignee_name", "TEXT NOT NULL DEFAULT ''"),
                 ("notification", "action_type", "TEXT"),
                 ("notification", "action_id", "TEXT"),
                 ("notification_preference", "device_enabled", "INTEGER NOT NULL DEFAULT 0"),
@@ -399,8 +410,8 @@ def initialize() -> None:
                 db.execute("ALTER TABLE care_handoff ADD COLUMN special_note TEXT NOT NULL DEFAULT ''")
             for table, additions in (
                 ("personal_schedule", (("kind", "TEXT NOT NULL DEFAULT 'ROUTINE'"), ("external_source", "TEXT"), ("external_id", "TEXT"), ("recurrence_id", "TEXT"), ("recurrence_rule", "TEXT"), ("has_end_time", "INTEGER NOT NULL DEFAULT 1"))),
-                ("child_schedule", (("recurrence_id", "TEXT"), ("recurrence_rule", "TEXT"), ("has_end_time", "INTEGER NOT NULL DEFAULT 1"), ("location_name", "TEXT NOT NULL DEFAULT ''"), ("merge_same_location", "INTEGER NOT NULL DEFAULT 1"))),
-                ("care_item", (("child_schedule_id", "TEXT REFERENCES child_schedule(id)"), ("boundary_type", "TEXT"))),
+                ("child_schedule", (("recurrence_id", "TEXT"), ("recurrence_rule", "TEXT"), ("has_end_time", "INTEGER NOT NULL DEFAULT 1"), ("location_name", "TEXT NOT NULL DEFAULT ''"), ("merge_same_location", "INTEGER NOT NULL DEFAULT 1"), ("start_assignment_required", "INTEGER NOT NULL DEFAULT 1"), ("start_assignee_id", "TEXT"), ("start_external_assignee_name", "TEXT NOT NULL DEFAULT ''"), ("end_assignment_required", "INTEGER NOT NULL DEFAULT 1"), ("end_assignee_id", "TEXT"), ("end_external_assignee_name", "TEXT NOT NULL DEFAULT ''"))),
+                ("care_item", (("child_schedule_id", "TEXT REFERENCES child_schedule(id)"), ("boundary_type", "TEXT"), ("external_assignee_name", "TEXT NOT NULL DEFAULT ''"))),
                 ("notification", (("action_type", "TEXT"), ("action_id", "TEXT"))),
                 ("notification_preference", (("device_enabled", "INTEGER NOT NULL DEFAULT 0"),)),
                 ("care_assignment", (("requested_by_member_id", "TEXT REFERENCES family_member(id)"), ("reminder_sent_at", "TEXT"))),

@@ -211,6 +211,14 @@ class ChildScheduleCreate(BaseModel):
     ends_at: datetime | None = None
     location_name: str = Field(default="", max_length=100)
     merge_same_location: bool = True
+    start_assignment_required: bool = True
+    start_assignee_id: str | None = None
+    start_external_assignee_name: str = Field(default="", max_length=100)
+    end_assignment_required: bool = True
+    end_assignee_id: str | None = None
+    end_external_assignee_name: str = Field(default="", max_length=100)
+    # Kept for older clients. When supplied, the same family member is used for
+    # both boundaries unless a boundary-specific value was provided.
     assignee_id: str | None = None
     source: str = Field(default="MANUAL", pattern="^(MANUAL|NOTICE)$")
     repeat_days: list[int] = Field(default_factory=list)
@@ -234,6 +242,12 @@ class ChildScheduleUpdate(BaseModel):
     ends_at: datetime | None = None
     location_name: str = Field(default="", max_length=100)
     merge_same_location: bool = True
+    start_assignment_required: bool = True
+    start_assignee_id: str | None = None
+    start_external_assignee_name: str = Field(default="", max_length=100)
+    end_assignment_required: bool = True
+    end_assignee_id: str | None = None
+    end_external_assignee_name: str = Field(default="", max_length=100)
     update_scope: str = Field(default="SINGLE", pattern="^(SINGLE|FUTURE)$")
 
 
@@ -816,12 +830,12 @@ def _reconcile_child_schedule_care_items(db, child_id: str) -> None:
         joins_next = index + 1 < len(schedules) and _same_place_continuation(schedule, schedules[index + 1])
         has_end_time = bool(schedule.get("has_end_time"))
         desired: dict[str, tuple[str, str]] = {}
-        if not joins_previous:
+        if not joins_previous and bool(schedule.get("start_assignment_required", 1)):
             desired["START"] = (
                 f"{schedule['title']} 등원" if has_end_time else schedule["title"],
                 schedule["starts_at"],
             )
-        if has_end_time and not joins_next:
+        if has_end_time and not joins_next and bool(schedule.get("end_assignment_required", 1)):
             desired["END"] = (f"{schedule['title']} 하원", schedule["ends_at"])
 
         existing = rows(
@@ -860,19 +874,122 @@ def _reconcile_child_schedule_care_items(db, child_id: str) -> None:
                 _delete_care_item_cascade(db, item["id"])
 
 
+def _normalize_boundary_responsibility(assignee_id: str | None, external_name: str | None) -> tuple[str | None, str]:
+    normalized_name = (external_name or "").strip()
+    if assignee_id and normalized_name:
+        raise HTTPException(422, "가족 구성원과 외부 담당자는 동시에 지정할 수 없습니다")
+    return assignee_id or None, normalized_name
+
+
+def _require_schedule_assignees(db, assignee_ids: set[str]) -> None:
+    for assignee_id in assignee_ids:
+        one(
+            db,
+            "SELECT id FROM family_member WHERE id = ? AND family_id = ? AND status = 'ACTIVE'",
+            (assignee_id, family_id()),
+        )
+
+
+def _apply_schedule_responsibilities(db, schedule_ids: list[str]) -> tuple[int, dict[str, tuple[int, str]]]:
+    """Apply the independently stored arrival/departure responsibility choices.
+
+    External helpers (for example, an academy shuttle) are stored directly on the
+    care boundary because they do not have a family-room account to accept an
+    assignment. Missing internal boundaries from same-place merging are skipped.
+    """
+    responsibility_count = 0
+    requests: dict[str, tuple[int, str]] = {}
+    timestamp = now()
+    requester_id = current_member_id()
+    for schedule_id in schedule_ids:
+        schedule = one(db, "SELECT * FROM child_schedule WHERE id = ? AND family_id = ?", (schedule_id, family_id()))
+        items = rows(
+            db,
+            "SELECT * FROM care_item WHERE child_schedule_id = ? AND family_id = ? ORDER BY starts_at",
+            (schedule_id, family_id()),
+        )
+        for item in items:
+            boundary = item.get("boundary_type") or "START"
+            prefix = "end" if boundary == "END" else "start"
+            assignee_id = schedule.get(f"{prefix}_assignee_id") or None
+            external_name = (schedule.get(f"{prefix}_external_assignee_name") or "").strip()
+            active_assignments = rows(
+                db,
+                """SELECT * FROM care_assignment WHERE item_id = ? AND family_id = ?
+                     AND status NOT IN ('CANCELED', 'REJECTED') ORDER BY created_at""",
+                (item["id"], family_id()),
+            )
+            if external_name:
+                for assignment in active_assignments:
+                    if assignment["status"] != "COMPLETED":
+                        db.execute("UPDATE care_assignment SET status = 'CANCELED' WHERE id = ?", (assignment["id"],))
+                db.execute(
+                    "UPDATE care_item SET external_assignee_name = ?, status = CASE WHEN status = 'DONE' THEN status ELSE 'ASSIGNED' END WHERE id = ?",
+                    (external_name, item["id"]),
+                )
+                responsibility_count += 1
+                continue
+
+            if assignee_id:
+                self_assignment = authenticated() and assignee_id == requester_id
+                desired_status = "ACCEPTED" if self_assignment else "PROPOSED"
+                matching = next((assignment for assignment in active_assignments if assignment["assignee_id"] == assignee_id), None)
+                for assignment in active_assignments:
+                    if assignment["id"] != (matching or {}).get("id") and assignment["status"] != "COMPLETED":
+                        db.execute("UPDATE care_assignment SET status = 'CANCELED' WHERE id = ?", (assignment["id"],))
+                if matching:
+                    if matching["status"] != "COMPLETED":
+                        db.execute(
+                            """UPDATE care_assignment SET status = ?, responded_at = ?, requested_by_member_id = ?
+                                 WHERE id = ?""",
+                            (desired_status, timestamp if self_assignment else None, requester_id, matching["id"]),
+                        )
+                else:
+                    assignment_id = str(uuid4())
+                    db.execute(
+                        """INSERT INTO care_assignment(id, family_id, item_id, assignee_id, status, source,
+                           created_at, responded_at, requested_by_member_id)
+                           VALUES (?, ?, ?, ?, ?, 'MANUAL', ?, ?, ?)""",
+                        (assignment_id, family_id(), item["id"], assignee_id, desired_status, timestamp,
+                         timestamp if self_assignment else None, requester_id),
+                    )
+                    if not self_assignment:
+                        count, first_id = requests.get(assignee_id, (0, assignment_id))
+                        requests[assignee_id] = (count + 1, first_id)
+                db.execute(
+                    "UPDATE care_item SET external_assignee_name = '', status = CASE WHEN status = 'DONE' THEN status ELSE ? END WHERE id = ?",
+                    ("ASSIGNED" if self_assignment else "CONFIRMED", item["id"]),
+                )
+                responsibility_count += 1
+                continue
+
+            for assignment in active_assignments:
+                if assignment["status"] != "COMPLETED":
+                    db.execute("UPDATE care_assignment SET status = 'CANCELED' WHERE id = ?", (assignment["id"],))
+            db.execute(
+                "UPDATE care_item SET external_assignee_name = '', status = CASE WHEN status = 'DONE' THEN status ELSE 'CONFIRMED' END WHERE id = ?",
+                (item["id"],),
+            )
+    return responsibility_count, requests
+
+
 @app.post("/api/child-schedules", status_code=201)
 def create_child_schedule(payload: ChildScheduleCreate):
     normalized_end, has_end_time = normalize_schedule_end(payload.starts_at, payload.ends_at)
     occurrences = recurring_occurrences(payload.starts_at, normalized_end, payload.repeat_days, payload.repeat_until, payload.repeat_dates)
     with database() as db:
         one(db, "SELECT id FROM child WHERE id = ? AND family_id = ?", (payload.child_id, family_id()))
-        assignee = None
-        if payload.assignee_id:
-            assignee = one(
-                db,
-                "SELECT * FROM family_member WHERE id = ? AND family_id = ? AND status = 'ACTIVE'",
-                (payload.assignee_id, family_id()),
-            )
+        start_external = payload.start_external_assignee_name.strip()
+        end_external = payload.end_external_assignee_name.strip()
+        start_assignee_id = payload.start_assignee_id or (payload.assignee_id if not start_external else None)
+        end_assignee_id = payload.end_assignee_id or (payload.assignee_id if not end_external else None)
+        if not payload.start_assignment_required:
+            start_assignee_id, start_external = None, ""
+        if not payload.end_assignment_required:
+            end_assignee_id, end_external = None, ""
+        start_assignee_id, start_external = _normalize_boundary_responsibility(start_assignee_id, start_external)
+        end_assignee_id, end_external = _normalize_boundary_responsibility(end_assignee_id, end_external)
+        _require_schedule_assignees(db, {value for value in (start_assignee_id, end_assignee_id) if value})
         recurrence_id = str(uuid4()) if len(occurrences) > 1 else None
         recurrence_rule = (f"DATES:{','.join(map(str, sorted(set(payload.repeat_dates))))}" if payload.repeat_dates
                            else f"WEEKLY:{','.join(map(str, sorted(set(payload.repeat_days))))}:UNTIL={payload.repeat_until}") if recurrence_id else None
@@ -882,11 +999,17 @@ def create_child_schedule(payload: ChildScheduleCreate):
             db.execute(
                 """INSERT INTO child_schedule(id, family_id, child_id, title, category,
                    starts_at, ends_at, has_end_time, location_name, merge_same_location,
+                   start_assignment_required,
+                   start_assignee_id, start_external_assignee_name,
+                   end_assignment_required,
+                   end_assignee_id, end_external_assignee_name,
                    source, created_at, recurrence_id, recurrence_rule)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (schedule_id, family_id(), payload.child_id, payload.title, payload.category,
                   start.isoformat(), end.isoformat(), int(has_end_time), payload.location_name.strip(),
-                  int(payload.merge_same_location), payload.source, now(), recurrence_id, recurrence_rule),
+                  int(payload.merge_same_location), int(payload.start_assignment_required),
+                  start_assignee_id, start_external, int(payload.end_assignment_required),
+                  end_assignee_id, end_external, payload.source, now(), recurrence_id, recurrence_rule),
             )
             created.append(one(db, "SELECT * FROM child_schedule WHERE id = ?", (schedule_id,)))
 
@@ -900,26 +1023,14 @@ def create_child_schedule(payload: ChildScheduleCreate):
             (family_id(), *created_ids),
         )]
 
-        if assignee and care_item_ids:
-            self_assignment = authenticated() and assignee["id"] == current_member_id()
-            timestamp = now()
-            for care_item_id in care_item_ids:
-                db.execute(
-                    """INSERT INTO care_assignment(id, family_id, item_id, assignee_id, status, source,
-                       created_at, responded_at, requested_by_member_id)
-                       VALUES (?, ?, ?, ?, ?, 'MANUAL', ?, ?, ?)""",
-                    (str(uuid4()), family_id(), care_item_id, assignee["id"],
-                     "ACCEPTED" if self_assignment else "PROPOSED", timestamp,
-                     timestamp if self_assignment else None, current_member_id()),
-                )
-                if self_assignment:
-                    db.execute("UPDATE care_item SET status = 'ASSIGNED' WHERE id = ?", (care_item_id,))
-            if not self_assignment:
-                requester = one(db, "SELECT name FROM family_member WHERE id = ?", (current_member_id(),))
+        assigned_count, assignment_requests = _apply_schedule_responsibilities(db, created_ids)
+        if assignment_requests:
+            requester = one(db, "SELECT name FROM family_member WHERE id = ?", (current_member_id(),))
+            for assignee_id, (request_count, first_assignment_id) in assignment_requests.items():
                 notify(
-                    db, assignee["id"], "새 반복 돌봄 배정 요청",
-                    f"{requester['name']}님이 {payload.title} 루틴 {len(care_item_ids)}건의 담당을 요청했어요.",
-                    "IMPORTANT", "ASSIGNMENT_REQUEST", None,
+                    db, assignee_id, "새 반복 돌봄 배정 요청",
+                    f"{requester['name']}님이 {payload.title} 루틴 {request_count}건의 담당을 요청했어요.",
+                    "IMPORTANT", "ASSIGNMENT_REQUEST", first_assignment_id,
                 )
         owner = owner_id(db)
         first_schedule_items = rows(
@@ -933,13 +1044,13 @@ def create_child_schedule(payload: ChildScheduleCreate):
             if index == 0:
                 suggestions = ranked
             best = next((candidate for candidate in ranked if candidate["available"]), ranked[0] if ranked else None)
-            if best and not assignee:
+            if best and not (start_assignee_id or end_assignee_id or start_external or end_external):
                 notify(db, owner, "돌봄 담당 추천이 도착했어요",
                        f"{care_item['title']} 일정에 {best['name']}님을 우선 제안해요. 확인 후 요청을 보내주세요.",
                        "IMPORTANT", "CARE_SUGGESTION", care_item["id"])
         return {**created[0], "schedules": created, "scheduled_count": len(created),
                 "care_item_id": care_item_ids[0] if care_item_ids else None,
-                "care_item_ids": care_item_ids, "assigned_count": len(care_item_ids) if assignee else 0,
+                "care_item_ids": care_item_ids, "assigned_count": assigned_count,
                 "suggestions": suggestions}
 
 
@@ -962,33 +1073,69 @@ def update_child_schedule(schedule_id: str, payload: ChildScheduleUpdate):
         care_item_id = None
         all_suggestions = []
         affected_children = {schedule["child_id"], payload.child_id}
+        responsibility_fields = {
+            "start_assignment_required", "end_assignment_required",
+            "start_assignee_id", "start_external_assignee_name",
+            "end_assignee_id", "end_external_assignee_name",
+        }
+        supplied_fields = payload.model_fields_set
+        responsibilities_supplied = bool(responsibility_fields & supplied_fields)
+        target_ids: list[str] = []
         for target in targets:
             target_start = datetime.fromisoformat(target["starts_at"]) + time_shift
             target_end = target_start + duration
             starts_at, ends_at = target_start.isoformat(), target_end.isoformat()
-            care_items = rows(db, "SELECT id FROM care_item WHERE child_schedule_id = ? AND family_id = ? ORDER BY starts_at",
-                              (target["id"], family_id()))
-            for care_item in care_items:
-                assignments = rows(db, """SELECT id, assignee_id, status FROM care_assignment
-                    WHERE item_id = ? AND family_id = ? AND status IN ('PROPOSED', 'CANDIDATE_ACCEPTED', 'ACCEPTED')""",
-                    (care_item["id"], family_id()))
-                for assignment in assignments:
-                    replacement_status = "RECONFIRMATION_REQUIRED" if assignment["status"] == "ACCEPTED" else "CANCELED"
-                    db.execute("UPDATE care_assignment SET status = ? WHERE id = ?", (replacement_status, assignment["id"]))
-                    notify(db, assignment["assignee_id"], "담당 일정이 변경됐어요",
-                           f"{payload.title} · {starts_at}", "IMPORTANT", "ASSIGNMENT_REQUEST", assignment["id"])
-                if assignments:
-                    db.execute("UPDATE care_item SET status = 'CONFIRMED' WHERE id = ?", (care_item["id"],))
+            start_required = payload.start_assignment_required if "start_assignment_required" in supplied_fields else bool(target.get("start_assignment_required", 1))
+            end_required = payload.end_assignment_required if "end_assignment_required" in supplied_fields else bool(target.get("end_assignment_required", 1))
+            start_assignee_id = payload.start_assignee_id if "start_assignee_id" in supplied_fields else target.get("start_assignee_id")
+            start_external = payload.start_external_assignee_name if "start_external_assignee_name" in supplied_fields else target.get("start_external_assignee_name")
+            end_assignee_id = payload.end_assignee_id if "end_assignee_id" in supplied_fields else target.get("end_assignee_id")
+            end_external = payload.end_external_assignee_name if "end_external_assignee_name" in supplied_fields else target.get("end_external_assignee_name")
+            if "start_external_assignee_name" in supplied_fields and (payload.start_external_assignee_name or "").strip():
+                start_assignee_id = None
+            if "start_assignee_id" in supplied_fields and payload.start_assignee_id:
+                start_external = ""
+            if "end_external_assignee_name" in supplied_fields and (payload.end_external_assignee_name or "").strip():
+                end_assignee_id = None
+            if "end_assignee_id" in supplied_fields and payload.end_assignee_id:
+                end_external = ""
+            if not start_required:
+                start_assignee_id, start_external = None, ""
+            if not end_required:
+                end_assignee_id, end_external = None, ""
+            start_assignee_id, start_external = _normalize_boundary_responsibility(start_assignee_id, start_external)
+            end_assignee_id, end_external = _normalize_boundary_responsibility(end_assignee_id, end_external)
+            _require_schedule_assignees(db, {value for value in (start_assignee_id, end_assignee_id) if value})
             db.execute(
                 """UPDATE child_schedule SET child_id = ?, title = ?, category = ?, starts_at = ?, ends_at = ?,
-                   has_end_time = ?, location_name = ?, merge_same_location = ?
+                   has_end_time = ?, location_name = ?, merge_same_location = ?,
+                   start_assignment_required = ?,
+                   start_assignee_id = ?, start_external_assignee_name = ?,
+                   end_assignment_required = ?,
+                   end_assignee_id = ?, end_external_assignee_name = ?
                    WHERE id = ? AND family_id = ?""",
                 (payload.child_id, payload.title, payload.category, starts_at, ends_at, int(has_end_time),
-                 payload.location_name.strip(), int(payload.merge_same_location), target["id"], family_id()),
+                 payload.location_name.strip(), int(payload.merge_same_location),
+                 int(start_required), start_assignee_id, start_external,
+                 int(end_required), end_assignee_id, end_external,
+                 target["id"], family_id()),
             )
+            target_ids.append(target["id"])
             all_suggestions = rank_members(db, family_id(), starts_at, target_child_id=payload.child_id)
         for affected_child in affected_children:
             _reconcile_child_schedule_care_items(db, affected_child)
+        assigned_count = 0
+        assignment_requests: dict[str, tuple[int, str]] = {}
+        if responsibilities_supplied:
+            assigned_count, assignment_requests = _apply_schedule_responsibilities(db, target_ids)
+            if assignment_requests:
+                requester = one(db, "SELECT name FROM family_member WHERE id = ?", (actor_id,))
+                for assignee_id, (request_count, first_assignment_id) in assignment_requests.items():
+                    notify(
+                        db, assignee_id, "변경된 돌봄 배정 요청",
+                        f"{requester['name']}님이 {payload.title} 루틴 {request_count}건의 담당을 요청했어요.",
+                        "IMPORTANT", "ASSIGNMENT_REQUEST", first_assignment_id,
+                    )
         updated_items = rows(
             db, "SELECT id FROM care_item WHERE child_schedule_id = ? AND family_id = ? ORDER BY starts_at",
             (schedule_id, family_id()),
@@ -1006,6 +1153,7 @@ def update_child_schedule(schedule_id: str, payload: ChildScheduleUpdate):
                    "IMPORTANT", "CARE_SUGGESTION", care_item_id)
         return {"schedule": one(db, "SELECT * FROM child_schedule WHERE id = ?", (schedule_id,)),
                 "care_item_id": care_item_id, "suggestions": suggestions,
+                "assigned_count": assigned_count,
                 "updated_count": len(targets),
                 "recurring_instance_only": bool(schedule.get("recurrence_id")) and payload.update_scope == "SINGLE"}
 

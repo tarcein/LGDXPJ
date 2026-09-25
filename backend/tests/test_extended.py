@@ -398,6 +398,58 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual(len(linked), 2)
         self.assertTrue(all(assignment["status"] == "ACCEPTED" for assignment in linked))
 
+    def test_routine_can_assign_arrival_and_departure_independently_with_external_helper(self):
+        room = self.client.post("/api/families", json={"name": "민솔이네", "owner_name": "엄마"}).json()
+        headers = {"Authorization": "Bearer " + room["access_token"]}
+        child = self.client.post("/api/children", headers=headers, json={"name": "민솔", "age_label": "5세"}).json()
+        created = self.client.post("/api/child-schedules", headers=headers, json={
+            "child_id": child["id"], "title": "태권도", "category": "ACADEMY",
+            "starts_at": "2026-10-01T15:00:00+09:00", "ends_at": "2026-10-01T17:00:00+09:00",
+            "location_name": "튼튼 태권도",
+            "start_external_assignee_name": "태권도 학원 차량",
+            "end_assignee_id": room["member_id"],
+        })
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json()["assigned_count"], 2)
+        snapshot = self.client.get("/api/bootstrap", headers=headers).json()
+        schedule = next(item for item in snapshot["child_schedules"] if item["id"] == created.json()["id"])
+        self.assertEqual(schedule["start_external_assignee_name"], "태권도 학원 차량")
+        self.assertEqual(schedule["end_assignee_id"], room["member_id"])
+        boundaries = {item["boundary_type"]: item for item in snapshot["items"] if item.get("child_schedule_id") == schedule["id"]}
+        self.assertEqual(boundaries["START"]["external_assignee_name"], "태권도 학원 차량")
+        end_assignment = next(item for item in snapshot["assignments"] if item["item_id"] == boundaries["END"]["id"])
+        self.assertEqual(end_assignment["assignee_id"], room["member_id"])
+        self.assertEqual(end_assignment["status"], "ACCEPTED")
+
+        updated = self.client.patch(f"/api/child-schedules/{schedule['id']}", headers=headers, json={
+            "child_id": child["id"], "title": "태권도", "category": "ACADEMY",
+            "starts_at": "2026-10-01T15:00:00+09:00", "ends_at": "2026-10-01T17:00:00+09:00",
+            "location_name": "튼튼 태권도", "merge_same_location": True,
+            "start_assignee_id": room["member_id"], "start_external_assignee_name": "",
+            "end_assignee_id": None, "end_external_assignee_name": "학원 선생님",
+        })
+        self.assertEqual(updated.status_code, 200)
+        changed = self.client.get("/api/bootstrap", headers=headers).json()
+        boundaries = {item["boundary_type"]: item for item in changed["items"] if item.get("child_schedule_id") == schedule["id"]}
+        start_assignment = next(item for item in changed["assignments"]
+                                if item["item_id"] == boundaries["START"]["id"] and item["status"] == "ACCEPTED")
+        self.assertEqual(start_assignment["assignee_id"], room["member_id"])
+        self.assertEqual(boundaries["END"]["external_assignee_name"], "학원 선생님")
+
+    def test_routine_can_mark_one_boundary_as_not_requiring_a_caregiver(self):
+        created = self.client.post("/api/child-schedules", json={
+            "child_id": "jiu", "title": "태권도", "category": "ACADEMY",
+            "starts_at": "2026-10-02T15:00:00+09:00", "ends_at": "2026-10-02T17:00:00+09:00",
+            "location_name": "태권도장", "start_assignment_required": False,
+            "end_assignment_required": True, "end_external_assignee_name": "학원 선생님",
+        })
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json()["assigned_count"], 1)
+        snapshot = self.client.get("/api/bootstrap").json()
+        boundaries = [item for item in snapshot["items"] if item.get("child_schedule_id") == created.json()["id"]]
+        self.assertEqual([item["boundary_type"] for item in boundaries], ["END"])
+        self.assertEqual(boundaries[0]["external_assignee_name"], "학원 선생님")
+
     def test_weekly_child_and_personal_routines_expand_into_calendar_entries(self):
         child_routine = self.client.post("/api/child-schedules", json={
             "child_id": "jiu", "title": "태권도", "category": "ACADEMY",

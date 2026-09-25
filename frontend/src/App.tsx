@@ -333,6 +333,7 @@ function App() {
   const [scheduleForm, setScheduleForm] = useState<'PERSONAL' | 'CHILD'>('CHILD')
   const [scheduleEntryMode, setScheduleEntryMode] = useState<'SINGLE' | 'REPEAT'>('SINGLE')
   const [scheduleSheet, setScheduleSheet] = useState<'NONE' | 'DAY' | 'ADD_MENU' | 'CHOOSER' | 'FORM'>('NONE')
+  const [scheduleQuickAnchor, setScheduleQuickAnchor] = useState<{ top: number; left: number; width: number; height: number; phoneWidth: number } | null>(null)
   const [scheduleRepeat, setScheduleRepeat] = useState(false)
   const [scheduleRepeatMode, setScheduleRepeatMode] = useState<'WEEKLY' | 'INTERVAL' | 'MONTHLY' | 'DATES'>('WEEKLY')
   const [scheduleRepeatDays, setScheduleRepeatDays] = useState<number[]>([])
@@ -353,8 +354,12 @@ function App() {
   const [childScheduleCategory, setChildScheduleCategory] = useState('ACADEMY')
   const [childScheduleLocation, setChildScheduleLocation] = useState('')
   const [addingChildScheduleLocation, setAddingChildScheduleLocation] = useState(false)
-  const [routineAssignee, setRoutineAssignee] = useState('')
+  const [routineStartAssignee, setRoutineStartAssignee] = useState('')
+  const [routineStartExternalName, setRoutineStartExternalName] = useState('')
+  const [routineEndAssignee, setRoutineEndAssignee] = useState('')
+  const [routineEndExternalName, setRoutineEndExternalName] = useState('')
   const [routineMergePrompt, setRoutineMergePrompt] = useState<{ location: string; start: string; end: string } | null>(null)
+  const [timelineNow, setTimelineNow] = useState(() => Date.now())
   const [selectedDate, setSelectedDate] = useState(() => new Date().toLocaleDateString('sv-SE'))
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
   const [calendarConnections, setCalendarConnections] = useState<CalendarConnection[]>([])
@@ -683,6 +688,10 @@ function App() {
   }, [screen, activeFamilyId, boot?.family.plan, benefitKeyword])
   useEffect(() => { if (toast) { const timer = setTimeout(() => setToast(''), 3200); return () => clearTimeout(timer) } }, [toast])
   useEffect(() => {
+    const timer = window.setInterval(() => setTimelineNow(Date.now()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+  useEffect(() => {
     if (!deviceAlertTestResult) return
     const timer = setTimeout(() => setDeviceAlertTestResult(null), 4200)
     return () => clearTimeout(timer)
@@ -780,7 +789,16 @@ function App() {
     setChildPhotoPreview('')
     go('onboarding')
   }
-  const openScheduleRegistration = () => {
+  const openScheduleRegistration = (target?: HTMLElement) => {
+    const phone = target?.closest('.phone')?.getBoundingClientRect()
+    const anchor = target?.getBoundingClientRect()
+    setScheduleQuickAnchor(phone && anchor ? {
+      top: anchor.top - phone.top,
+      left: anchor.left - phone.left,
+      width: anchor.width,
+      height: anchor.height,
+      phoneWidth: phone.width,
+    } : null)
     setEditingSchedule(null)
     setScheduleSheet('ADD_MENU')
   }
@@ -1076,18 +1094,27 @@ function App() {
   const itemFor = (a: Assignment | undefined) => a ? boot?.items.find(i => i.id === a.item_id) : undefined
   const activeAssignmentForItem = (careItemId: string) => assignments.find(a => a.item_id === careItemId && ['ACCEPTED', 'CANDIDATE_ACCEPTED', 'PROPOSED', 'COMPLETED'].includes(a.status))
   const isLiveAssignment = (assignment?: Assignment) => {
-    return assignment?.status === 'ACCEPTED'
-  }
-  const caregiverForChildSchedule = (scheduleId: string) => {
-    const careItem = boot?.items.find(item => item.child_schedule_id === scheduleId)
-    const assignment = careItem ? activeAssignmentForItem(careItem.id) : undefined
-    return assignment ? { name: member(assignment.assignee_id), status: assignment.status } : null
+    if (assignment?.status !== 'ACCEPTED') return false
+    const careItem = itemFor(assignment)
+    if (!careItem?.starts_at || careItem.status === 'DONE') return false
+    const startsAt = new Date(careItem.starts_at).getTime()
+    if (!Number.isFinite(startsAt) || startsAt > timelineNow) return false
+    const careDate = new Date(careItem.starts_at).toLocaleDateString('sv-SE')
+    if (careDate !== new Date(timelineNow).toLocaleDateString('sv-SE')) return false
+    const nextStart = (boot?.items ?? [])
+      .filter(item => item.id !== careItem.id && item.child_id === careItem.child_id && item.starts_at && item.item_type !== 'SUPPLY' && item.item_type !== 'HOMEWORK' && new Date(item.starts_at).toLocaleDateString('sv-SE') === careDate)
+      .map(item => new Date(item.starts_at!).getTime())
+      .filter(value => Number.isFinite(value) && value > startsAt)
+      .sort((left, right) => left - right)[0]
+    return nextStart === undefined || timelineNow < nextStart
   }
   const caregiverForCareItem = (careItemId: string) => {
     const assignment = activeAssignmentForItem(careItemId)
-    return assignment ? { name: member(assignment.assignee_id), status: assignment.status } : null
+    if (assignment) return { name: member(assignment.assignee_id), status: assignment.status }
+    const externalName = boot?.items.find(item => item.id === careItemId)?.external_assignee_name?.trim()
+    return externalName ? { name: externalName, status: 'EXTERNAL' } : null
   }
-  const caregiverStatusLabel = (status: string) => status === 'COMPLETED' ? '완료' : status === 'ACCEPTED' ? '담당 확정' : status === 'PROPOSED' ? '수락 확인 중' : status === 'CANDIDATE_ACCEPTED' ? '최종 확인 중' : status === 'RECONFIRMATION_REQUIRED' ? '재배정 필요' : '요청 중'
+  const caregiverStatusLabel = (status: string) => status === 'EXTERNAL' ? '외부 담당' : status === 'COMPLETED' ? '완료' : status === 'ACCEPTED' ? '담당 확정' : status === 'PROPOSED' ? '수락 확인 중' : status === 'CANDIDATE_ACCEPTED' ? '최종 확인 중' : status === 'RECONFIRMATION_REQUIRED' ? '재배정 필요' : '요청 중'
   const activeItem = boot?.items.find(i => i.id === itemId) ?? null
   const activeAssignment = boot?.assignments.find(a => a.id === assignmentId) ?? null
   const unread = boot?.notifications.filter(n => !n.is_read).length ?? 0
@@ -1130,7 +1157,7 @@ function App() {
       route,
       progress,
     )
-  }, [boot, me?.authenticated])
+  }, [boot, me?.authenticated, timelineNow])
   useEffect(() => {
     void setupNativeNotifications(action => {
       window.dispatchEvent(new CustomEvent('family-care-notification-action', { detail: action }))
@@ -1255,7 +1282,8 @@ function App() {
     if (!careItem) return 'future'
     const assignment = careRouteAssignment(careItem.id)
     if (careItem.status === 'DONE' || assignment?.status === 'COMPLETED') return 'done'
-    return isLiveAssignment(assignment) ? 'active' : 'future'
+    if (isLiveAssignment(assignment)) return 'active'
+    return careItem.starts_at && new Date(careItem.starts_at).getTime() < timelineNow ? 'done' : 'future'
   }
   const careRouteSteps = [
     ...(boot?.child_schedules ?? []).filter(schedule => schedule.child_id === careRouteChildId && dateKey(schedule.starts_at) === careRouteDate).map(schedule => {
@@ -1269,17 +1297,29 @@ function App() {
   if (careRouteSteps.length && careRouteSteps.at(-1)?.label !== '집') {
     careRouteSteps.push({ id: 'home', label: '집', startsAt: '9999', status: careRouteSteps.every(step => step.status === 'done') ? 'done' : 'future' })
   }
-  const homeEvents = [
-    ...todayCare.map(item => { const assignment = activeAssignmentForItem(item.id); return { id: `care-${item.id}`, time: item.starts_at!, title: item.title, meta: `${child(item.child_id)} · ${assignment ? `${caregiverStatusLabel(assignment.status)} · ${member(assignment.assignee_id)}` : '담당 미정'}`, active: isLiveAssignment(assignment), done: item.status === 'DONE', unassigned: !assignment, careItem: item, assignment } }),
+  const homeEventRows = [
+    ...todayCare.map(item => { const assignment = activeAssignmentForItem(item.id); const assignedName = assignment ? member(assignment.assignee_id) : item.external_assignee_name?.trim(); return { id: `care-${item.id}`, time: item.starts_at!, title: item.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), done: item.status === 'DONE' || assignment?.status === 'COMPLETED', unassigned: !assignment && !assignedName, careItem: item, assignment } }),
     ...todayChildSchedules.flatMap(item => {
       const careItems = boot?.items.filter(candidate => candidate.child_schedule_id === item.id) ?? []
-      if (!careItems.length) return [{ id: `child-${item.id}`, time: item.starts_at, title: item.title, meta: `${child(item.child_id)} · 담당 미정`, active: false, done: false, unassigned: true, careItem: undefined as CareItem | undefined, assignment: undefined as Assignment | undefined }]
+      if (!careItems.length) return [{ id: `child-${item.id}`, time: item.starts_at, title: item.title, meta: child(item.child_id), done: false, unassigned: false, careItem: undefined as CareItem | undefined, assignment: undefined as Assignment | undefined }]
       return careItems.map(careItem => {
         const assignment = activeAssignmentForItem(careItem.id)
-        return { id: `child-${careItem.id}`, time: careItem.starts_at ?? item.starts_at, title: careItem.title, meta: `${child(item.child_id)} · ${assignment ? `${caregiverStatusLabel(assignment.status)} · ${member(assignment.assignee_id)}` : '담당 미정'}`, active: isLiveAssignment(assignment), done: careItem.status === 'DONE', unassigned: !assignment, careItem, assignment }
+        const externalName = careItem.external_assignee_name?.trim()
+        const assignedName = assignment ? member(assignment.assignee_id) : externalName
+        return { id: `child-${careItem.id}`, time: careItem.starts_at ?? item.starts_at, title: careItem.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), done: careItem.status === 'DONE' || assignment?.status === 'COMPLETED', unassigned: !assignment && !externalName, careItem, assignment }
       })
     }),
   ].sort((left, right) => left.time.localeCompare(right.time))
+  const latestStartedHomeEvent = homeEventRows.reduce<number | null>((latest, event) => {
+    const startsAt = new Date(event.time).getTime()
+    return Number.isFinite(startsAt) && startsAt <= timelineNow && (latest === null || startsAt > latest) ? startsAt : latest
+  }, null)
+  const homeEvents = homeEventRows.map(event => {
+    const startsAt = new Date(event.time).getTime()
+    const elapsed = latestStartedHomeEvent !== null && startsAt < latestStartedHomeEvent
+    const done = event.done || elapsed
+    return { ...event, done, active: !done && latestStartedHomeEvent !== null && startsAt === latestStartedHomeEvent }
+  })
   const visibleNotices = boot?.notifications.filter(notice => noticeScope === 'family' || !me?.member.id || !notice.member_id || notice.member_id === me.member.id) ?? []
   const yesterdayKey = dateKey(new Date(new Date().setDate(new Date().getDate() - 1)))
   const noticeGroups = Object.entries(visibleNotices.reduce<Record<string, Notice[]>>((groups, notice) => {
@@ -1505,7 +1545,8 @@ function App() {
     const until = new Date(start.getFullYear(), start.getMonth() + 3, start.getDate())
     setEditingSchedule(null); setScheduleForm(type); setScheduleEntryMode(mode); setScheduleTitle(''); setScheduleEndTime(''); setScheduleRepeat(mode === 'REPEAT')
     const knownLocations = [...new Set((boot?.child_schedules ?? []).map(item => item.location_name?.trim()).filter((value): value is string => !!value))]
-    setChildScheduleLocation(knownLocations[0] ?? ''); setAddingChildScheduleLocation(!knownLocations.length); setRoutineAssignee('')
+    setChildScheduleLocation(knownLocations[0] ?? ''); setAddingChildScheduleLocation(!knownLocations.length)
+    setRoutineStartAssignee(''); setRoutineStartExternalName(''); setRoutineEndAssignee(''); setRoutineEndExternalName('')
     setScheduleRepeatMode('WEEKLY'); setScheduleRepeatDays([(start.getDay() + 6) % 7]); setScheduleRepeatUntil(until.toLocaleDateString('sv-SE'))
     setScheduleRepeatInterval(2); setScheduleRepeatMonthDay(start.getDate()); setScheduleRepeatDates([]); setScheduleRepeatDateInput(scheduleDate); setScheduleSheet('FORM')
   }
@@ -1520,6 +1561,20 @@ function App() {
     setEditingSchedule({ type: 'CHILD', id: schedule.id }); setScheduleForm('CHILD')
     setScheduleTitle(schedule.title); setChildScheduleChild(schedule.child_id); setChildScheduleCategory(schedule.category)
     setChildScheduleLocation(schedule.location_name ?? ''); setAddingChildScheduleLocation(!(schedule.location_name ?? '').trim())
+    const responsibility = (boundary: 'START' | 'END') => {
+      const prefix = boundary === 'START' ? 'start' : 'end'
+      const required = schedule[`${prefix}_assignment_required` as 'start_assignment_required' | 'end_assignment_required']
+      const storedAssignee = schedule[`${prefix}_assignee_id` as 'start_assignee_id' | 'end_assignee_id']
+      const storedExternal = schedule[`${prefix}_external_assignee_name` as 'start_external_assignee_name' | 'end_external_assignee_name'] ?? ''
+      const careItem = boot?.items.find(item => item.child_schedule_id === schedule.id && (item.boundary_type ?? 'START') === boundary)
+      const assignment = careItem ? activeAssignmentForItem(careItem.id) : undefined
+      const externalName = storedExternal || careItem?.external_assignee_name || ''
+      return { selection: required === false || required === 0 ? '__NONE__' : externalName ? '__EXTERNAL__' : storedAssignee || assignment?.assignee_id || '', externalName }
+    }
+    const startResponsibility = responsibility('START')
+    const endResponsibility = responsibility('END')
+    setRoutineStartAssignee(startResponsibility.selection); setRoutineStartExternalName(startResponsibility.externalName)
+    setRoutineEndAssignee(endResponsibility.selection); setRoutineEndExternalName(endResponsibility.externalName)
     setScheduleDate(dateKey(schedule.starts_at)); setScheduleStartTime(localClock(schedule.starts_at)); setScheduleEndTime(schedule.has_end_time === false || schedule.has_end_time === 0 ? '' : localClock(schedule.ends_at))
     setScheduleRepeat(false); setScheduleSheet('FORM')
   }
@@ -1574,6 +1629,16 @@ function App() {
     const scheduleEnd = endClock ? new Date(`${scheduleDate}T${endClock}`) : null
     if (scheduleEnd && scheduleEnd <= scheduleStart) throw new Error('종료 시간은 시작 시간보다 늦어야 해요')
     if (scheduleForm === 'CHILD' && !childScheduleLocation.trim()) throw new Error('아이 일정의 위치를 선택하거나 새로 입력해주세요')
+    if (scheduleForm === 'CHILD' && routineStartAssignee === '__EXTERNAL__' && !routineStartExternalName.trim()) throw new Error('등원 외부 담당자의 이름을 입력해주세요')
+    if (scheduleForm === 'CHILD' && scheduleEnd && routineEndAssignee === '__EXTERNAL__' && !routineEndExternalName.trim()) throw new Error('하원 외부 담당자의 이름을 입력해주세요')
+    const responsibility = {
+      start_assignment_required: routineStartAssignee !== '__NONE__',
+      start_assignee_id: routineStartAssignee && !routineStartAssignee.startsWith('__') ? routineStartAssignee : null,
+      start_external_assignee_name: routineStartAssignee === '__EXTERNAL__' ? routineStartExternalName.trim() : '',
+      end_assignment_required: routineEndAssignee !== '__NONE__',
+      end_assignee_id: routineEndAssignee && !routineEndAssignee.startsWith('__') ? routineEndAssignee : null,
+      end_external_assignee_name: routineEndAssignee === '__EXTERNAL__' ? routineEndExternalName.trim() : '',
+    }
     const repeatDates = calculatedRepeatDates()
     if (scheduleRepeat && scheduleRepeatMode === 'WEEKLY' && (!scheduleRepeatDays.length || !scheduleRepeatUntil)) throw new Error('반복 요일과 종료일을 선택해주세요')
     if (scheduleRepeat && ['INTERVAL', 'MONTHLY'].includes(scheduleRepeatMode) && !scheduleRepeatUntil) throw new Error('반복 종료일을 선택해주세요')
@@ -1592,6 +1657,7 @@ function App() {
           location_name: childScheduleLocation.trim(),
           merge_same_location: editingRecord && 'merge_same_location' in editingRecord
             ? editingRecord.merge_same_location !== false && editingRecord.merge_same_location !== 0 : true,
+          ...responsibility,
           update_scope: updateScope ?? 'SINGLE',
         })
         if (updateScope === 'FUTURE') setPatternSuggestionOpen(true)
@@ -1618,7 +1684,7 @@ function App() {
         category: childScheduleCategory, starts_at: scheduleStart.toISOString(),
         ends_at: scheduleEnd?.toISOString() ?? null, location_name: childScheduleLocation.trim(),
         merge_same_location: mergeSameLocation ?? true,
-        assignee_id: scheduleEntryMode === 'REPEAT' && routineAssignee ? routineAssignee : null,
+        ...(scheduleEntryMode === 'REPEAT' ? responsibility : {}),
         source: 'MANUAL', ...recurrence })
       setItemId(created.care_item_id); setSuggestions(created.suggestions); setRoutineMergePrompt(null)
       setScheduleTitle(''); setScheduleRepeat(false); setScheduleSheet('NONE')
@@ -1915,6 +1981,25 @@ function App() {
     {addingChildScheduleLocation && <input aria-label="새 아이 일정 위치" value={childScheduleLocation} maxLength={100} onChange={event => setChildScheduleLocation(event.target.value)} placeholder="예: 한빛초등학교, 별빛유치원" />}
     <small>같은 위치 이름을 선택하면 이어지는 일정의 중간 픽업을 자동으로 정리해요.</small>
   </div>
+  const routineResponsibilityControl = (
+    boundary: 'START' | 'END',
+    selection: string,
+    setSelection: (value: string) => void,
+    externalName: string,
+    setExternalName: (value: string) => void,
+  ) => <label className="routine-boundary-assignee">
+    <span>{boundary === 'START' ? '등원 담당' : '하원 담당'}</span>
+    <select value={selection} onChange={event => {
+      setSelection(event.target.value)
+      if (event.target.value !== '__EXTERNAL__') setExternalName('')
+    }}>
+      <option value="">나중에 설정할게요</option>
+      <option value="__NONE__">담당자 필요 없음</option>
+      {members.map(person => <option key={person.id} value={person.id}>{person.name}{person.id === me?.member.id ? ' (나)' : ''}</option>)}
+      <option value="__EXTERNAL__">가족방에 없는 담당자</option>
+    </select>
+    {selection === '__EXTERNAL__' && <input value={externalName} maxLength={100} onChange={event => setExternalName(event.target.value)} placeholder="예: 태권도 학원 차량, 이웃 김선생님" />}
+  </label>
 
   let page: ReactNode = <div className="loading">가족의 하루를 불러오고 있어요</div>
   if (screen === 'thinq') page = <ThinQEntry selectorOpen={thinqSelector} hasFamily={familySessionReady} familyName={boot?.family.name ?? '민솔이네 집'} onOpenSelector={() => setThinqSelector(true)} onCloseSelector={() => setThinqSelector(false)} onOpenService={openFamilyService} onStartOnboarding={startFamilyOnboarding} />
@@ -1935,7 +2020,7 @@ function App() {
     <Section>오늘 일정</Section>
     <Card className="home-timeline exact-timeline">
       {homeEvents.map(event => <div key={event.id} className="home-schedule-row-wrap">
-        <button className={'home-schedule-row ' + (event.active ? 'current' : 'muted')} onClick={() => { if (event.assignment && !['ACCEPTED', 'COMPLETED'].includes(event.assignment.status)) { setAssignmentId(event.assignment.id); setViewer(event.assignment.assignee_id); go('assignmentDetail') } else if (event.unassigned && event.careItem) void openSuggestion(event.careItem); else go('schedule') }}><time>{formatTime(event.time)}</time><span><strong>{event.title}</strong><small>{event.active ? `진행 중 · ${event.meta}` : event.meta}</small></span>{event.done ? <b className="done"><img src={homeScheduleDoneIcon} alt="완료" /></b> : event.active || event.assignment ? <b>›</b> : null}</button>
+        <button className={`home-schedule-row ${event.active ? 'current' : event.done ? 'completed' : 'upcoming'}`} onClick={() => { if (event.assignment && !['ACCEPTED', 'COMPLETED'].includes(event.assignment.status)) { setAssignmentId(event.assignment.id); setViewer(event.assignment.assignee_id); go('assignmentDetail') } else if (event.unassigned && event.careItem) void openSuggestion(event.careItem); else go('schedule') }}><time>{formatTime(event.time)}</time><span><strong>{event.title}</strong><small>{event.active ? `진행 중 · ${event.meta}` : event.meta}</small></span>{event.done ? <b className="done"><img src={homeScheduleDoneIcon} alt="완료" /></b> : event.active || event.assignment ? <b>›</b> : null}</button>
         {event.careItem && <button className="home-schedule-row-delete" aria-label="일정 삭제" onClick={() => deleteCareItem(event.careItem!)}>✕</button>}
       </div>)}
       {!homeEvents.length && <p className="empty-line">오늘 등록된 일정이 없어요</p>}
@@ -2011,7 +2096,7 @@ function App() {
     page = <section className="figma-calendar-page" data-figma-node="702:1663">
       <button className="figma-calendar-connect" onClick={() => go('calendar')}><i><img src={googleIcon} alt="" /><img src={outlookIcon} alt="" /></i><span><strong>개인 캘린더 연동</strong><small>{connectedCalendarCount ? `${connectedCalendarCount}개 계정 연결됨 · 눌러서 동기화` : 'Google·Outlook 일정을 한곳에서 보기'}</small></span><b>›</b></button>
       <div className="figma-calendar-card">
-        <div className="figma-calendar-head"><div className="figma-month-control"><button aria-label="이전 달" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}>‹</button><h2>{calendarMonth.getFullYear()}년 {calendarMonth.getMonth() + 1}월</h2><button aria-label="다음 달" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}>›</button></div><button className="figma-calendar-add" aria-label="등록 메뉴 열기" onClick={openScheduleRegistration}>＋</button></div>
+        <div className="figma-calendar-head"><div className="figma-month-control"><button aria-label="이전 달" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}>‹</button><h2>{calendarMonth.getFullYear()}년 {calendarMonth.getMonth() + 1}월</h2><button aria-label="다음 달" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}>›</button></div><button className="figma-calendar-add" aria-label="등록 메뉴 열기" onClick={event => openScheduleRegistration(event.currentTarget)}>＋</button></div>
         <div className="figma-calendar-legend"><button className={scheduleScope === 'all' ? 'active' : ''} onClick={() => setScheduleScope('all')}><i className="all-dot" />전체</button><button className={scheduleScope === 'me' ? 'active' : ''} onClick={() => setScheduleScope(scheduleScope === 'me' ? 'all' : 'me')}><i style={{ background: myScheduleColor }} />나</button>{boot.children.map(childItem => <button key={childItem.id} title={childItem.name} className={scheduleScope === childItem.id ? 'active' : ''} onClick={() => setScheduleScope(scheduleScope === childItem.id ? 'all' : childItem.id)}><i style={{ background: childColor(childItem.id) }} />{childItem.name}</button>)}</div>
         <div className="weekdays figma-weekdays">{['일', '월', '화', '수', '목', '금', '토'].map((day, index) => <span className={index === 0 ? 'sun' : index === 6 ? 'sat' : ''} key={day}>{day}</span>)}</div>
         <div className="month-grid figma-month-grid">{calendarDays.map(day => {
@@ -2316,14 +2401,13 @@ function App() {
     {calendarPrivacyPromptOpen && <BottomSheet className="calendar-privacy-sheet" onDismiss={() => setCalendarPrivacyPromptOpen(false)}><span className="privacy-prompt-icon">🗓️</span><h2>가족에게 일정 제목을<br />보여줄까요?</h2><p>캘린더 연동은 완료됐어요. 이제 가족방에서 보일 범위를 선택해주세요.</p><div className="calendar-privacy-options"><button className="recommended" disabled={calendarPrivacyBusy} onClick={() => void saveCalendarVisibility(false)}><i>✓</i><span><strong>시간만 공개</strong><small>일정 제목은 ‘바쁨’으로 표시</small></span><em>추천</em></button><button disabled={calendarPrivacyBusy} onClick={() => void saveCalendarVisibility(true)}><i /><span><strong>일정 제목 공개</strong><small>가족이 일정 내용까지 확인</small></span></button></div><small className="calendar-privacy-note">캘린더 제공자의 접근 권한과는 별개예요. 나중에 가족 › 정보 공개에서 바꿀 수 있어요.</small><button className="text-link centered" disabled={calendarPrivacyBusy} onClick={() => setCalendarPrivacyPromptOpen(false)}>나중에 설정</button></BottomSheet>}
     {scheduleSheet === 'DAY' && boot && <div className="schedule-overlay" onClick={() => setScheduleSheet('NONE')}><section className="schedule-day-sheet" onClick={e => e.stopPropagation()}><header><div><small>선택한 날짜</small><h2>{new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(selectedDate + 'T12:00:00'))}</h2></div><button aria-label="날짜 일정 닫기" onClick={() => setScheduleSheet('NONE')}>×</button></header><div className="day-sheet-events">{boot.schedules.filter(s => dateKey(s.starts_at) === selectedDate && personalScheduleVisible(s.member_id)).map(s => <Card key={s.id} className="calendar-event personal"><i style={{ background: caregiverColor(s.member_id) }} /><time>{formatTime(s.starts_at)}</time><div><strong>{s.title}</strong><p>{member(s.member_id)} · {s.kind === 'WORK' ? '업무 일정' : '고정 루틴'}</p></div><span className={'caregiver-pill ' + (s.member_id === me?.member.id ? 'self' : '')}>{s.member_id === me?.member.id ? '나' : '돌봄자'}</span>{s.member_id === me?.member.id && !s.external_source && <button className="schedule-row-edit" onClick={() => openPersonalScheduleEdit(s)}>수정</button>}</Card>)}{filteredChildSchedules.filter(s => dateKey(s.starts_at) === selectedDate).flatMap(s => {
   const linkedItems = boot.items.filter(i => i.child_schedule_id === s.id)
-  const rowsForSchedule: (CareItem | null)[] = linkedItems.length > 1 ? linkedItems : [null]
+  const rowsForSchedule: (CareItem | null)[] = linkedItems.length ? linkedItems : [null]
   return rowsForSchedule.map((careItem, index) => {
-    const assignment = careItem ? activeAssignmentForItem(careItem.id) : undefined
-    const caregiver = careItem ? (assignment ? { name: member(assignment.assignee_id), status: assignment.status } : null) : caregiverForChildSchedule(s.id)
-    return <Card key={s.id + '-' + index} className="calendar-event"><i style={{ background: childColor(s.child_id) }} /><time>{formatTime(careItem?.starts_at ?? s.starts_at)}</time><div><strong>{careItem?.title ?? s.title}</strong><p>{child(s.child_id)} · {childScheduleLabel[s.category] ?? '아이 일정'}</p></div><span className={'caregiver-pill ' + (caregiver?.status === 'ACCEPTED' || caregiver?.status === 'COMPLETED' ? 'confirmed' : '')}>{caregiver ? `${caregiverStatusLabel(caregiver.status)} · ${caregiver.name}` : '미배정'}</span>{me?.authenticated && <button className="schedule-row-edit" onClick={() => openChildScheduleEdit(s)}>수정</button>}</Card>
+    const caregiver = careItem ? caregiverForCareItem(careItem.id) : null
+    return <Card key={s.id + '-' + index} className="calendar-event"><i style={{ background: childColor(s.child_id) }} /><time>{formatTime(careItem?.starts_at ?? s.starts_at)}</time><div><strong>{careItem?.title ?? s.title}</strong><p>{child(s.child_id)} · {childScheduleLabel[s.category] ?? '아이 일정'}</p></div>{careItem && <span className={'caregiver-pill ' + (caregiver?.status === 'ACCEPTED' || caregiver?.status === 'COMPLETED' || caregiver?.status === 'EXTERNAL' ? 'confirmed' : '')}>{caregiver ? `${caregiverStatusLabel(caregiver.status)} · ${caregiver.name}` : '미배정'}</span>}{me?.authenticated && <button className="schedule-row-edit" onClick={() => openChildScheduleEdit(s)}>수정</button>}</Card>
   })
-})}{filteredCareSchedules.filter(i => dateKey(i.starts_at!) === selectedDate).map(i => { const caregiver = caregiverForCareItem(i.id); return <Card key={i.id} className="calendar-event"><i style={{ background: childColor(i.child_id) }} /><time>{formatTime(i.starts_at)}</time><div><strong>{i.title}</strong><p>{child(i.child_id)} · 알림장</p></div><span className={'caregiver-pill ' + (caregiver?.status === 'ACCEPTED' || caregiver?.status === 'COMPLETED' ? 'confirmed' : '')}>{caregiver ? `${caregiverStatusLabel(caregiver.status)} · ${caregiver.name}` : '미배정'}</span></Card> })}{calendarEventsFor(selectedDate).length === 0 && <Empty title="등록된 일정이 없어요" text="아래 + 버튼으로 이 날의 일정을 추가해보세요" />}</div><button className="day-add-button" aria-label="선택한 날짜에 일정 추가" onClick={() => { setScheduleSheet('NONE'); openScheduleRegistration() }}>＋</button></section></div>}
-    {scheduleSheet === 'ADD_MENU' && boot && <div className="sheet-overlay schedule-quick-overlay" onClick={() => setScheduleSheet('NONE')}><section className="schedule-quick-menu" role="dialog" aria-modal="true" aria-label="일정 등록 방식 선택" onClick={event => event.stopPropagation()} data-figma-node="702:2203"><button className="schedule-quick-close" aria-label="등록 메뉴 닫기" onClick={() => setScheduleSheet('NONE')}>＋</button><div className="schedule-add-options"><button onClick={() => { setScheduleEntryMode('SINGLE'); setScheduleSheet('CHOOSER') }}><span><strong>일정 등록하기</strong><small>새롭게 추가된 일정을 등록해주세요</small></span></button><button onClick={() => { openNewScheduleForm(boot.children.length ? 'CHILD' : 'PERSONAL', 'REPEAT'); if (boot.children[0]) setChildScheduleChild(boot.children[0].id) }}><span><strong>루틴 설정하기</strong><small>반복되는 일정을 등록해주세요</small></span></button><button onClick={() => { setScheduleSheet('NONE'); go('capture') }}><span><strong>알림장 등록</strong><small>사진을 읽어 일정과 준비물을 정리해요</small></span></button></div></section></div>}
+})}{filteredCareSchedules.filter(i => dateKey(i.starts_at!) === selectedDate).map(i => { const caregiver = caregiverForCareItem(i.id); return <Card key={i.id} className="calendar-event"><i style={{ background: childColor(i.child_id) }} /><time>{formatTime(i.starts_at)}</time><div><strong>{i.title}</strong><p>{child(i.child_id)} · 알림장</p></div><span className={'caregiver-pill ' + (caregiver?.status === 'ACCEPTED' || caregiver?.status === 'COMPLETED' ? 'confirmed' : '')}>{caregiver ? `${caregiverStatusLabel(caregiver.status)} · ${caregiver.name}` : '미배정'}</span></Card> })}{calendarEventsFor(selectedDate).length === 0 && <Empty title="등록된 일정이 없어요" text="아래 + 버튼으로 이 날의 일정을 추가해보세요" />}</div><button className="day-add-button" aria-label="선택한 날짜에 일정 추가" onClick={event => { setScheduleSheet('NONE'); openScheduleRegistration(event.currentTarget) }}>＋</button></section></div>}
+    {scheduleSheet === 'ADD_MENU' && boot && <div className="sheet-overlay schedule-quick-overlay" onClick={() => setScheduleSheet('NONE')}><button className="schedule-quick-close" aria-label="등록 메뉴 닫기" style={scheduleQuickAnchor ? { top: scheduleQuickAnchor.top, left: scheduleQuickAnchor.left, width: scheduleQuickAnchor.width, height: scheduleQuickAnchor.height } : undefined} onClick={() => setScheduleSheet('NONE')}>×</button><section className="schedule-quick-menu" role="dialog" aria-modal="true" aria-label="일정 등록 방식 선택" style={scheduleQuickAnchor ? { position: 'absolute', top: Math.max(12, scheduleQuickAnchor.top + scheduleQuickAnchor.height / 2 - 61), right: Math.max(58, scheduleQuickAnchor.phoneWidth - scheduleQuickAnchor.left + 17) } : undefined} onClick={event => event.stopPropagation()} data-figma-node="702:2203"><div className="schedule-add-options"><button onClick={() => { setScheduleEntryMode('SINGLE'); setScheduleSheet('CHOOSER') }}><span><strong>일정 등록하기</strong><small>새롭게 추가된 일정을 등록해주세요</small></span></button><button onClick={() => { openNewScheduleForm(boot.children.length ? 'CHILD' : 'PERSONAL', 'REPEAT'); if (boot.children[0]) setChildScheduleChild(boot.children[0].id) }}><span><strong>루틴 설정하기</strong><small>반복되는 일정을 등록해주세요</small></span></button><button onClick={() => { setScheduleSheet('NONE'); go('capture') }}><span><strong>알림장 등록</strong><small>사진을 읽어 일정과 준비물을 정리해요</small></span></button></div></section></div>}
     {scheduleSheet === 'CHOOSER' && <BottomSheet className="schedule-chooser" onDismiss={() => setScheduleSheet('ADD_MENU')}><h2>누구의 일정인가요?</h2><p>등록할 일정의 주인을 먼저 선택해주세요.</p><div className="schedule-owner-options"><button onClick={() => openNewScheduleForm('CHILD')}><i><img src={scheduleChildIcon} alt="" /></i><strong>아이</strong><small>학원·학교·방과후 일정</small></button><button onClick={() => openNewScheduleForm('PERSONAL')}><i><img src={scheduleOwnerIcon} alt="" /></i><strong>본인</strong><small>운동·업무·개인 일정</small></button></div><button className="text-link centered" onClick={() => setScheduleSheet('ADD_MENU')}>돌아가기</button></BottomSheet>}
     {scheduleSheet === 'FORM' && boot && !editingSchedule && scheduleEntryMode === 'SINGLE' && <div className="single-schedule-overlay"><section className="single-schedule-screen" role="dialog" aria-modal="true" aria-label="일정 등록" data-figma-node="460:3102">
       <header><button aria-label="일정 등록 닫기" onClick={() => setScheduleSheet('CHOOSER')}>×</button><strong>일정 등록</strong><span>{scheduleForm === 'CHILD' ? child(childScheduleChild) : '본인'}</span></header>
@@ -2353,13 +2437,13 @@ function App() {
           {scheduleRepeatMode === 'DATES' && <div className="routine-specific-dates"><div><input aria-label="특정 반복일" type="date" value={scheduleRepeatDateInput} onChange={event => setScheduleRepeatDateInput(event.target.value)} /><button onClick={() => { if (scheduleRepeatDateInput) setScheduleRepeatDates(current => [...new Set([...current, scheduleRepeatDateInput])].sort()) }}>추가</button></div><p>{scheduleRepeatDates.map(value => <button key={value} aria-label={`${value} 삭제`} onClick={() => setScheduleRepeatDates(current => current.filter(item => item !== value))}>{value.slice(5).replace('-', '/')} ×</button>)}</p></div>}
         </fieldset>
         <div className="routine-time-row"><strong>시간</strong><div className="routine-time-fields direct-time"><input aria-label="시작 시간" type="time" step="60" value={scheduleStartTime} onChange={event => setScheduleStartTime(event.target.value)} /><span>–</span><input aria-label="종료 시간" type="time" step="60" value={scheduleEndTime} onChange={event => setScheduleEndTime(event.target.value)} /></div></div>
-        {scheduleForm === 'CHILD' && <label className="routine-assignee"><span>돌봄 담당자</span><select value={routineAssignee} onChange={event => setRoutineAssignee(event.target.value)}><option value="">나중에 설정할게요</option>{members.map(person => <option key={person.id} value={person.id}>{person.name}{person.id === me?.member.id ? ' (나)' : ''}</option>)}</select><small>지금 고르면 이 루틴의 등원·하원 담당으로 함께 저장돼요.</small></label>}
+        {scheduleForm === 'CHILD' && <div className="routine-responsibility"><strong>돌봄 담당자</strong><small>등원과 하원을 각각 다르게 정할 수 있어요.</small><div>{routineResponsibilityControl('START', routineStartAssignee, setRoutineStartAssignee, routineStartExternalName, setRoutineStartExternalName)}{routineResponsibilityControl('END', routineEndAssignee, setRoutineEndAssignee, routineEndExternalName, setRoutineEndExternalName)}</div></div>}
         <div className="routine-period-row"><div><strong>기간 정하기</strong><small>학기 단위로 끝나는 루틴</small></div><button className={'switch ' + (scheduleRepeat ? 'on' : '')} role="switch" aria-checked={scheduleRepeat} aria-label="매주 반복" onClick={() => setScheduleRepeat(value => !value)}><span /></button></div>
         {scheduleRepeat && scheduleRepeatMode !== 'DATES' && <div className="routine-date-range"><label><span>시작일</span><input aria-label="반복 시작일" type="date" value={scheduleDate} onChange={event => setScheduleDate(event.target.value)} /></label><b>→</b><label><span>반복 종료일</span><input aria-label="반복 종료일" type="date" value={scheduleRepeatUntil} onChange={event => setScheduleRepeatUntil(event.target.value)} /></label></div>}
         <button className="routine-save" aria-label={scheduleRepeat ? '고정 루틴 일괄 등록' : '이 일정 등록'} onClick={() => saveSchedule()}>저장하기</button>
       </div>
     </section></div>}
-    {scheduleSheet === 'FORM' && boot && editingSchedule && <BottomSheet className="schedule-form-sheet" onDismiss={() => setScheduleSheet('DAY')}><h2>{scheduleForm === 'CHILD' ? '아이 일정 수정' : '내 일정 수정'}</h2><p className="schedule-edit-help">반복 일정은 저장할 때 이번 일정만 바꿀지 이후 일정도 함께 바꿀지 선택할 수 있어요.</p>{scheduleForm === 'CHILD' ? <><label className="form-label">아이 이름 (필수)</label><select className="form-control" value={childScheduleChild} onChange={event => setChildScheduleChild(event.target.value)}>{boot.children.map(childItem => <option key={childItem.id} value={childItem.id}>{childItem.name}</option>)}</select>{childLocationControl('edit-location')}</> : <><label className="form-label">일정 종류</label><select className="form-control" value={scheduleKind} onChange={event => setScheduleKind(event.target.value as 'WORK' | 'ROUTINE')}><option value="ROUTINE">개인 루틴·운동</option><option value="WORK">업무 일정</option></select></>}<label className="form-label">일정 이름</label><input className="form-control" value={scheduleTitle} onChange={event => setScheduleTitle(event.target.value)} placeholder={scheduleForm === 'CHILD' ? '예: 태권도, 방과후 미술' : '예: 헬스, 오전 회의'} /><ScheduleTimeFields date={scheduleDate} start={scheduleStartTime} end={scheduleEndTime} onDate={setScheduleDate} onStart={setScheduleStartTime} onEnd={setScheduleEndTime} /><button className="primary-button wide-button" onClick={() => saveSchedule()}>수정 내용 저장</button><button className="schedule-delete-button wide-button" onClick={() => deleteSchedule()}>이 일정 삭제</button><button className="text-link centered" onClick={() => setScheduleSheet('DAY')}>이전</button></BottomSheet>}
+    {scheduleSheet === 'FORM' && boot && editingSchedule && <BottomSheet className="schedule-form-sheet" onDismiss={() => setScheduleSheet('DAY')}><h2>{scheduleForm === 'CHILD' ? '아이 일정 수정' : '내 일정 수정'}</h2><p className="schedule-edit-help">반복 일정은 저장할 때 이번 일정만 바꿀지 이후 일정도 함께 바꿀지 선택할 수 있어요.</p>{scheduleForm === 'CHILD' ? <><label className="form-label">아이 이름 (필수)</label><select className="form-control" value={childScheduleChild} onChange={event => setChildScheduleChild(event.target.value)}>{boot.children.map(childItem => <option key={childItem.id} value={childItem.id}>{childItem.name}</option>)}</select>{childLocationControl('edit-location')}</> : <><label className="form-label">일정 종류</label><select className="form-control" value={scheduleKind} onChange={event => setScheduleKind(event.target.value as 'WORK' | 'ROUTINE')}><option value="ROUTINE">개인 루틴·운동</option><option value="WORK">업무 일정</option></select></>}<label className="form-label">일정 이름</label><input className="form-control" value={scheduleTitle} onChange={event => setScheduleTitle(event.target.value)} placeholder={scheduleForm === 'CHILD' ? '예: 태권도, 방과후 미술' : '예: 헬스, 오전 회의'} /><ScheduleTimeFields date={scheduleDate} start={scheduleStartTime} end={scheduleEndTime} onDate={setScheduleDate} onStart={setScheduleStartTime} onEnd={setScheduleEndTime} />{scheduleForm === 'CHILD' && <div className="routine-responsibility edit-responsibility"><strong>돌봄 담당자</strong><small>등원·하원별로 가족 또는 외부 담당자를 설정하세요.</small><div>{routineResponsibilityControl('START', routineStartAssignee, setRoutineStartAssignee, routineStartExternalName, setRoutineStartExternalName)}{routineResponsibilityControl('END', routineEndAssignee, setRoutineEndAssignee, routineEndExternalName, setRoutineEndExternalName)}</div></div>}<button className="primary-button wide-button" onClick={() => saveSchedule()}>수정 내용 저장</button><button className="schedule-delete-button wide-button" onClick={() => deleteSchedule()}>이 일정 삭제</button><button className="text-link centered" onClick={() => setScheduleSheet('DAY')}>이전</button></BottomSheet>}
     {weeklyTimetableOpen && boot && <div className="weekly-overlay" onClick={() => setWeeklyTimetableOpen(false)}><section className="weekly-timetable" role="dialog" aria-modal="true" aria-label="주간 시간표" onClick={event => event.stopPropagation()}>
       <header><button onClick={() => setWeeklyTimetableOpen(false)}>‹</button><strong>주간 시간표</strong><button onClick={() => setToast('주간 시간표 설정을 저장했어요')}>저장</button></header>
       <div className="weekly-child-tabs">{boot.children.map(childItem => <button key={childItem.id} className={activeWeeklyChild === childItem.id ? 'active' : ''} onClick={() => setWeeklyTimetableChild(childItem.id)}>{childItem.name}</button>)}</div>
