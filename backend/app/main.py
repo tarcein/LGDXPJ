@@ -184,6 +184,11 @@ class ChildCreate(BaseModel):
     age_label: str = Field(min_length=1, max_length=30)
 
 
+class ChildUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    age_label: str = Field(min_length=1, max_length=30)
+
+
 class MemberCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     role: str = Field(pattern="^(PARENT|GRANDPARENT|CAREGIVER)$")
@@ -433,6 +438,42 @@ def bootstrap(tv: bool = False):
     utc_now = datetime.now(timezone.utc)
     online_cutoff = (utc_now - timedelta(minutes=2)).isoformat()
     with database() as db:
+        # Repair schedule defaults created by older clients so the deployed
+        # family room immediately follows the current rules as well.
+        db.execute(
+            """UPDATE child_schedule
+                  SET start_assignment_required = 0, end_assignment_required = 0,
+                      start_assignee_id = NULL, end_assignee_id = NULL,
+                      start_external_assignee_name = '', end_external_assignee_name = ''
+                WHERE family_id = ?
+                  AND LOWER(REPLACE(TRIM(location_name), ' ', '')) IN ('집', '우리집', '자택', 'home')""",
+            (family_id(),),
+        )
+        _reconcile_family_schedule_care_items(db)
+        timestamp = now()
+        db.execute(
+            """UPDATE care_assignment AS a
+                  SET status = 'ACCEPTED', responded_at = COALESCE(responded_at, ?)
+                WHERE a.family_id = ? AND a.status IN ('PROPOSED', 'CANDIDATE_ACCEPTED')
+                  AND EXISTS (
+                    SELECT 1 FROM care_item i
+                    JOIN child_schedule s ON s.id = i.child_schedule_id
+                    WHERE i.id = a.item_id
+                      AND ((s.start_assignee_id = a.assignee_id
+                            AND (i.boundary_type = 'START' OR (i.boundary_type IS NULL AND i.starts_at = s.starts_at)))
+                        OR (s.end_assignee_id = a.assignee_id
+                            AND (i.boundary_type = 'END' OR (i.boundary_type IS NULL AND i.starts_at = s.ends_at))))
+                  )""",
+            (timestamp, family_id()),
+        )
+        db.execute(
+            """UPDATE care_item SET status = CASE WHEN status = 'DONE' THEN status ELSE 'ASSIGNED' END
+                WHERE family_id = ? AND EXISTS (
+                  SELECT 1 FROM care_assignment a
+                  WHERE a.item_id = care_item.id AND a.status = 'ACCEPTED'
+                )""",
+            (family_id(),),
+        )
         return {
             "family": one(db, "SELECT * FROM family_group WHERE id = ?", (family_id(),)),
             "members": rows(db, """SELECT m.*, CASE WHEN EXISTS (
@@ -496,6 +537,17 @@ def create_child(payload: ChildCreate):
             raise HTTPException(403, detail={"code": "PLAN_LIMIT", "message": "무료 플랜은 자녀 2명까지 등록할 수 있습니다"})
         child_id = str(uuid4())
         db.execute("INSERT INTO child (id, family_id, name, age_label) VALUES (?, ?, ?, ?)", (child_id, family_id(), payload.name, payload.age_label))
+        return _child_payload(one(db, "SELECT * FROM child WHERE id = ?", (child_id,)))
+
+
+@app.patch("/api/children/{child_id}")
+def update_child(child_id: str, payload: ChildUpdate):
+    with database() as db:
+        one(db, "SELECT id FROM child WHERE id = ? AND family_id = ?", (child_id, family_id()))
+        db.execute(
+            "UPDATE child SET name = ?, age_label = ? WHERE id = ? AND family_id = ?",
+            (payload.name.strip(), payload.age_label.strip(), child_id, family_id()),
+        )
         return _child_payload(one(db, "SELECT * FROM child WHERE id = ?", (child_id,)))
 
 
@@ -915,6 +967,11 @@ def _normalize_boundary_responsibility(assignee_id: str | None, external_name: s
     return assignee_id or None, normalized_name
 
 
+def _is_home_location(location_name: str | None) -> bool:
+    normalized = "".join((location_name or "").strip().casefold().split())
+    return normalized in {"집", "우리집", "자택", "home"}
+
+
 def _require_schedule_assignees(db, assignee_ids: set[str]) -> None:
     for assignee_id in assignee_ids:
         one(
@@ -965,8 +1022,10 @@ def _apply_schedule_responsibilities(db, schedule_ids: list[str]) -> tuple[int, 
                 continue
 
             if assignee_id:
-                self_assignment = authenticated() and assignee_id == requester_id
-                desired_status = "ACCEPTED" if self_assignment else "PROPOSED"
+                # A caregiver selected while a routine is created or edited is a
+                # confirmed routine default. Proposal/acceptance is reserved for
+                # the separate recommendation flow.
+                desired_status = "ACCEPTED"
                 matching = next((assignment for assignment in active_assignments if assignment["assignee_id"] == assignee_id), None)
                 for assignment in active_assignments:
                     if assignment["id"] != (matching or {}).get("id") and assignment["status"] != "COMPLETED":
@@ -976,7 +1035,7 @@ def _apply_schedule_responsibilities(db, schedule_ids: list[str]) -> tuple[int, 
                         db.execute(
                             """UPDATE care_assignment SET status = ?, responded_at = ?, requested_by_member_id = ?
                                  WHERE id = ?""",
-                            (desired_status, timestamp if self_assignment else None, requester_id, matching["id"]),
+                            (desired_status, timestamp, requester_id, matching["id"]),
                         )
                 else:
                     assignment_id = str(uuid4())
@@ -985,14 +1044,11 @@ def _apply_schedule_responsibilities(db, schedule_ids: list[str]) -> tuple[int, 
                            created_at, responded_at, requested_by_member_id)
                            VALUES (?, ?, ?, ?, ?, 'MANUAL', ?, ?, ?)""",
                         (assignment_id, family_id(), item["id"], assignee_id, desired_status, timestamp,
-                         timestamp if self_assignment else None, requester_id),
+                         timestamp, requester_id),
                     )
-                    if not self_assignment:
-                        count, first_id = requests.get(assignee_id, (0, assignment_id))
-                        requests[assignee_id] = (count + 1, first_id)
                 db.execute(
                     "UPDATE care_item SET external_assignee_name = '', status = CASE WHEN status = 'DONE' THEN status ELSE ? END WHERE id = ?",
-                    ("ASSIGNED" if self_assignment else "CONFIRMED", item["id"]),
+                    ("ASSIGNED", item["id"]),
                 )
                 responsibility_count += 1
                 continue
@@ -1017,9 +1073,12 @@ def create_child_schedule(payload: ChildScheduleCreate):
         end_external = payload.end_external_assignee_name.strip()
         start_assignee_id = payload.start_assignee_id or (payload.assignee_id if not start_external else None)
         end_assignee_id = payload.end_assignee_id or (payload.assignee_id if not end_external else None)
-        if not payload.start_assignment_required:
+        home_location = _is_home_location(payload.location_name)
+        start_required = payload.start_assignment_required and not home_location
+        end_required = payload.end_assignment_required and not home_location
+        if not start_required:
             start_assignee_id, start_external = None, ""
-        if not payload.end_assignment_required:
+        if not end_required:
             end_assignee_id, end_external = None, ""
         start_assignee_id, start_external = _normalize_boundary_responsibility(start_assignee_id, start_external)
         end_assignee_id, end_external = _normalize_boundary_responsibility(end_assignee_id, end_external)
@@ -1041,8 +1100,8 @@ def create_child_schedule(payload: ChildScheduleCreate):
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (schedule_id, family_id(), payload.child_id, payload.title, payload.category,
                   start.isoformat(), end.isoformat(), int(has_end_time), payload.location_name.strip(),
-                  int(payload.merge_same_location), int(payload.start_assignment_required),
-                  start_assignee_id, start_external, int(payload.end_assignment_required),
+                  int(payload.merge_same_location), int(start_required),
+                  start_assignee_id, start_external, int(end_required),
                   end_assignee_id, end_external, payload.source, now(), recurrence_id, recurrence_rule),
             )
             created.append(one(db, "SELECT * FROM child_schedule WHERE id = ?", (schedule_id,)))
@@ -1124,6 +1183,9 @@ def update_child_schedule(schedule_id: str, payload: ChildScheduleUpdate):
             start_external = payload.start_external_assignee_name if "start_external_assignee_name" in supplied_fields else target.get("start_external_assignee_name")
             end_assignee_id = payload.end_assignee_id if "end_assignee_id" in supplied_fields else target.get("end_assignee_id")
             end_external = payload.end_external_assignee_name if "end_external_assignee_name" in supplied_fields else target.get("end_external_assignee_name")
+            if _is_home_location(payload.location_name):
+                start_required = False
+                end_required = False
             if "start_external_assignee_name" in supplied_fields and (payload.start_external_assignee_name or "").strip():
                 start_assignee_id = None
             if "start_assignee_id" in supplied_fields and payload.start_assignee_id:
@@ -1262,30 +1324,10 @@ def store_intake(payload: IntakeCreate, parsed_items: list[dict]):
             item_id = str(uuid4())
             parsed_start = item.get("starts_at") if item["item_type"] in {"SCHEDULE", "CHANGE", "SUPPLY", "HOMEWORK"} else None
             child_schedule_id = None
-            if payload.child_id and parsed_start and item["item_type"] in {"SCHEDULE", "CHANGE"}:
-                try:
-                    start_value = datetime.fromisoformat(str(parsed_start).replace("Z", "+00:00"))
-                    parsed_end = item.get("ends_at")
-                    end_value, has_end_time = normalize_schedule_end(
-                        start_value,
-                        datetime.fromisoformat(str(parsed_end).replace("Z", "+00:00")) if parsed_end else None,
-                    )
-                    child_schedule_id = str(uuid4())
-                    category = item.get("category") if item.get("category") in {
-                        "ACADEMY", "SCHOOL", "AFTER_SCHOOL", "ACTIVITY", "OTHER"
-                    } else "OTHER"
-                    db.execute(
-                        """INSERT INTO child_schedule(id, family_id, child_id, title, category,
-                           starts_at, ends_at, has_end_time, source, created_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'NOTICE', ?)""",
-                        (child_schedule_id, family_id(), payload.child_id, item["title"], category,
-                         start_value.isoformat(), end_value.isoformat(), int(has_end_time), now()),
-                    )
-                    registered_child_schedules.append(one(db, "SELECT * FROM child_schedule WHERE id = ?", (child_schedule_id,)))
-                except (ValueError, TypeError, HTTPException):
-                    parsed_start = None
-                    child_schedule_id = None
-            status = "CONFIRMED" if child_schedule_id else "NEEDS_REVIEW"
+            # OCR/text extraction is always a draft first. Nothing is copied to
+            # the calendar, supplies, or homework until the user reviews and
+            # confirms the extracted items.
+            status = "NEEDS_REVIEW"
             db.execute(
                 """INSERT INTO care_item(id, family_id, intake_id, child_id, child_schedule_id,
                    item_type, title, detail, starts_at, confidence, status, created_at)
@@ -1294,13 +1336,6 @@ def store_intake(payload: IntakeCreate, parsed_items: list[dict]):
                  item["title"], item.get("detail", ""), parsed_start, item["confidence"], status, now()),
             )
             created.append(one(db, "SELECT * FROM care_item WHERE id = ?", (item_id,)))
-            if child_schedule_id:
-                ranked = rank_members(db, family_id(), str(parsed_start), target_child_id=payload.child_id)
-                best = next((candidate for candidate in ranked if candidate["available"]), ranked[0] if ranked else None)
-                if best:
-                    notify(db, owner_id(db), "알림장 일정과 담당 추천이 도착했어요",
-                           f"{item['title']} 일정을 등록하고 {best['name']}님을 우선 제안했어요.",
-                           "IMPORTANT", "CARE_SUGGESTION", item_id)
         if created:
             review_count = sum(1 for item in created if item["status"] == "NEEDS_REVIEW")
             if review_count:

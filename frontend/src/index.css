@@ -1606,3 +1606,18 @@ a, a:link, a:visited, a:active { color: inherit; text-decoration: inherit; }
 .device-alert-test-result.voice { background: #fff8ee; }
 .device-alert-test-result p { font-size: 13px; font-weight: 600; }
 
+.routine-header .routine-back { width: auto; min-width: 62px; padding: 0; border-radius: 0; background: transparent; box-shadow: none; color: #20242b; font-size: 15px; font-weight: 800; text-align: left; }
+.routine-header > span { width: 62px; }
+.home-care-kicker { margin-top: 2px; }
+.home-care-status { margin-bottom: 13px; }
+.home-no-assignee { display: grid; gap: 5px; padding: 14px; background: #f7f8fb; }
+.home-no-assignee strong { font-size: 14px; color: #20242b; }
+.home-no-assignee small { color: #858b95; line-height: 1.45; }
+.child-setting-card .child-profile-open { min-width: 76px; min-height: 38px; padding: 0 11px; border: 1px solid #dfe2e8; border-radius: 10px; background: #fff; color: #c4123f; font-weight: 800; }
+.child-profile-page { display: grid; gap: 14px; }
+.child-profile-photo-card { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 22px; }
+.child-profile-photo-card label { display: grid; justify-items: center; gap: 9px; cursor: pointer; }
+.child-profile-photo-card label > img, .child-profile-photo-card label > span { width: 88px; height: 88px; border-radius: 50%; object-fit: cover; display: grid; place-items: center; background: #f0d8df; color: #a9163d; font-size: 30px; font-weight: 900; }
+.child-profile-photo-card input { display: none; }
+.child-profile-photo-card b { color: #c4123f; font-size: 14px; }
+.child-profile-form { display: grid; gap: 9px; }

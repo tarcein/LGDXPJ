@@ -1345,6 +1345,60 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual(expired["status"], "CANCELED")
         self.assertEqual(expired["plan"], "FREE")
 
+    def test_child_profile_name_and_school_can_be_updated(self):
+        child = self.client.get("/api/bootstrap").json()["children"][0]
+        updated = self.client.patch(f"/api/children/{child['id']}", json={
+            "name": "민솔", "age_label": "7세 · 새봄초등학교",
+        })
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["name"], "민솔")
+        self.assertEqual(updated.json()["age_label"], "7세 · 새봄초등학교")
+
+    def test_home_child_schedule_does_not_create_care_assignment_boundaries(self):
+        child = self.client.get("/api/bootstrap").json()["children"][0]
+        created = self.client.post("/api/child-schedules", json={
+            "child_id": child["id"], "title": "구몬", "category": "ACTIVITY",
+            "starts_at": "2026-09-28T16:00:00+09:00", "ends_at": "2026-09-28T17:00:00+09:00",
+            "location_name": "집", "start_assignment_required": True, "end_assignment_required": True,
+        })
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json()["care_item_ids"], [])
+
+    def test_routine_caregiver_is_confirmed_for_every_occurrence(self):
+        bootstrap = self.client.get("/api/bootstrap").json()
+        child = bootstrap["children"][0]
+        me = self.client.get("/api/families/me").json()["member"]
+        created = self.client.post("/api/child-schedules", json={
+            "child_id": child["id"], "title": "태권도", "category": "ACADEMY",
+            "starts_at": "2026-09-28T15:00:00+09:00", "ends_at": "2026-09-28T16:00:00+09:00",
+            "location_name": "태권도장", "repeat_days": [0], "repeat_until": "2026-10-12",
+            "start_assignee_id": me["id"], "end_assignee_id": me["id"],
+        })
+        self.assertEqual(created.status_code, 201)
+        self.assertGreater(created.json()["scheduled_count"], 1)
+        refreshed = self.client.get("/api/bootstrap").json()
+        created_ids = {item["id"] for item in created.json()["schedules"]}
+        care_ids = {item["id"] for item in refreshed["items"] if item.get("child_schedule_id") in created_ids}
+        assigned = [item for item in refreshed["assignments"] if item["item_id"] in care_ids]
+        self.assertEqual(len(assigned), len(care_ids))
+        self.assertTrue(all(item["status"] == "ACCEPTED" for item in assigned))
+        with database() as db:
+            db.execute("UPDATE care_assignment SET status = 'PROPOSED', responded_at = NULL WHERE id = ?", (assigned[0]["id"],))
+        repaired = self.client.get("/api/bootstrap").json()["assignments"]
+        self.assertEqual(next(item for item in repaired if item["id"] == assigned[0]["id"])["status"], "ACCEPTED")
+
+    def test_intake_items_require_review_before_they_are_applied(self):
+        bootstrap = self.client.get("/api/bootstrap").json()
+        child = bootstrap["children"][0]
+        schedule_count = len(bootstrap["child_schedules"])
+        result = self.client.post("/api/intakes", json={
+            "child_id": child["id"], "raw_content": "준비물: 도시락\n숙제: 수학 문제집", "input_type": "TEXT",
+        })
+        self.assertEqual(result.status_code, 201)
+        self.assertTrue(result.json()["items"])
+        self.assertTrue(all(item["status"] == "NEEDS_REVIEW" for item in result.json()["items"]))
+        self.assertEqual(len(self.client.get("/api/bootstrap").json()["child_schedules"]), schedule_count)
+
 
 if __name__ == "__main__":
     unittest.main()

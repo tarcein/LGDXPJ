@@ -142,7 +142,7 @@ class CoreScenarioTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["text"], "야근 때문에 하원을 맡기 어려워요")
 
-    def test_ocr_schedule_is_registered_immediately_and_supplies_stay_separate(self):
+    def test_ocr_items_are_applied_only_after_review_confirmation(self):
         image = b"\x89PNG\r\n\x1a\nscenario"
         parsed = [
             {"item_type": "SCHEDULE", "title": "현장학습", "detail": "9월 25일 9시 현장학습", "confidence": "LOW",
@@ -156,9 +156,14 @@ class CoreScenarioTest(unittest.TestCase):
                                         data={"child_id": "jiu", "source": "CAMERA"})
         self.assertEqual(response.status_code, 201)
         result = response.json()
-        self.assertEqual(len(result["registered_child_schedules"]), 1)
-        self.assertEqual(next(item for item in result["items"] if item["item_type"] == "SCHEDULE")["status"], "CONFIRMED")
+        self.assertEqual(result["registered_child_schedules"], [])
+        self.assertTrue(all(item["status"] == "NEEDS_REVIEW" for item in result["items"]))
+        schedule_item = next(item for item in result["items"] if item["item_type"] == "SCHEDULE")
+        supply_item = next(item for item in result["items"] if item["item_type"] == "SUPPLY")
+        self.assertEqual(self.client.post(f"/api/items/{schedule_item['id']}/confirm").status_code, 200)
+        self.assertEqual(len([item for item in self.client.get("/api/bootstrap").json()["child_schedules"] if item["source"] == "NOTICE"]), 1)
         self.assertEqual(next(item for item in result["items"] if item["item_type"] == "SUPPLY")["status"], "NEEDS_REVIEW")
+        self.assertEqual(self.client.post(f"/api/items/{supply_item['id']}/confirm").json()["status"], "CONFIRMED")
 
 
 if __name__ == "__main__":
