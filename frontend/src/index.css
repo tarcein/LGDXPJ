@@ -79,6 +79,7 @@ a, a:link, a:visited, a:active { color: inherit; text-decoration: inherit; }
 .timeline-row .time { width: 38px; white-space: normal; line-height: 1.3; }
 .timeline-content { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .timeline-content strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.timeline-child-name { display: inline-block; margin-right: 5px; padding: 2px 5px; border-radius: 6px; color: #a9163a; background: #fceaf0; font-size: .82em; font-style: normal; vertical-align: 1px; }
 .timeline-content small { color: #9da0a5; font-size: 9px; }
 .timeline-content small.status-done { color: #9da0a5; }
 .timeline-content small.status-pending { color: #2f6fed; }
