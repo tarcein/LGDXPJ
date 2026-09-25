@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Browser } from '@capacitor/browser'
 import { Capacitor } from '@capacitor/core'
-import { api, send, upload, setFamilyToken, hasFamilyToken, ApiError, formatDate, formatTime, type Assignment, type Bootstrap, type CareItem, type Child, type Screen, type Suggestion, type FamilyMe, type FamilySession, type ChatAnswer, type EmergencyRequest, type CalendarConnection, type Notice, type AlbumPhoto, type Benefit, type BenefitLocation, type CareInstitution, type EligibilityCriteria, type BillingConfig, type BillingOrder, type ChatCard, type DeviceAlertsResponse, type DeviceAlertTestResult } from './api'
+import { api, send, upload, setFamilyToken, hasFamilyToken, trackPerformanceEvent, ApiError, formatDate, formatTime, type Assignment, type Bootstrap, type CareItem, type Child, type Screen, type Suggestion, type FamilyMe, type FamilySession, type ChatAnswer, type EmergencyRequest, type CalendarConnection, type Notice, type AlbumPhoto, type Benefit, type BenefitLocation, type CareInstitution, type EligibilityCriteria, type BillingConfig, type BillingOrder, type ChatCard, type DeviceAlertsResponse, type DeviceAlertTestResult } from './api'
 import { speechMessageFor } from './deviceAlertShared'
 import voiceIcon from '../../asset/assistant-main-logo-centered.png'
 import googleIcon from '../../asset/google.png'
@@ -351,6 +351,10 @@ function App() {
   const [patternSuggestionOpen, setPatternSuggestionOpen] = useState(false)
   const [childScheduleChild, setChildScheduleChild] = useState('')
   const [childScheduleCategory, setChildScheduleCategory] = useState('ACADEMY')
+  const [childScheduleLocation, setChildScheduleLocation] = useState('')
+  const [addingChildScheduleLocation, setAddingChildScheduleLocation] = useState(false)
+  const [routineAssignee, setRoutineAssignee] = useState('')
+  const [routineMergePrompt, setRoutineMergePrompt] = useState<{ location: string; start: string; end: string } | null>(null)
   const [selectedDate, setSelectedDate] = useState(() => new Date().toLocaleDateString('sv-SE'))
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
   const [calendarConnections, setCalendarConnections] = useState<CalendarConnection[]>([])
@@ -450,6 +454,7 @@ function App() {
   const benefitsLoadedRef = useRef(false)
   const billingHandledRef = useRef(false)
   const calendarSyncHandledRef = useRef(false)
+  const performanceOpenedFamilyRef = useRef('')
   const openNoticeRef = useRef<(notice: Notice) => Promise<void>>(async () => undefined)
   const tossWidgetsRef = useRef<TossWidgets | null>(null)
 
@@ -534,6 +539,7 @@ function App() {
         .finally(() => setBillingBusy(false))
     } else {
       void Promise.resolve().then(() => setError(query.get('message') || '결제가 취소되었어요.'))
+      trackPerformanceEvent('payment_abandoned', { step_abandoned: 'payment_window' })
       cleanPaymentQuery()
     }
   }, [billingResultFromUrl])
@@ -676,7 +682,38 @@ function App() {
     }
   }, [screen, activeFamilyId, boot?.family.plan, benefitKeyword])
   useEffect(() => { if (toast) { const timer = setTimeout(() => setToast(''), 3200); return () => clearTimeout(timer) } }, [toast])
+  useEffect(() => {
+    if (!deviceAlertTestResult) return
+    const timer = setTimeout(() => setDeviceAlertTestResult(null), 4200)
+    return () => clearTimeout(timer)
+  }, [deviceAlertTestResult])
   useEffect(() => { contentRef.current?.scrollTo(0, 0) }, [screen])
+  useEffect(() => {
+    if (!activeFamilyId) return
+    if (performanceOpenedFamilyRef.current !== activeFamilyId) {
+      performanceOpenedFamilyRef.current = activeFamilyId
+      trackPerformanceEvent('app_opened', { entry_screen: screen })
+    }
+    trackPerformanceEvent('screen_view', { screen })
+    if (screen === 'plan' && boot?.family.plan !== 'PRO') {
+      trackPerformanceEvent('pro_paywall_viewed', { entry_point: 'plan_screen' })
+    }
+  }, [activeFamilyId, screen, boot?.family.plan])
+  useEffect(() => {
+    if (!activeFamilyId) return
+    const recordResume = () => {
+      if (document.visibilityState === 'visible') {
+        trackPerformanceEvent('app_opened', { entry_screen: screen, resumed: true })
+      }
+    }
+    document.addEventListener('visibilitychange', recordResume)
+    return () => document.removeEventListener('visibilitychange', recordResume)
+  }, [activeFamilyId, screen])
+  useEffect(() => {
+    if (!proGateFeature || !activeFamilyId) return
+    trackPerformanceEvent('limit_reached_screen_viewed', { feature: proGateFeature })
+    trackPerformanceEvent('pro_paywall_viewed', { entry_point: 'feature_gate', feature: proGateFeature })
+  }, [proGateFeature, activeFamilyId])
   useEffect(() => {
     if (screen !== 'serviceLoading') return
     const timer = setTimeout(() => {
@@ -696,7 +733,7 @@ function App() {
   const go = (target: Screen) => {
     setError('')
     const paidFeatureNames: Partial<Record<Screen, string>> = {
-      emergency: '긴급 도움 요청', gap: '돌봄 공백 예측', programs: '돌봄 제도 안내', album: '모음ZIP',
+      emergency: '긴급 도움 요청', gap: '돌봄 공백 예측', programs: '돌봄 제도 안내', album: '모음ZIP', deviceAlerts: '가전 알림 우선순위',
     }
     if (boot?.family.plan !== 'PRO' && paidFeatureNames[target]) {
       setProGateFeature(paidFeatureNames[target]!)
@@ -1467,6 +1504,8 @@ function App() {
     const start = new Date(scheduleDate + 'T12:00:00')
     const until = new Date(start.getFullYear(), start.getMonth() + 3, start.getDate())
     setEditingSchedule(null); setScheduleForm(type); setScheduleEntryMode(mode); setScheduleTitle(''); setScheduleEndTime(''); setScheduleRepeat(mode === 'REPEAT')
+    const knownLocations = [...new Set((boot?.child_schedules ?? []).map(item => item.location_name?.trim()).filter((value): value is string => !!value))]
+    setChildScheduleLocation(knownLocations[0] ?? ''); setAddingChildScheduleLocation(!knownLocations.length); setRoutineAssignee('')
     setScheduleRepeatMode('WEEKLY'); setScheduleRepeatDays([(start.getDay() + 6) % 7]); setScheduleRepeatUntil(until.toLocaleDateString('sv-SE'))
     setScheduleRepeatInterval(2); setScheduleRepeatMonthDay(start.getDate()); setScheduleRepeatDates([]); setScheduleRepeatDateInput(scheduleDate); setScheduleSheet('FORM')
   }
@@ -1480,6 +1519,7 @@ function App() {
     setWeeklyTimetableOpen(false)
     setEditingSchedule({ type: 'CHILD', id: schedule.id }); setScheduleForm('CHILD')
     setScheduleTitle(schedule.title); setChildScheduleChild(schedule.child_id); setChildScheduleCategory(schedule.category)
+    setChildScheduleLocation(schedule.location_name ?? ''); setAddingChildScheduleLocation(!(schedule.location_name ?? '').trim())
     setScheduleDate(dateKey(schedule.starts_at)); setScheduleStartTime(localClock(schedule.starts_at)); setScheduleEndTime(schedule.has_end_time === false || schedule.has_end_time === 0 ? '' : localClock(schedule.ends_at))
     setScheduleRepeat(false); setScheduleSheet('FORM')
   }
@@ -1500,7 +1540,7 @@ function App() {
     }
     return dates
   }
-  const saveSchedule = (updateScope?: 'SINGLE' | 'FUTURE') => {
+  const saveSchedule = (updateScope?: 'SINGLE' | 'FUTURE', mergeSameLocation?: boolean) => {
     const editingRecord = editingSchedule?.type === 'CHILD'
       ? boot?.child_schedules.find(item => item.id === editingSchedule.id)
       : boot?.schedules.find(item => item.id === editingSchedule?.id)
@@ -1509,6 +1549,23 @@ function App() {
       setRecurrenceEditPrompt(true)
       return
     }
+    if (!editingSchedule && scheduleForm === 'CHILD' && scheduleEndTime.trim() && childScheduleLocation.trim() && mergeSameLocation === undefined) {
+      const proposedStart = new Date(`${scheduleDate}T${normalizeClock(scheduleStartTime)}`)
+      const proposedEnd = new Date(`${scheduleDate}T${normalizeClock(scheduleEndTime)}`)
+      const adjacent = boot?.child_schedules.find(item => {
+        if (item.child_id !== childScheduleChild || (item.location_name ?? '').trim().toLocaleLowerCase() !== childScheduleLocation.trim().toLocaleLowerCase()) return false
+        const existingStart = new Date(item.starts_at); const existingEnd = new Date(item.ends_at)
+        const gapAfter = proposedStart.getTime() - existingEnd.getTime()
+        const gapBefore = existingStart.getTime() - proposedEnd.getTime()
+        return (gapAfter >= 0 && gapAfter <= 30 * 60_000) || (gapBefore >= 0 && gapBefore <= 30 * 60_000)
+      })
+      if (adjacent && !Number.isNaN(proposedStart.getTime()) && !Number.isNaN(proposedEnd.getTime())) {
+        const first = new Date(Math.min(proposedStart.getTime(), new Date(adjacent.starts_at).getTime()))
+        const last = new Date(Math.max(proposedEnd.getTime(), new Date(adjacent.ends_at).getTime()))
+        setRoutineMergePrompt({ location: childScheduleLocation.trim(), start: localClock(first.toISOString()), end: localClock(last.toISOString()) })
+        return
+      }
+    }
     void run(async () => {
     const startClock = normalizeClock(scheduleStartTime)
     const endClock = scheduleEndTime.trim() ? normalizeClock(scheduleEndTime) : ''
@@ -1516,6 +1573,7 @@ function App() {
     const scheduleStart = new Date(`${scheduleDate}T${startClock}`)
     const scheduleEnd = endClock ? new Date(`${scheduleDate}T${endClock}`) : null
     if (scheduleEnd && scheduleEnd <= scheduleStart) throw new Error('종료 시간은 시작 시간보다 늦어야 해요')
+    if (scheduleForm === 'CHILD' && !childScheduleLocation.trim()) throw new Error('아이 일정의 위치를 선택하거나 새로 입력해주세요')
     const repeatDates = calculatedRepeatDates()
     if (scheduleRepeat && scheduleRepeatMode === 'WEEKLY' && (!scheduleRepeatDays.length || !scheduleRepeatUntil)) throw new Error('반복 요일과 종료일을 선택해주세요')
     if (scheduleRepeat && ['INTERVAL', 'MONTHLY'].includes(scheduleRepeatMode) && !scheduleRepeatUntil) throw new Error('반복 종료일을 선택해주세요')
@@ -1530,7 +1588,11 @@ function App() {
         if (!childScheduleChild) throw new Error('아이 이름을 선택해주세요')
         const updated = await send<{ care_item_id: string | null; suggestions: Suggestion[] }>('/child-schedules/' + editingSchedule.id, 'PATCH', {
           child_id: childScheduleChild, title: scheduleTitle, category: childScheduleCategory,
-          starts_at: scheduleStart.toISOString(), ends_at: scheduleEnd?.toISOString() ?? null, update_scope: updateScope ?? 'SINGLE',
+          starts_at: scheduleStart.toISOString(), ends_at: scheduleEnd?.toISOString() ?? null,
+          location_name: childScheduleLocation.trim(),
+          merge_same_location: editingRecord && 'merge_same_location' in editingRecord
+            ? editingRecord.merge_same_location !== false && editingRecord.merge_same_location !== 0 : true,
+          update_scope: updateScope ?? 'SINGLE',
         })
         if (updateScope === 'FUTURE') setPatternSuggestionOpen(true)
         setEditingSchedule(null); setScheduleTitle(''); setScheduleSheet('NONE')
@@ -1552,12 +1614,17 @@ function App() {
     }
     if (scheduleForm === 'CHILD') {
       if (!childScheduleChild) throw new Error('아이 이름을 선택해주세요')
-      const created = await send<{ care_item_id: string; suggestions: Suggestion[] }>('/child-schedules', 'POST', { child_id: childScheduleChild, title: scheduleTitle,
+      const created = await send<{ care_item_id: string | null; care_item_ids: string[]; assigned_count: number; suggestions: Suggestion[] }>('/child-schedules', 'POST', { child_id: childScheduleChild, title: scheduleTitle,
         category: childScheduleCategory, starts_at: scheduleStart.toISOString(),
-        ends_at: scheduleEnd?.toISOString() ?? null, source: 'MANUAL', ...recurrence })
-      setItemId(created.care_item_id); setSuggestions(created.suggestions)
+        ends_at: scheduleEnd?.toISOString() ?? null, location_name: childScheduleLocation.trim(),
+        merge_same_location: mergeSameLocation ?? true,
+        assignee_id: scheduleEntryMode === 'REPEAT' && routineAssignee ? routineAssignee : null,
+        source: 'MANUAL', ...recurrence })
+      setItemId(created.care_item_id); setSuggestions(created.suggestions); setRoutineMergePrompt(null)
       setScheduleTitle(''); setScheduleRepeat(false); setScheduleSheet('NONE')
-      go('suggestion')
+      if (scheduleEntryMode === 'REPEAT' || !created.care_item_id) {
+        setSelectedDate(scheduleDate); setScheduleSheet('DAY')
+      } else go('suggestion')
       return
     }
     const result = await send<{ collisions: { item_id: string }[] }>('/schedules', 'POST', { member_id: me?.authenticated ? me.member.id : scheduleMember, title: scheduleTitle, starts_at: scheduleStart.toISOString(), ends_at: scheduleEnd?.toISOString() ?? null, kind: scheduleKind, ...recurrence })
@@ -1659,6 +1726,7 @@ function App() {
       setBillingOpen(false); setBillingOrder(null); setBillingWidgetReady(false)
       return
     }
+    trackPerformanceEvent('pro_cta_clicked', { cycle: billingCycle, entry_point: 'plan_screen' })
     setBillingBusy(true); setError('')
     try {
       const config = await api<BillingConfig>('/billing/config')
@@ -1820,14 +1888,33 @@ function App() {
     return <Card className="timeline-card">{[...currentByItem.values()].sort((a, b) => (itemFor(a)?.starts_at || '').localeCompare(itemFor(b)?.starts_at || '')).map(a => { const i = itemFor(a); const statusClass = a.status === 'COMPLETED' ? 'status-done' : ['PROPOSED', 'CANDIDATE_ACCEPTED'].includes(a.status) ? 'status-pending' : 'status-progress'; return i && <button key={a.id} className="timeline-row" onClick={() => { setAssignmentId(a.id); setViewer(a.assignee_id); go('assignmentDetail') }}><span className="time">{formatTime(i.starts_at) || '—'}</span><span className="timeline-content"><strong><em className="timeline-child-name">{child(i.child_id)}</em>{i.title} — {a.status === 'PROPOSED' ? `${member(a.assignee_id)}님에게 요청` : a.status === 'CANDIDATE_ACCEPTED' ? `${member(a.assignee_id)}님 수락` : `담당 ${member(a.assignee_id)}`}</strong><small className={statusClass}>{caregiverStatusLabel(a.status)}</small></span><span className="timeline-status">{a.status === 'COMPLETED' ? '✓' : '›'}</span></button> })}</Card>
   }
   const activeExceptions = boot?.exceptions.filter(exception => exception.status === 'PENDING') ?? []
+  const scheduleLocationOptions = [...new Set((boot?.child_schedules ?? []).map(item => item.location_name?.trim()).filter((value): value is string => !!value))]
   const activeWeeklyChild = weeklyTimetableChild || boot?.children[0]?.id || ''
   const weeklyEntries = boot?.child_schedules.filter(item => item.child_id === activeWeeklyChild) ?? []
-  const weeklyHours = (() => {
-    if (!weeklyEntries.length) return [] as number[]
-    const startHour = Math.min(...weeklyEntries.map(item => new Date(item.starts_at).getHours()))
-    const endHour = Math.max(...weeklyEntries.map(item => item.has_end_time ? Math.ceil(new Date(item.ends_at).getHours() + new Date(item.ends_at).getMinutes() / 60) : new Date(item.starts_at).getHours()))
-    return Array.from({ length: Math.max(1, endHour - startHour + 1) }, (_, index) => startHour + index).filter(hour => hour >= 0 && hour <= 23)
-  })()
+  const weeklyDisplayEntries = [...new Map(weeklyEntries.map(item => {
+    const start = new Date(item.starts_at); const end = new Date(item.ends_at)
+    const key = `${start.getDay()}-${start.getHours()}:${start.getMinutes()}-${end.getHours()}:${end.getMinutes()}-${item.title}-${item.location_name ?? ''}`
+    return [key, item] as const
+  })).values()]
+  const weeklyStartMinute = weeklyDisplayEntries.length
+    ? Math.floor(Math.min(...weeklyDisplayEntries.map(item => { const value = new Date(item.starts_at); return value.getHours() * 60 + value.getMinutes() })) / 60) * 60
+    : 0
+  const weeklyEndMinute = weeklyDisplayEntries.length
+    ? Math.min(24 * 60, Math.ceil(Math.max(...weeklyDisplayEntries.map(item => { const value = item.has_end_time ? new Date(item.ends_at) : new Date(item.starts_at); return value.getHours() * 60 + value.getMinutes() })) / 60) * 60)
+    : 0
+  const weeklyHourLabels = weeklyDisplayEntries.length
+    ? Array.from({ length: Math.max(2, (weeklyEndMinute - weeklyStartMinute) / 60 + 1) }, (_, index) => weeklyStartMinute / 60 + index)
+    : []
+  const weeklyPixelsPerMinute = .72
+  const weeklyTimelineHeight = Math.max(84, (weeklyEndMinute - weeklyStartMinute) * weeklyPixelsPerMinute)
+  const childLocationControl = (className = '') => <div className={`schedule-location-field ${className}`.trim()}>
+    <label><span>위치</span><select aria-label="아이 일정 위치" value={addingChildScheduleLocation ? '__new__' : childScheduleLocation} onChange={event => {
+      if (event.target.value === '__new__') { setAddingChildScheduleLocation(true); setChildScheduleLocation('') }
+      else { setAddingChildScheduleLocation(false); setChildScheduleLocation(event.target.value) }
+    }}><option value="">위치를 선택해주세요</option>{scheduleLocationOptions.map(location => <option key={location} value={location}>{location}</option>)}<option value="__new__">＋ 새 위치 추가</option></select></label>
+    {addingChildScheduleLocation && <input aria-label="새 아이 일정 위치" value={childScheduleLocation} maxLength={100} onChange={event => setChildScheduleLocation(event.target.value)} placeholder="예: 한빛초등학교, 별빛유치원" />}
+    <small>같은 위치 이름을 선택하면 이어지는 일정의 중간 픽업을 자동으로 정리해요.</small>
+  </div>
 
   let page: ReactNode = <div className="loading">가족의 하루를 불러오고 있어요</div>
   if (screen === 'thinq') page = <ThinQEntry selectorOpen={thinqSelector} hasFamily={familySessionReady} familyName={boot?.family.name ?? '민솔이네 집'} onOpenSelector={() => setThinqSelector(true)} onCloseSelector={() => setThinqSelector(false)} onOpenService={openFamilyService} onStartOnboarding={startFamilyOnboarding} />
@@ -2055,8 +2142,7 @@ function App() {
     const back = () => history.back()
     const patchMatrix = (keyId: string, channel: 'tv' | 'voice', value: boolean) => {
       if (!settings) return
-      const nextMatrix = { ...settings.content_matrix, [keyId]: { ...settings.content_matrix[keyId], [channel]: value } }
-      patchDeviceAlertSettings({ content_matrix: nextMatrix }, '알림 받을 내용을 변경했어요')
+      patchDeviceAlertSettings({ content_matrix: { [keyId]: { [channel]: value } } }, '알림 받을 내용을 변경했어요')
     }
     const moveDraftPriority = (index: number, direction: -1 | 1) => {
       const next = [...deviceAlertDraftPriority]
@@ -2070,7 +2156,7 @@ function App() {
       page = <section className="device-alert-page"><div className="care-subscreen-title"><strong>가전 알림</strong></div><Empty title="설정을 불러오는 중이에요" text="잠시만 기다려주세요" /></section>
     } else if (deviceAlertStep === 'devices') {
       page = <section className="device-alert-page">
-        <div className="care-subscreen-title"><button aria-label="뒤로" onClick={back}>‹</button><strong>사용할 가전</strong><span /></div>
+        <div className="care-subscreen-title"><span /><strong>사용할 가전</strong><span /></div>
         <p className="hero-copy">연결된 가전 {catalog.length}대를 찾았어요<br />화면이나 스피커가 있는 가전만 선택할 수 있어요</p>
         <Section>화면 알림</Section>
         <div className="device-alert-list">{screenDevices.map(device => { const checked = deviceAlertDraftDevices.includes(device.id); return <button key={device.id} className={'device-alert-row' + (checked ? ' checked' : '')} onClick={() => setDeviceAlertDraftDevices(prev => checked ? prev.filter(id => id !== device.id) : [...prev, device.id])}><span><strong>{device.name}</strong><small>{device.location}{device.id === 'tv_living' && settings.tv_status === 'on' ? ' · ● 켜짐' : device.type === 'SCREEN' ? ' · ○ 꺼짐' : ''}</small></span><i>{checked && '✓'}</i></button> })}</div>
@@ -2081,7 +2167,7 @@ function App() {
       </section>
     } else if (deviceAlertStep === 'priority') {
       page = <section className="device-alert-page">
-        <div className="care-subscreen-title"><button aria-label="뒤로" onClick={back}>‹</button><strong>우선순위</strong><button className="text-link" onClick={() => { patchDeviceAlertSettings({ priority: deviceAlertDraftPriority }, '우선순위를 저장했어요'); back() }}>저장</button></div>
+        <div className="care-subscreen-title"><span /><strong>우선순위</strong><button className="text-link" onClick={() => { patchDeviceAlertSettings({ priority: deviceAlertDraftPriority }, '우선순위를 저장했어요'); back() }}>저장</button></div>
         <p className="hero-copy">위에서부터 순서대로 확인해요<br />TV는 켜져 있을 때만, 나머지 가전은 항상 바로 알려드려요</p>
         <Card className="device-alert-rule-card">
           <p className="helper-text">버튼으로 순서를 바꿀 수 있어요 · 켜져 있지 않은 가전은 건너뛰고 다음 순위로 넘어가요</p>
@@ -2092,14 +2178,14 @@ function App() {
     } else if (deviceAlertStep === 'content') {
       const matrix = settings.content_matrix
       page = <section className="device-alert-page">
-        <div className="care-subscreen-title"><button aria-label="뒤로" onClick={back}>‹</button><strong>알림 받을 내용</strong><span /></div>
+        <div className="care-subscreen-title"><span /><strong>알림 받을 내용</strong><span /></div>
         <table className="device-alert-matrix"><thead><tr><th>내용</th><th>TV</th><th>음성</th></tr></thead><tbody>{contentKeys.map(key => { const value = matrix[key.id] ?? { tv: false, voice: false }; return <tr key={key.id}><td><strong>{key.label}</strong>{key.locked && <small>항상 켜짐</small>}</td><td><input type="checkbox" className="item-checkbox" checked={value.tv} disabled={key.locked} onChange={() => patchMatrix(key.id, 'tv', !value.tv)} /></td><td><input type="checkbox" className="item-checkbox" checked={value.voice} disabled={key.locked} onChange={() => patchMatrix(key.id, 'voice', !value.voice)} /></td></tr> })}</tbody></table>
       </section>
     } else if (deviceAlertStep === 'quiet') {
       const previewAlert = { key: 'preview', tier: 2 as const, kind: 'schedule' as const, contentKey: 'departure_reminder', title: '민솔이 하원 30분 전이에요', body: '', meta: '' }
       const previewText = speechMessageFor(previewAlert)
       page = <section className="device-alert-page">
-        <div className="care-subscreen-title"><button aria-label="뒤로" onClick={back}>‹</button><strong>음성 · 방해 금지</strong><span /></div>
+        <div className="care-subscreen-title"><span /><strong>음성 · 방해 금지</strong><span /></div>
         <Section>음성 안내</Section>
         <Card className="device-alert-rule-card">
           <strong>말하는 내용 미리듣기</strong>
@@ -2115,7 +2201,7 @@ function App() {
       </section>
     } else if (deviceAlertStep === 'test') {
       page = <section className="device-alert-page">
-        <div className="care-subscreen-title"><button aria-label="뒤로" onClick={back}>×</button><strong>테스트 알림</strong><span /></div>
+        <div className="care-subscreen-title"><span /><strong>테스트 알림</strong><span /></div>
         <p className="hero-copy">지금 보내면 이렇게 울려요<br />우선순위 순서대로 확인해서 가장 먼저 사용 가능한 가전으로 알려드려요</p>
         {deviceAlertTestResult && <Card className={'device-alert-test-result ' + (deviceAlertTestResult.channel === 'TV' ? 'tv' : 'voice')}>
           <span className="small-badge ok">{deviceAlertTestResult.channel === 'TV' ? '화면 알림' : deviceAlertTestResult.channel === 'VOICE' ? '음성 알림' : '알림 없음'}</span>
@@ -2163,7 +2249,7 @@ function App() {
     <div className="assistant-token-bar"><div><span><i />AI 토큰</span><strong>{chatRemaining.toLocaleString()} <small>/ {chatTokenLimit.toLocaleString()}</small></strong></div><div className="assistant-token-track"><i style={{ width: `${chatRemainingPercent}%` }} /></div></div>
     <div className="assistant-chat-body">
       {!chatMessages.length && <Card className="chat-intro"><img className="voice-mark" src={voiceIcon} alt="" /><strong>무엇을 도와드릴까요?</strong><p>가족방의 일정·돌봄 정보·배정을 바탕으로<br />AI가 답해요. 배정 변경은 확인 없이 실행하지 않아요.</p></Card>}
-      <div className="chat-thread">{chatMessages.map((m, index) => <div key={index} className={'chat-bubble ' + m.from}><div className="chat-copy">{m.text}</div>{m.from === 'agent' && m.cards?.map((card, cardIndex) => <article className="chat-summary-card" key={card.title + cardIndex}><small>{card.eyebrow}</small><strong>{card.title}</strong><p>{card.description}</p>{card.screen && <button onClick={() => go(card.screen as Screen)}>{chatScreenLabel[card.screen as Screen] ?? '관련 화면 보기'}</button>}</article>)}</div>)}</div>
+      <div className="chat-thread">{chatMessages.map((m, index) => <div key={index} className={'chat-bubble ' + m.from}><div className="chat-copy">{m.text}</div>{m.from === 'agent' && m.cards?.map((card, cardIndex) => <article className="chat-summary-card" key={card.title + cardIndex}><small>{card.eyebrow}</small><strong>{card.title}</strong><p>{card.description}</p>{card.screen && <button onClick={() => { trackPerformanceEvent('chatbot_action_opened', { screen: card.screen }); go(card.screen as Screen) }}>{chatScreenLabel[card.screen as Screen] ?? '관련 화면 보기'}</button>}</article>)}</div>)}</div>
       <div className="chat-prompts">{['확인할 알림 알려줘', '오늘 담당 배정은?', '등록된 일정은?', '내일 준비물 확인'].map(text => <button key={text} disabled={chatBusy} onClick={() => sendChat(text)}>{text}</button>)}</div>
     </div>
     {chatBusy && <div className="assistant-chat-loading" role="status" aria-live="polite" aria-label="답변을 준비하고 있어요"><div>{[chatLoading1, chatLoading2, chatLoading3, chatLoading4].map((source, index) => <img key={source} src={source} alt="" style={{ animationDelay: `${index * .38}s` }} />)}</div><span>답변을 준비하고 있어요</span></div>}
@@ -2245,6 +2331,7 @@ function App() {
         <div className="single-schedule-context">{scheduleForm === 'CHILD' ? <><label><span>대상</span><select value={childScheduleChild} onChange={event => setChildScheduleChild(event.target.value)}>{boot.children.map(childItem => <option key={childItem.id} value={childItem.id}>{childItem.name}</option>)}</select></label><label><span>종류</span><select value={childScheduleCategory} onChange={event => setChildScheduleCategory(event.target.value)}><option value="ACADEMY">학원</option><option value="AFTER_SCHOOL">방과후</option><option value="SCHOOL">학교</option><option value="ACTIVITY">활동</option><option value="OTHER">기타</option></select></label></> : <label><span>종류</span><select value={scheduleKind} onChange={event => setScheduleKind(event.target.value as 'WORK' | 'ROUTINE')}><option value="ROUTINE">개인 일정</option><option value="WORK">업무 일정</option></select></label>}</div>
         <div className="single-schedule-card">
           <label className="single-title"><span>내용</span><input value={scheduleTitle} onChange={event => setScheduleTitle(event.target.value)} placeholder={scheduleForm === 'CHILD' ? '예: 현장학습, 치과 진료' : '예: 팀 워크숍'} /></label>
+          {scheduleForm === 'CHILD' && childLocationControl('single-location')}
           <label className="single-date"><span>날짜</span><input aria-label="일정 날짜" type="date" value={scheduleDate} onChange={event => setScheduleDate(event.target.value)} /></label>
           <div className="single-time direct-time"><label><span>시작</span><input aria-label="일정 시작 시간" type="time" step="60" value={scheduleStartTime} onChange={event => setScheduleStartTime(event.target.value)} /></label><label><span>종료</span><input aria-label="일정 종료 시간" type="time" step="60" value={scheduleEndTime} onChange={event => setScheduleEndTime(event.target.value)} /></label></div>
         </div>
@@ -2258,6 +2345,7 @@ function App() {
       <div className="routine-form-card">
         <label className="routine-name"><span>루틴 이름</span><input value={scheduleTitle} onChange={event => setScheduleTitle(event.target.value)} placeholder={scheduleForm === 'CHILD' ? '예: 태권도, 방과후 미술' : '예: 헬스, 오전 회의'} /></label>
         <fieldset className="routine-target"><legend>대상 자녀</legend><div><button className={scheduleForm === 'PERSONAL' ? 'active' : ''} onClick={() => setScheduleForm('PERSONAL')}>본인</button>{boot.children.map(childItem => <button key={childItem.id} className={scheduleForm === 'CHILD' && childScheduleChild === childItem.id ? 'active' : ''} onClick={() => { setScheduleForm('CHILD'); setChildScheduleChild(childItem.id) }}>{childItem.name}</button>)}</div></fieldset>
+        {scheduleForm === 'CHILD' && childLocationControl('routine-location')}
         <fieldset className="routine-repeat"><legend>반복 주기</legend><div className="routine-repeat-tabs"><button className={scheduleRepeatMode === 'WEEKLY' ? 'active' : ''} onClick={() => { setScheduleRepeat(true); setScheduleRepeatMode('WEEKLY') }}>요일</button><button className={scheduleRepeatMode === 'INTERVAL' ? 'active' : ''} onClick={() => { setScheduleRepeat(true); setScheduleRepeatMode('INTERVAL') }}>N일마다</button><button className={scheduleRepeatMode === 'MONTHLY' ? 'active' : ''} onClick={() => { setScheduleRepeat(true); setScheduleRepeatMode('MONTHLY') }}>월간</button><button className={scheduleRepeatMode === 'DATES' ? 'active' : ''} onClick={() => { setScheduleRepeat(true); setScheduleRepeatMode('DATES') }}>특정일</button></div>
           {scheduleRepeatMode === 'WEEKLY' && <div className="weekday-picker routine-weekdays">{[['일', 6], ['월', 0], ['화', 1], ['수', 2], ['목', 3], ['금', 4], ['토', 5]].map(([label, day]) => <button key={label} className={scheduleRepeatDays.includes(day as number) ? 'active' : ''} onClick={() => { const value = day as number; setScheduleRepeat(true); setScheduleRepeatDays(current => current.includes(value) ? current.filter(item => item !== value) : [...current, value]) }}>{label}</button>)}</div>}
           {scheduleRepeatMode === 'INTERVAL' && <label className="routine-number-option">매 <input aria-label="반복 간격" type="number" min="1" max="366" value={scheduleRepeatInterval} onChange={event => setScheduleRepeatInterval(Math.min(366, Math.max(1, Number(event.target.value) || 1)))} />일마다</label>}
@@ -2265,13 +2353,32 @@ function App() {
           {scheduleRepeatMode === 'DATES' && <div className="routine-specific-dates"><div><input aria-label="특정 반복일" type="date" value={scheduleRepeatDateInput} onChange={event => setScheduleRepeatDateInput(event.target.value)} /><button onClick={() => { if (scheduleRepeatDateInput) setScheduleRepeatDates(current => [...new Set([...current, scheduleRepeatDateInput])].sort()) }}>추가</button></div><p>{scheduleRepeatDates.map(value => <button key={value} aria-label={`${value} 삭제`} onClick={() => setScheduleRepeatDates(current => current.filter(item => item !== value))}>{value.slice(5).replace('-', '/')} ×</button>)}</p></div>}
         </fieldset>
         <div className="routine-time-row"><strong>시간</strong><div className="routine-time-fields direct-time"><input aria-label="시작 시간" type="time" step="60" value={scheduleStartTime} onChange={event => setScheduleStartTime(event.target.value)} /><span>–</span><input aria-label="종료 시간" type="time" step="60" value={scheduleEndTime} onChange={event => setScheduleEndTime(event.target.value)} /></div></div>
+        {scheduleForm === 'CHILD' && <label className="routine-assignee"><span>돌봄 담당자</span><select value={routineAssignee} onChange={event => setRoutineAssignee(event.target.value)}><option value="">나중에 설정할게요</option>{members.map(person => <option key={person.id} value={person.id}>{person.name}{person.id === me?.member.id ? ' (나)' : ''}</option>)}</select><small>지금 고르면 이 루틴의 등원·하원 담당으로 함께 저장돼요.</small></label>}
         <div className="routine-period-row"><div><strong>기간 정하기</strong><small>학기 단위로 끝나는 루틴</small></div><button className={'switch ' + (scheduleRepeat ? 'on' : '')} role="switch" aria-checked={scheduleRepeat} aria-label="매주 반복" onClick={() => setScheduleRepeat(value => !value)}><span /></button></div>
         {scheduleRepeat && scheduleRepeatMode !== 'DATES' && <div className="routine-date-range"><label><span>시작일</span><input aria-label="반복 시작일" type="date" value={scheduleDate} onChange={event => setScheduleDate(event.target.value)} /></label><b>→</b><label><span>반복 종료일</span><input aria-label="반복 종료일" type="date" value={scheduleRepeatUntil} onChange={event => setScheduleRepeatUntil(event.target.value)} /></label></div>}
         <button className="routine-save" aria-label={scheduleRepeat ? '고정 루틴 일괄 등록' : '이 일정 등록'} onClick={() => saveSchedule()}>저장하기</button>
       </div>
     </section></div>}
-    {scheduleSheet === 'FORM' && boot && editingSchedule && <BottomSheet className="schedule-form-sheet" onDismiss={() => setScheduleSheet('DAY')}><h2>{scheduleForm === 'CHILD' ? '아이 일정 수정' : '내 일정 수정'}</h2><p className="schedule-edit-help">반복 일정은 저장할 때 이번 일정만 바꿀지 이후 일정도 함께 바꿀지 선택할 수 있어요.</p>{scheduleForm === 'CHILD' ? <><label className="form-label">아이 이름 (필수)</label><select className="form-control" value={childScheduleChild} onChange={event => setChildScheduleChild(event.target.value)}>{boot.children.map(childItem => <option key={childItem.id} value={childItem.id}>{childItem.name}</option>)}</select></> : <><label className="form-label">일정 종류</label><select className="form-control" value={scheduleKind} onChange={event => setScheduleKind(event.target.value as 'WORK' | 'ROUTINE')}><option value="ROUTINE">개인 루틴·운동</option><option value="WORK">업무 일정</option></select></>}<label className="form-label">일정 이름</label><input className="form-control" value={scheduleTitle} onChange={event => setScheduleTitle(event.target.value)} placeholder={scheduleForm === 'CHILD' ? '예: 태권도, 방과후 미술' : '예: 헬스, 오전 회의'} /><ScheduleTimeFields date={scheduleDate} start={scheduleStartTime} end={scheduleEndTime} onDate={setScheduleDate} onStart={setScheduleStartTime} onEnd={setScheduleEndTime} /><button className="primary-button wide-button" onClick={() => saveSchedule()}>수정 내용 저장</button><button className="schedule-delete-button wide-button" onClick={() => deleteSchedule()}>이 일정 삭제</button><button className="text-link centered" onClick={() => setScheduleSheet('DAY')}>이전</button></BottomSheet>}
-    {weeklyTimetableOpen && boot && <div className="weekly-overlay" onClick={() => setWeeklyTimetableOpen(false)}><section className="weekly-timetable" role="dialog" aria-modal="true" aria-label="주간 시간표" onClick={event => event.stopPropagation()}><header><button onClick={() => setWeeklyTimetableOpen(false)}>‹</button><strong>주간 시간표</strong><button onClick={() => setToast('주간 시간표 설정을 저장했어요')}>저장</button></header><div className="weekly-child-tabs">{boot.children.map(childItem => <button key={childItem.id} className={activeWeeklyChild === childItem.id ? 'active' : ''} onClick={() => setWeeklyTimetableChild(childItem.id)}>{childItem.name}</button>)}</div><p className="weekly-help">등록된 반복 일정의 시작·종료 시간에 맞춰 월요일부터 일요일까지 보여줘요.</p>{boot.children.length && weeklyHours.length ? <div className="weekly-grid"><span className="corner" />{['월', '화', '수', '목', '금', '토', '일'].map(day => <strong key={day}>{day}</strong>)}{weeklyHours.map(hour => <Fragment key={`time-${hour}`}><time>{hour}시</time>{[1, 2, 3, 4, 5, 6, 0].map(day => { const entry = weeklyEntries.find(item => new Date(item.starts_at).getDay() === day && new Date(item.starts_at).getHours() === hour); return <button key={`${hour}-${day}`} className={entry ? 'filled' : ''} onClick={() => entry ? openChildScheduleEdit(entry) : undefined}>{entry?.title ?? ''}</button> })}</Fragment>)}</div> : boot.children.length ? <Empty title="등록된 반복 일정이 없어요" text="반복 일정을 추가하면 해당 시간 범위로 시간표가 만들어져요" /> : <Empty title="등록된 아이가 없어요" text="가족 설정에서 아이를 먼저 추가해주세요" />}<div className="weekly-actions"><button className="primary-button" disabled={!boot.children.length} onClick={() => { const childId = activeWeeklyChild; setWeeklyTimetableOpen(false); openNewScheduleForm('CHILD', 'REPEAT'); setChildScheduleChild(childId) }}>＋ 반복 일정 추가</button></div><Card className="weekly-institutions"><strong>등록된 일정</strong><p>{[...new Set(weeklyEntries.map(item => item.title))].slice(0, 4).join(' · ') || '아직 등록된 반복 일정이 없어요.'}</p></Card></section></div>}
+    {scheduleSheet === 'FORM' && boot && editingSchedule && <BottomSheet className="schedule-form-sheet" onDismiss={() => setScheduleSheet('DAY')}><h2>{scheduleForm === 'CHILD' ? '아이 일정 수정' : '내 일정 수정'}</h2><p className="schedule-edit-help">반복 일정은 저장할 때 이번 일정만 바꿀지 이후 일정도 함께 바꿀지 선택할 수 있어요.</p>{scheduleForm === 'CHILD' ? <><label className="form-label">아이 이름 (필수)</label><select className="form-control" value={childScheduleChild} onChange={event => setChildScheduleChild(event.target.value)}>{boot.children.map(childItem => <option key={childItem.id} value={childItem.id}>{childItem.name}</option>)}</select>{childLocationControl('edit-location')}</> : <><label className="form-label">일정 종류</label><select className="form-control" value={scheduleKind} onChange={event => setScheduleKind(event.target.value as 'WORK' | 'ROUTINE')}><option value="ROUTINE">개인 루틴·운동</option><option value="WORK">업무 일정</option></select></>}<label className="form-label">일정 이름</label><input className="form-control" value={scheduleTitle} onChange={event => setScheduleTitle(event.target.value)} placeholder={scheduleForm === 'CHILD' ? '예: 태권도, 방과후 미술' : '예: 헬스, 오전 회의'} /><ScheduleTimeFields date={scheduleDate} start={scheduleStartTime} end={scheduleEndTime} onDate={setScheduleDate} onStart={setScheduleStartTime} onEnd={setScheduleEndTime} /><button className="primary-button wide-button" onClick={() => saveSchedule()}>수정 내용 저장</button><button className="schedule-delete-button wide-button" onClick={() => deleteSchedule()}>이 일정 삭제</button><button className="text-link centered" onClick={() => setScheduleSheet('DAY')}>이전</button></BottomSheet>}
+    {weeklyTimetableOpen && boot && <div className="weekly-overlay" onClick={() => setWeeklyTimetableOpen(false)}><section className="weekly-timetable" role="dialog" aria-modal="true" aria-label="주간 시간표" onClick={event => event.stopPropagation()}>
+      <header><button onClick={() => setWeeklyTimetableOpen(false)}>‹</button><strong>주간 시간표</strong><button onClick={() => setToast('주간 시간표 설정을 저장했어요')}>저장</button></header>
+      <div className="weekly-child-tabs">{boot.children.map(childItem => <button key={childItem.id} className={activeWeeklyChild === childItem.id ? 'active' : ''} onClick={() => setWeeklyTimetableChild(childItem.id)}>{childItem.name}</button>)}</div>
+      <p className="weekly-help">일정 블록의 높이가 실제 시작·종료 시간을 보여줘요. 눌러서 수정할 수 있어요.</p>
+      {boot.children.length && weeklyHourLabels.length ? <div className="weekly-timeline">
+        <div className="weekly-day-header"><span />{['월', '화', '수', '목', '금', '토', '일'].map(day => <strong key={day}>{day}</strong>)}</div>
+        <div className="weekly-timeline-body">
+          <div className="weekly-time-axis" style={{ height: weeklyTimelineHeight }}>{weeklyHourLabels.map(hour => <time key={hour} style={{ top: Math.min(weeklyTimelineHeight - 10, (hour * 60 - weeklyStartMinute) * weeklyPixelsPerMinute) }}>{hour}시</time>)}</div>
+          <div className="weekly-day-columns" style={{ height: weeklyTimelineHeight }}>{[1, 2, 3, 4, 5, 6, 0].map(day => <div className="weekly-day-column" key={day}>{weeklyDisplayEntries.filter(item => new Date(item.starts_at).getDay() === day).map(item => {
+            const start = new Date(item.starts_at); const end = item.has_end_time ? new Date(item.ends_at) : new Date(start.getTime() + 30 * 60_000)
+            const startMinute = start.getHours() * 60 + start.getMinutes(); const duration = Math.max(20, (end.getTime() - start.getTime()) / 60_000)
+            return <button key={item.id} className="weekly-event-block" style={{ top: (startMinute - weeklyStartMinute) * weeklyPixelsPerMinute, height: Math.max(24, duration * weeklyPixelsPerMinute) }} onClick={() => openChildScheduleEdit(item)}><strong>{item.title}</strong><small>{localClock(item.starts_at)}–{localClock(item.ends_at)}</small>{item.location_name && <em>{item.location_name}</em>}</button>
+          })}</div>)}</div>
+        </div>
+      </div> : boot.children.length ? <Empty title="등록된 반복 일정이 없어요" text="반복 일정을 추가하면 해당 시간 범위로 시간표가 만들어져요" /> : <Empty title="등록된 아이가 없어요" text="가족 설정에서 아이를 먼저 추가해주세요" />}
+      <div className="weekly-actions"><button className="primary-button" disabled={!boot.children.length} onClick={() => { const childId = activeWeeklyChild; setWeeklyTimetableOpen(false); openNewScheduleForm('CHILD', 'REPEAT'); setChildScheduleChild(childId) }}>＋ 반복 일정 추가</button></div>
+      <Card className="weekly-institutions"><strong>등록된 일정</strong><p>{[...new Set(weeklyEntries.map(item => `${item.title}${item.location_name ? ` (${item.location_name})` : ''}`))].slice(0, 4).join(' · ') || '아직 등록된 반복 일정이 없어요.'}</p></Card>
+    </section></div>}
+    {routineMergePrompt && <BottomSheet className="routine-merge-sheet" onDismiss={() => setRoutineMergePrompt(null)}><span className="sheet-handle" /><h2>같은 장소 일정을<br />하나로 정리할까요?</h2><p>오늘 {routineMergePrompt.location} 일정을 하나로 정리했어요. <strong>{routineMergePrompt.start} 등원, {routineMergePrompt.end} 하원</strong>에만 돌봄 담당자를 배정하면 될까요?</p><Card className="routine-merge-summary"><span><small>첫 돌봄 지점</small><strong>{routineMergePrompt.start} · 등원</strong></span><b>→</b><span><small>마지막 돌봄 지점</small><strong>{routineMergePrompt.end} · 하원</strong></span></Card><button className="primary-button wide-button" onClick={() => { setRoutineMergePrompt(null); saveSchedule(undefined, true) }}>네, 처음과 마지막만 배정</button><button className="outline-button wide-button" onClick={() => { setRoutineMergePrompt(null); saveSchedule(undefined, false) }}>아니요, 방과후도 따로 픽업</button></BottomSheet>}
     {recurrenceEditPrompt && editingSchedule && (() => { const original = editingSchedule.type === 'CHILD' ? boot?.child_schedules.find(item => item.id === editingSchedule.id) : boot?.schedules.find(item => item.id === editingSchedule.id); return <BottomSheet className="recurrence-edit-sheet" onDismiss={() => setRecurrenceEditPrompt(false)}><span className="sheet-handle" /><h2>매주 이렇게 바꿀까요?</h2><p>반복 일정에서 바꿀 범위를 선택해주세요.</p><div className="recurrence-time-change"><span><small>기존</small><strong>{formatTime(original?.starts_at)}</strong></span><b>→</b><span><small>{scheduleDate.slice(5).replace('-', '월 ')}일</small><strong>{normalizeClock(scheduleStartTime)}</strong></span></div><button className={recurrenceEditScope === 'SINGLE' ? 'scope-choice active' : 'scope-choice'} onClick={() => setRecurrenceEditScope('SINGLE')}><i /><span><strong>{scheduleDate.slice(5).replace('-', '월 ')}일만 변경</strong><small>이 날짜의 일정만 그대로 유지</small></span></button><button className={recurrenceEditScope === 'FUTURE' ? 'scope-choice active' : 'scope-choice'} onClick={() => setRecurrenceEditScope('FUTURE')}><i /><span><strong>이후 반복 일정도 변경</strong><small>선택한 날짜부터 같은 시간으로 바뀝니다</small></span></button><button className="primary-button wide-button recurrence-apply" onClick={() => { const scope = recurrenceEditScope; setRecurrenceEditPrompt(false); saveSchedule(scope) }}>적용</button></BottomSheet> })()}
     {recurrenceDeletePrompt && editingSchedule && <BottomSheet className="recurrence-edit-sheet recurrence-delete-sheet" onDismiss={() => setRecurrenceDeletePrompt(false)}><span className="sheet-handle" /><h2>반복 일정을 어떻게 삭제할까요?</h2><p>선택한 날짜만 지우거나 이후 일정을 함께 지울 수 있어요.</p><button className={recurrenceDeleteScope === 'SINGLE' ? 'scope-choice active' : 'scope-choice'} onClick={() => setRecurrenceDeleteScope('SINGLE')}><i /><span><strong>이 일정만 삭제하기</strong><small>선택한 날짜의 일정만 삭제합니다</small></span></button><button className={recurrenceDeleteScope === 'FUTURE' ? 'scope-choice active' : 'scope-choice'} onClick={() => setRecurrenceDeleteScope('FUTURE')}><i /><span><strong>이후 일정도 삭제하기</strong><small>선택한 날짜부터 반복 일정을 함께 삭제합니다</small></span></button><button className="schedule-delete-button wide-button recurrence-apply" onClick={() => { const scope = recurrenceDeleteScope; setRecurrenceDeletePrompt(false); deleteSchedule(scope) }}>선택한 범위 삭제</button></BottomSheet>}
     {patternSuggestionOpen && boot && <BottomSheet className="pattern-suggestion-sheet" onDismiss={() => setPatternSuggestionOpen(false)}><span className="sheet-handle" /><h2>이 패턴을 기본값으로<br />반영할까요?</h2><p>반복해서 바뀐 담당 패턴을 다음 추천에 반영할 수 있어요.</p><div className="pattern-change"><span><small>현재 기본값</small><strong>{me?.member.name ?? '나'}</strong></span><b>→</b><span><small>추천 담당</small><strong>{members.find(item => item.id !== me?.member.id)?.name ?? '다른 가족'}</strong></span></div><button className="primary-button wide-button" onClick={() => { localStorage.setItem(`family-care-pattern:${boot.family.id}:${childScheduleChild}`, members.find(item => item.id !== me?.member.id)?.id ?? ''); setPatternSuggestionOpen(false); setToast('다음 배정부터 새 기본 패턴을 반영해요') }}>기본값 바꾸기</button><div className="pattern-secondary"><button onClick={() => { setPatternSuggestionOpen(false); setToast('이번 변경만 유지했어요') }}>이번만 유지</button><button onClick={() => { localStorage.setItem(`family-care-pattern-dismissed:${boot.family.id}:${childScheduleChild}`, '1'); setPatternSuggestionOpen(false) }}>다시 묻지 않기</button></div></BottomSheet>}

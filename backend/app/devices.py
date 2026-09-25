@@ -22,7 +22,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .db import database
-from .family import family_id
+from .family import family_id, member_id
+from .performance import record_event
 
 router = APIRouter(prefix="/api/device-alerts", tags=["device alerts"])
 
@@ -110,11 +111,19 @@ def _serialize(row: dict) -> dict:
     # Old rows may still carry device ids from a since-shrunk catalog (e.g. a
     # removed demo appliance) — drop them so counts and lists only ever show
     # devices that actually exist today.
+    stored_matrix = json.loads(row["content_matrix"])
+    content_matrix = {
+        key: {
+            "tv": bool(stored_matrix.get(key, {}).get("tv", defaults["tv"])),
+            "voice": bool(stored_matrix.get(key, {}).get("voice", defaults["voice"])),
+        }
+        for key, defaults in DEFAULT_CONTENT_MATRIX.items()
+    }
     return {
         **row,
         "devices": [item for item in json.loads(row["devices"]) if item in DEVICE_BY_ID],
         "priority": [item for item in json.loads(row["priority"]) if item in DEVICE_BY_ID],
-        "content_matrix": json.loads(row["content_matrix"]),
+        "content_matrix": content_matrix,
         "emergency_tv_sound": bool(row["emergency_tv_sound"]),
         "mute_during_naptime": bool(row["mute_during_naptime"]),
     }
@@ -153,7 +162,17 @@ def update_device_alert_settings(payload: DeviceAlertSettingsUpdate):
                 raise HTTPException(422, f"알 수 없는 가전입니다: {', '.join(unknown)}")
             updates["priority"] = json.dumps(updates["priority"])
         if "content_matrix" in updates:
-            updates["content_matrix"] = json.dumps(updates["content_matrix"])
+            current = _serialize(_row(db))["content_matrix"]
+            for content_key, channel_patch in updates["content_matrix"].items():
+                if content_key not in DEFAULT_CONTENT_MATRIX:
+                    raise HTTPException(422, f"알 수 없는 알림 종류입니다: {content_key}")
+                unknown_channels = set(channel_patch) - {"tv", "voice"}
+                if unknown_channels:
+                    raise HTTPException(422, f"알 수 없는 알림 채널입니다: {', '.join(sorted(unknown_channels))}")
+                current[content_key] = {**current[content_key], **channel_patch}
+            # Emergency requests are mandatory on both available channels.
+            current["emergency_request"] = {"tv": True, "voice": True}
+            updates["content_matrix"] = json.dumps(current)
         for bool_field in ("emergency_tv_sound", "mute_during_naptime"):
             if bool_field in updates:
                 updates[bool_field] = int(updates[bool_field])
@@ -202,8 +221,14 @@ def send_test_alert(payload: TestAlertRequest):
         # emergency requests — genuinely pick this up and react, instead of the
         # test only ever affecting the response shown on this settings screen.
         notify(db, None, sample_title, sample_body, "IMPORTANT", "DEVICE_ALERT_TEST", None)
-    tv_online = False if payload.assume_tv_off else _is_tv_online(row)
-    device_id, device = _resolve_channel(settings, tv_online)
+        tv_online = False if payload.assume_tv_off else _is_tv_online(row)
+        device_id, device = _resolve_channel(settings, tv_online)
+        record_event(
+            db, "device_alert_used", target_family_id=family_id(),
+            target_member_id=member_id(), correlation_id=device_id,
+            properties={"channel": "TV" if device and device["type"] == "SCREEN" else "VOICE" if device else None,
+                        "device_id": device_id, "test": True, "delivered": bool(device)},
+        )
     if not device:
         return {"channel": None, "device_id": None, "device_name": None,
                 "title": sample_title, "message": "우선순위에 등록된 가전이 없어요"}

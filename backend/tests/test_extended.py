@@ -346,6 +346,58 @@ class ExtendedFlowTest(unittest.TestCase):
         })
         self.assertEqual(missing.status_code, 404)
 
+    def test_adjacent_same_location_schedules_keep_only_first_arrival_and_final_departure(self):
+        first = self.client.post("/api/child-schedules", json={
+            "child_id": "jiu", "title": "정규수업", "category": "SCHOOL",
+            "starts_at": "2026-09-28T09:00:00+09:00", "ends_at": "2026-09-28T12:50:00+09:00",
+            "location_name": "한빛초등학교",
+        })
+        self.assertEqual(first.status_code, 201)
+        second = self.client.post("/api/child-schedules", json={
+            "child_id": "jiu", "title": "방과후", "category": "AFTER_SCHOOL",
+            "starts_at": "2026-09-28T13:00:00+09:00", "ends_at": "2026-09-28T14:00:00+09:00",
+            "location_name": "한빛초등학교", "merge_same_location": True,
+        })
+        self.assertEqual(second.status_code, 201)
+        snapshot = self.client.get("/api/bootstrap").json()
+        schedule_ids = {first.json()["id"], second.json()["id"]}
+        boundaries = [item for item in snapshot["items"] if item.get("child_schedule_id") in schedule_ids]
+        self.assertEqual([(item["boundary_type"], item["starts_at"][11:16]) for item in boundaries],
+                         [("START", "09:00"), ("END", "14:00")])
+        saved = [item for item in snapshot["child_schedules"] if item["id"] in schedule_ids]
+        self.assertTrue(all(item["location_name"] == "한빛초등학교" for item in saved))
+
+    def test_same_location_schedules_can_keep_separate_pickup_boundaries(self):
+        first = self.client.post("/api/child-schedules", json={
+            "child_id": "hayun", "title": "유치원", "category": "SCHOOL",
+            "starts_at": "2026-09-29T09:00:00+09:00", "ends_at": "2026-09-29T12:50:00+09:00",
+            "location_name": "별빛유치원",
+        }).json()
+        second = self.client.post("/api/child-schedules", json={
+            "child_id": "hayun", "title": "방과후", "category": "AFTER_SCHOOL",
+            "starts_at": "2026-09-29T13:00:00+09:00", "ends_at": "2026-09-29T14:00:00+09:00",
+            "location_name": "별빛유치원", "merge_same_location": False,
+        }).json()
+        snapshot = self.client.get("/api/bootstrap").json()
+        schedule_ids = {first["id"], second["id"]}
+        boundaries = [item for item in snapshot["items"] if item.get("child_schedule_id") in schedule_ids]
+        self.assertEqual([item["starts_at"][11:16] for item in boundaries], ["09:00", "12:50", "13:00", "14:00"])
+
+    def test_routine_can_save_a_caregiver_or_leave_assignment_for_later(self):
+        room = self.client.post("/api/families", json={"name": "루틴 가족", "owner_name": "엄마"}).json()
+        headers = {"Authorization": "Bearer " + room["access_token"]}
+        child = self.client.post("/api/children", headers=headers, json={"name": "민솔", "age_label": "5세"}).json()
+        assigned = self.client.post("/api/child-schedules", headers=headers, json={
+            "child_id": child["id"], "title": "유치원", "category": "SCHOOL",
+            "starts_at": "2026-09-30T09:00:00+09:00", "ends_at": "2026-09-30T14:00:00+09:00",
+            "location_name": "별빛유치원", "assignee_id": room["member_id"],
+        }).json()
+        self.assertEqual(assigned["assigned_count"], 2)
+        snapshot = self.client.get("/api/bootstrap", headers=headers).json()
+        linked = [assignment for assignment in snapshot["assignments"] if assignment["item_id"] in assigned["care_item_ids"]]
+        self.assertEqual(len(linked), 2)
+        self.assertTrue(all(assignment["status"] == "ACCEPTED" for assignment in linked))
+
     def test_weekly_child_and_personal_routines_expand_into_calendar_entries(self):
         child_routine = self.client.post("/api/child-schedules", json={
             "child_id": "jiu", "title": "태권도", "category": "ACADEMY",

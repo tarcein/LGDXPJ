@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from .config import setting
 from .db import database
+from .performance import record_event
 
 
 def process_assignment_reminders(reference_time: datetime | None = None) -> int:
@@ -26,18 +27,33 @@ def process_assignment_reminders(reference_time: datetime | None = None) -> int:
         ).fetchall()
         for assignment in pending:
             timestamp = current.isoformat()
+            notification_id = str(uuid4())
             db.execute(
                 """INSERT INTO notification(id, family_id, member_id, title, body, level, is_read,
                    created_at, action_type, action_id) VALUES (?, ?, ?, ?, ?, 'IMPORTANT', 0, ?, 'ASSIGNMENT_REQUEST', ?)""",
-                (str(uuid4()), assignment["family_id"], assignment["assignee_id"], "돌봄 요청을 확인해주세요",
+                (notification_id, assignment["family_id"], assignment["assignee_id"], "돌봄 요청을 확인해주세요",
                  f"{assignment['title']} 담당 요청에 응답이 필요해요.", timestamp, assignment["id"]),
             )
+            record_event(
+                db, "notification_sent", target_family_id=assignment["family_id"],
+                target_member_id=assignment["assignee_id"], correlation_id=notification_id,
+                properties={"channel": "APP", "level": "IMPORTANT",
+                            "action_type": "ASSIGNMENT_REQUEST", "reminder": True},
+                occurred_at=timestamp,
+            )
             if assignment["plan"] == "PRO":
+                outbox_id = str(uuid4())
                 db.execute(
                     """INSERT INTO device_alert_outbox(id, family_id, member_id, assignment_id,
                        title, body, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'NOT_CONNECTED', ?)""",
-                    (str(uuid4()), assignment["family_id"], assignment["assignee_id"], assignment["id"],
+                    (outbox_id, assignment["family_id"], assignment["assignee_id"], assignment["id"],
                      "돌봄 요청 알림", assignment["title"], timestamp),
+                )
+                record_event(
+                    db, "device_alert_used", target_family_id=assignment["family_id"],
+                    target_member_id=assignment["assignee_id"], correlation_id=outbox_id,
+                    properties={"status": "NOT_CONNECTED", "trigger": "ASSIGNMENT_REMINDER"},
+                    occurred_at=timestamp,
                 )
             db.execute("UPDATE care_assignment SET reminder_sent_at = ? WHERE id = ?", (timestamp, assignment["id"]))
             processed += 1

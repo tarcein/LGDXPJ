@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from .config import setting
 from .db import database
 from .family import authenticated, family_id, member_id, require_owner
+from .performance import record_event
 
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
@@ -143,6 +144,15 @@ def _charge(db, subscription: dict, billing_key: str, *, target_family_id: str |
     )
     db.execute("UPDATE family_group SET plan = 'PRO' WHERE id = ?", (target_family,))
     db.execute("DELETE FROM plan_preview WHERE family_id = ?", (target_family,))
+    renewal = subscription.get("status") == "ACTIVE" and bool(subscription.get("current_period_start"))
+    record_event(
+        db, "subscription_renewed" if renewal else "payment_completed",
+        target_family_id=target_family,
+        target_member_id=member_id() if target_family == family_id() else None,
+        correlation_id=order_id,
+        properties={"amount": amount, "provider": "TOSS", "cycle": "MONTHLY"},
+        occurred_at=payment.get("approvedAt") or now.isoformat(),
+    )
     return {"order_id": order_id, "status": status, "amount": amount,
             "approved_at": payment.get("approvedAt") or now.isoformat(), "next_billing_at": next_at.isoformat()}
 
@@ -293,6 +303,11 @@ def cancel_subscription():
         subscription = dict(db.execute(
             "SELECT * FROM family_subscription WHERE family_id = ?", (family_id(),)
         ).fetchone())
+        record_event(
+            db, "subscription_cancelled", target_family_id=family_id(),
+            target_member_id=member_id(), correlation_id=family_id(),
+            properties={"effective_at_period_end": True}, occurred_at=now,
+        )
     return {"plan": "PRO", "status": "ACTIVE", "cancel_at_period_end": True,
             "auto_renew_available": bool(subscription.get("billing_key")),
             "current_period_end": subscription.get("current_period_end"), "next_billing_at": None}
@@ -397,6 +412,12 @@ def confirm_widget_payment(payload: WidgetPaymentConfirmation):
                 """UPDATE payment_transaction SET status = 'DONE', payment_key = ?, approved_at = ?
                    WHERE order_id = ? AND family_id = ?""",
                 (payload.payment_key, approved_at, payload.order_id, family_id()),
+            )
+            record_event(
+                db, "payment_completed", target_family_id=family_id(),
+                target_member_id=member_id(), correlation_id=payload.order_id,
+                properties={"amount": payload.amount, "provider": "TOSS_WIDGET",
+                            "cycle": "MONTHLY"}, occurred_at=approved_at,
             )
         else:
             subscription = dict(_ensure_subscription(db))

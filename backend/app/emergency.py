@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from .db import database
 from .extended import _require_pro
 from .family import family_id, member_id, owner_id
+from .performance import record_event
 from .services import rank_members
 
 
@@ -80,6 +81,11 @@ def create_emergency_request(payload: EmergencyCreate):
                VALUES (?, ?, ?, ?, ?, ?)""",
             (request_id, family_id(), assignment["id"], member_id(), payload.reason, now()),
         )
+        record_event(
+            db, "pro_feature_used", target_family_id=family_id(),
+            target_member_id=member_id(), correlation_id=request_id,
+            properties={"feature": "EMERGENCY_REQUEST"},
+        )
         suggestions = rank_members(db, family_id(), assignment["starts_at"], target_child_id=assignment["child_id"])
         eligible = [candidate for candidate in suggestions
                     if candidate["available"] and candidate["member_id"] not in {member_id(), assignment["assignee_id"]}]
@@ -138,6 +144,17 @@ def claim_emergency_request(request_id: str):
                to_member_id, briefing, status, special_note)
                VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?)""",
             (handoff_id, family_id(), new_id, assignment["assignee_id"], member["id"], briefing, assignment["note"]),
+        )
+        record_event(
+            db, "reassignment_confirmed", target_family_id=family_id(),
+            target_member_id=member["id"], correlation_id=assignment["item_id"],
+            properties={"assignment_id": new_id, "method": "EMERGENCY"},
+        )
+        record_event(
+            db, "handoff_completed", target_family_id=family_id(),
+            target_member_id=assignment["assignee_id"], correlation_id=handoff_id,
+            properties={"assignment_id": new_id, "has_note": bool(assignment["note"]),
+                        "has_photo": False},
         )
         db.execute(
             """UPDATE emergency_request SET status = 'CLAIMED', claimed_by_member_id = ?,

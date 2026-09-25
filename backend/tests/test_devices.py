@@ -114,6 +114,19 @@ class DeviceAlertsTest(unittest.TestCase):
         response = self.client.patch("/api/device-alerts", headers=headers, json={"devices": ["dishwasher"]})
         self.assertEqual(response.status_code, 422)
 
+    def test_content_matrix_accepts_a_single_checkbox_patch_without_losing_other_settings(self):
+        headers = self._make_pro_family()
+        before = self.client.get("/api/device-alerts", headers=headers).json()["settings"]["content_matrix"]
+        response = self.client.patch(
+            "/api/device-alerts", headers=headers,
+            json={"content_matrix": {"supply_missing": {"voice": False}}},
+        )
+        self.assertEqual(response.status_code, 200)
+        matrix = response.json()["settings"]["content_matrix"]
+        self.assertFalse(matrix["supply_missing"]["voice"])
+        self.assertEqual(matrix["departure_reminder"], before["departure_reminder"])
+        self.assertEqual(matrix["emergency_request"], {"tv": True, "voice": True})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from .config import enabled
 from .db import database
+from .performance import record_event
 
 
 router = APIRouter(prefix="/api/families", tags=["family rooms"])
@@ -75,6 +76,11 @@ def _new_code(db, target_family: str, created_by_member_id: str | None = None) -
               created_by_member_id, created_at, join_count)
            VALUES (?, ?, ?, ?, ?, 0)""",
         (_hash(code), target_family, expires_at, created_by_member_id or member_id(), _now().isoformat()),
+    )
+    record_event(
+        db, "invite_created", target_family_id=target_family,
+        target_member_id=created_by_member_id or member_id(), correlation_id=_hash(code)[:16],
+        properties={"expires_in_days": 7},
     )
     return code, expires_at
 
@@ -215,6 +221,11 @@ def create_family(payload: FamilyCreate):
                VALUES (?, ?, ?, 'PARENT', 'ACTIVE', 1, ?)""",
             (target_member, target_family, payload.owner_name, _now().isoformat()),
         )
+        record_event(
+            db, "family_created", target_family_id=target_family,
+            target_member_id=target_member, correlation_id=target_family,
+            properties={"plan": "FREE"},
+        )
         _seed_member_settings(db, target_member, True)
         code, expires_at = _new_code(db, target_family, target_member)
         token = _new_session(db, target_family, target_member)
@@ -233,6 +244,11 @@ def join_family(payload: FamilyJoin):
         family = db.execute("SELECT plan FROM family_group WHERE id = ?", (target_family,)).fetchone()
         count = db.execute("SELECT COUNT(*) FROM family_member WHERE family_id = ? AND status != 'REMOVED'", (target_family,)).fetchone()[0]
         if family["plan"] == "FREE" and count >= 3:
+            record_event(
+                db, "feature_limit_reached", target_family_id=target_family,
+                properties={"feature": "CAREGIVER", "current_count": count, "limit": 3},
+            )
+            db.commit()
             raise HTTPException(403, detail={"code": "PLAN_LIMIT", "message": "무료 플랜은 돌봄 구성원 3명까지 입장할 수 있습니다"})
         target_member = str(uuid4())
         db.execute("INSERT INTO family_member(id, family_id, name, role, status, created_at) VALUES (?, ?, ?, ?, 'ACTIVE', ?)",
@@ -241,6 +257,11 @@ def join_family(payload: FamilyJoin):
         token = _new_session(db, target_family, target_member)
         if reusable:
             db.execute("UPDATE family_invite_link SET join_count = join_count + 1 WHERE code_hash = ?", (_hash(code),))
+        record_event(
+            db, "invite_accepted", target_family_id=target_family,
+            target_member_id=target_member, correlation_id=_hash(code)[:16],
+            properties={"role": payload.role, "reusable_link": reusable},
+        )
     return {"family_id": target_family, "member_id": target_member, "access_token": token, "plan": family["plan"]}
 
 

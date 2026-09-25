@@ -162,6 +162,8 @@ CREATE TABLE IF NOT EXISTS child_schedule (
   child_id TEXT NOT NULL REFERENCES child(id), title TEXT NOT NULL,
   category TEXT NOT NULL, starts_at TEXT NOT NULL, ends_at TEXT NOT NULL,
   has_end_time INTEGER NOT NULL DEFAULT 1,
+  location_name TEXT NOT NULL DEFAULT '',
+  merge_same_location INTEGER NOT NULL DEFAULT 1,
   source TEXT NOT NULL DEFAULT 'MANUAL', created_at TEXT NOT NULL,
   recurrence_id TEXT, recurrence_rule TEXT
 );
@@ -176,6 +178,7 @@ CREATE TABLE IF NOT EXISTS care_item (
   child_schedule_id TEXT REFERENCES child_schedule(id),
   item_type TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
   starts_at TEXT, confidence TEXT NOT NULL DEFAULT 'LOW',
+  boundary_type TEXT,
   status TEXT NOT NULL DEFAULT 'NEEDS_REVIEW', created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS care_assignment (
@@ -314,6 +317,16 @@ CREATE TABLE IF NOT EXISTS device_alert_setting (
   tv_status_at TEXT,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS performance_event (
+  id TEXT PRIMARY KEY,
+  family_id TEXT NOT NULL REFERENCES family_group(id),
+  member_id TEXT REFERENCES family_member(id),
+  event_name TEXT NOT NULL,
+  tracker TEXT NOT NULL,
+  correlation_id TEXT,
+  properties TEXT NOT NULL DEFAULT '{}',
+  occurred_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_item_family_status ON care_item(family_id, status);
 CREATE INDEX IF NOT EXISTS idx_child_schedule_family ON child_schedule(family_id, child_id, starts_at);
 CREATE INDEX IF NOT EXISTS idx_assignment_family ON care_assignment(family_id, status);
@@ -322,6 +335,10 @@ CREATE INDEX IF NOT EXISTS idx_emergency_family_status ON emergency_request(fami
 CREATE INDEX IF NOT EXISTS idx_media_family_created ON media_asset(family_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_invite_link_family ON family_invite_link(family_id, expires_at);
 CREATE INDEX IF NOT EXISTS idx_payment_family_created ON payment_transaction(family_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_performance_event_family_time
+  ON performance_event(family_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_performance_event_name_time
+  ON performance_event(event_name, occurred_at);
 """
 
 
@@ -353,7 +370,10 @@ def initialize() -> None:
                 ("child_schedule", "recurrence_id", "TEXT"),
                 ("child_schedule", "recurrence_rule", "TEXT"),
                 ("child_schedule", "has_end_time", "INTEGER NOT NULL DEFAULT 1"),
+                ("child_schedule", "location_name", "TEXT NOT NULL DEFAULT ''"),
+                ("child_schedule", "merge_same_location", "INTEGER NOT NULL DEFAULT 1"),
                 ("care_item", "child_schedule_id", "TEXT REFERENCES child_schedule(id)"),
+                ("care_item", "boundary_type", "TEXT"),
                 ("notification", "action_type", "TEXT"),
                 ("notification", "action_id", "TEXT"),
                 ("notification_preference", "device_enabled", "INTEGER NOT NULL DEFAULT 0"),
@@ -379,8 +399,8 @@ def initialize() -> None:
                 db.execute("ALTER TABLE care_handoff ADD COLUMN special_note TEXT NOT NULL DEFAULT ''")
             for table, additions in (
                 ("personal_schedule", (("kind", "TEXT NOT NULL DEFAULT 'ROUTINE'"), ("external_source", "TEXT"), ("external_id", "TEXT"), ("recurrence_id", "TEXT"), ("recurrence_rule", "TEXT"), ("has_end_time", "INTEGER NOT NULL DEFAULT 1"))),
-                ("child_schedule", (("recurrence_id", "TEXT"), ("recurrence_rule", "TEXT"), ("has_end_time", "INTEGER NOT NULL DEFAULT 1"))),
-                ("care_item", (("child_schedule_id", "TEXT REFERENCES child_schedule(id)"),)),
+                ("child_schedule", (("recurrence_id", "TEXT"), ("recurrence_rule", "TEXT"), ("has_end_time", "INTEGER NOT NULL DEFAULT 1"), ("location_name", "TEXT NOT NULL DEFAULT ''"), ("merge_same_location", "INTEGER NOT NULL DEFAULT 1"))),
+                ("care_item", (("child_schedule_id", "TEXT REFERENCES child_schedule(id)"), ("boundary_type", "TEXT"))),
                 ("notification", (("action_type", "TEXT"), ("action_id", "TEXT"))),
                 ("notification_preference", (("device_enabled", "INTEGER NOT NULL DEFAULT 0"),)),
                 ("care_assignment", (("requested_by_member_id", "TEXT REFERENCES family_member(id)"), ("reminder_sent_at", "TEXT"))),
@@ -395,6 +415,20 @@ def initialize() -> None:
                 for name, definition in additions:
                     if name not in columns:
                         db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+        # Existing schedule-linked care items predate explicit start/end boundary
+        # metadata. Backfill it once so later same-place merging can remove only
+        # the internal pickup/drop-off point without disturbing the outer points.
+        boundary_rows = db.execute(
+            """SELECT i.id, i.starts_at, s.starts_at AS schedule_start,
+                      s.ends_at AS schedule_end, s.has_end_time
+                 FROM care_item i JOIN child_schedule s ON s.id = i.child_schedule_id
+                WHERE i.boundary_type IS NULL"""
+        ).fetchall()
+        for boundary in boundary_rows:
+            boundary_type = "START"
+            if boundary["has_end_time"] and boundary["starts_at"] == boundary["schedule_end"]:
+                boundary_type = "END"
+            db.execute("UPDATE care_item SET boundary_type = ? WHERE id = ?", (boundary_type, boundary["id"]))
         families = db.execute("SELECT id, created_at FROM family_group").fetchall()
         for family in families:
             missing_members = db.execute(

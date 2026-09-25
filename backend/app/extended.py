@@ -19,6 +19,7 @@ from .config import enabled, setting
 from .db import database
 from .family import authenticated, family_id, member_id, owner_id, require_owner
 from .media import image_mime as _image_mime, media_root as _media_root, read_file as _read_file
+from .performance import record_event
 
 
 router = APIRouter(prefix="/api", tags=["media and assistant"])
@@ -580,7 +581,7 @@ def _apply_schedule_creations(creations: list[dict], original_message: str) -> l
     return applied
 
 
-def _chat(message: str) -> dict:
+def _chat(message: str, input_type: str = "TEXT") -> dict:
     topics, app_help = _chat_topics(message)
     compact_message = message.replace(" ", "")
     wants_creation = any(term in compact_message for term in ("등록해", "추가해", "넣어줘", "일정잡아", "일정만들어", "기록해"))
@@ -729,11 +730,23 @@ def _chat(message: str) -> dict:
             cards.append({"eyebrow": "일정 등록 완료", "title": created[0]["title"],
                           "description": "등록된 일정을 캘린더에서 확인해보세요.", "screen": "schedule"})
     with database() as db:
+        query_id = str(uuid4())
         for role, content in [("user", message), ("assistant", answer)]:
             db.execute("INSERT INTO assistant_message VALUES (?, ?, ?, ?, ?, ?)",
-                       (str(uuid4()), family_id(), member_id(), role, content, datetime.now(ZoneInfo("Asia/Seoul")).isoformat()))
+                       (query_id if role == "user" else str(uuid4()), family_id(), member_id(), role,
+                        content, datetime.now(ZoneInfo("Asia/Seoul")).isoformat()))
         _chat_add_usage(db, tokens)
         usage = _chat_usage(db, plan)
+        record_event(
+            db, "chatbot_query", target_family_id=family_id(), target_member_id=member_id(),
+            correlation_id=query_id, properties={"input_type": input_type, "plan": plan},
+        )
+        record_event(
+            db, "chatbot_response_delivered", target_family_id=family_id(),
+            target_member_id=member_id(), correlation_id=query_id,
+            properties={"tokens": tokens, "card_count": len(cards),
+                        "schedule_changes": len(applied), "schedule_creations": len(created)},
+        )
     links = [{"label": f"{card.get('title') or '관련 내용'} 보기", "screen": card.get("screen")}
              for card in cards if card.get("screen")]
     return {"message": message, "answer": answer, "cards": cards, "links": links,
@@ -756,13 +769,13 @@ def assistant_history():
 
 @router.post("/assistant/chat")
 def assistant_chat(payload: ChatRequest):
-    return _chat(payload.message)
+    return _chat(payload.message, "TEXT")
 
 
 @router.post("/assistant/voice")
 def assistant_voice(file: UploadFile):
     transcript = _transcribe(file, "CHAT")
-    return {"transcript": transcript, **_chat(transcript)}
+    return {"transcript": transcript, **_chat(transcript, "VOICE")}
 
 
 class HandoffUpdate(BaseModel):
@@ -813,4 +826,9 @@ def create_next_handoff(assignment_id: str, payload: NewHandoff):
         db.execute("""INSERT INTO care_handoff(id, family_id, assignment_id, from_member_id,
                    to_member_id, briefing, status, special_note) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?)""",
                    (handoff_id, family_id(), assignment_id, member_id(), target["id"], briefing, note))
+        record_event(
+            db, "handoff_completed", target_family_id=family_id(),
+            target_member_id=member_id(), correlation_id=handoff_id,
+            properties={"assignment_id": assignment_id, "has_note": bool(note), "has_photo": False},
+        )
         return dict(db.execute("SELECT * FROM care_handoff WHERE id = ?", (handoff_id,)).fetchone())
