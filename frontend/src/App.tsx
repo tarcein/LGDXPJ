@@ -1098,15 +1098,11 @@ function App() {
     const careItem = itemFor(assignment)
     if (!careItem?.starts_at || careItem.status === 'DONE') return false
     const startsAt = new Date(careItem.starts_at).getTime()
-    if (!Number.isFinite(startsAt) || startsAt > timelineNow) return false
+    if (!Number.isFinite(startsAt)) return false
     const careDate = new Date(careItem.starts_at).toLocaleDateString('sv-SE')
     if (careDate !== new Date(timelineNow).toLocaleDateString('sv-SE')) return false
-    const nextStart = (boot?.items ?? [])
-      .filter(item => item.id !== careItem.id && item.child_id === careItem.child_id && item.starts_at && item.item_type !== 'SUPPLY' && item.item_type !== 'HOMEWORK' && new Date(item.starts_at).toLocaleDateString('sv-SE') === careDate)
-      .map(item => new Date(item.starts_at!).getTime())
-      .filter(value => Number.isFinite(value) && value > startsAt)
-      .sort((left, right) => left - right)[0]
-    return nextStart === undefined || timelineNow < nextStart
+    const activeWindow = 30 * 60 * 1000
+    return timelineNow >= startsAt - activeWindow && timelineNow <= startsAt + activeWindow
   }
   const caregiverForCareItem = (careItemId: string) => {
     const assignment = activeAssignmentForItem(careItemId)
@@ -1282,8 +1278,7 @@ function App() {
     if (!careItem) return 'future'
     const assignment = careRouteAssignment(careItem.id)
     if (careItem.status === 'DONE' || assignment?.status === 'COMPLETED') return 'done'
-    if (isLiveAssignment(assignment)) return 'active'
-    return careItem.starts_at && new Date(careItem.starts_at).getTime() < timelineNow ? 'done' : 'future'
+    return isLiveAssignment(assignment) ? 'active' : 'future'
   }
   const careRouteSteps = [
     ...(boot?.child_schedules ?? []).filter(schedule => schedule.child_id === careRouteChildId && dateKey(schedule.starts_at) === careRouteDate).map(schedule => {
@@ -1298,27 +1293,24 @@ function App() {
     careRouteSteps.push({ id: 'home', label: '집', startsAt: '9999', status: careRouteSteps.every(step => step.status === 'done') ? 'done' : 'future' })
   }
   const homeEventRows = [
-    ...todayCare.map(item => { const assignment = activeAssignmentForItem(item.id); const assignedName = assignment ? member(assignment.assignee_id) : item.external_assignee_name?.trim(); return { id: `care-${item.id}`, time: item.starts_at!, title: item.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), done: item.status === 'DONE' || assignment?.status === 'COMPLETED', unassigned: !assignment && !assignedName, careItem: item, assignment } }),
+    ...todayCare.map(item => { const assignment = activeAssignmentForItem(item.id); const assignedName = assignment ? member(assignment.assignee_id) : item.external_assignee_name?.trim(); return { id: `care-${item.id}`, time: item.starts_at!, title: item.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: item.status === 'DONE' || assignment?.status === 'COMPLETED', unassigned: !assignment && !assignedName, careItem: item, assignment } }),
     ...todayChildSchedules.flatMap(item => {
       const careItems = boot?.items.filter(candidate => candidate.child_schedule_id === item.id) ?? []
-      if (!careItems.length) return [{ id: `child-${item.id}`, time: item.starts_at, title: item.title, meta: child(item.child_id), done: false, unassigned: false, careItem: undefined as CareItem | undefined, assignment: undefined as Assignment | undefined }]
+      if (!careItems.length) return [{ id: `child-${item.id}`, time: item.starts_at, title: item.title, meta: child(item.child_id), completed: false, unassigned: false, careItem: undefined as CareItem | undefined, assignment: undefined as Assignment | undefined }]
       return careItems.map(careItem => {
         const assignment = activeAssignmentForItem(careItem.id)
         const externalName = careItem.external_assignee_name?.trim()
         const assignedName = assignment ? member(assignment.assignee_id) : externalName
-        return { id: `child-${careItem.id}`, time: careItem.starts_at ?? item.starts_at, title: careItem.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), done: careItem.status === 'DONE' || assignment?.status === 'COMPLETED', unassigned: !assignment && !externalName, careItem, assignment }
+        return { id: `child-${careItem.id}`, time: careItem.starts_at ?? item.starts_at, title: careItem.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: careItem.status === 'DONE' || assignment?.status === 'COMPLETED', unassigned: !assignment && !externalName, careItem, assignment }
       })
     }),
   ].sort((left, right) => left.time.localeCompare(right.time))
-  const latestStartedHomeEvent = homeEventRows.reduce<number | null>((latest, event) => {
-    const startsAt = new Date(event.time).getTime()
-    return Number.isFinite(startsAt) && startsAt <= timelineNow && (latest === null || startsAt > latest) ? startsAt : latest
-  }, null)
+  const homeActiveWindow = 30 * 60 * 1000
   const homeEvents = homeEventRows.map(event => {
     const startsAt = new Date(event.time).getTime()
-    const elapsed = latestStartedHomeEvent !== null && startsAt < latestStartedHomeEvent
-    const done = event.done || elapsed
-    return { ...event, done, active: !done && latestStartedHomeEvent !== null && startsAt === latestStartedHomeEvent }
+    const active = !event.completed && Number.isFinite(startsAt) && timelineNow >= startsAt - homeActiveWindow && timelineNow <= startsAt + homeActiveWindow
+    const elapsed = !event.completed && Number.isFinite(startsAt) && timelineNow > startsAt + homeActiveWindow
+    return { ...event, active, elapsed }
   })
   const visibleNotices = boot?.notifications.filter(notice => noticeScope === 'family' || !me?.member.id || !notice.member_id || notice.member_id === me.member.id) ?? []
   const yesterdayKey = dateKey(new Date(new Date().setDate(new Date().getDate() - 1)))
@@ -2020,7 +2012,7 @@ function App() {
     <Section>오늘 일정</Section>
     <Card className="home-timeline exact-timeline">
       {homeEvents.map(event => <div key={event.id} className="home-schedule-row-wrap">
-        <button className={`home-schedule-row ${event.active ? 'current' : event.done ? 'completed' : 'upcoming'}`} onClick={() => { if (event.assignment && !['ACCEPTED', 'COMPLETED'].includes(event.assignment.status)) { setAssignmentId(event.assignment.id); setViewer(event.assignment.assignee_id); go('assignmentDetail') } else if (event.unassigned && event.careItem) void openSuggestion(event.careItem); else go('schedule') }}><time>{formatTime(event.time)}</time><span><strong>{event.title}</strong><small>{event.active ? `진행 중 · ${event.meta}` : event.meta}</small></span>{event.done ? <b className="done"><img src={homeScheduleDoneIcon} alt="완료" /></b> : event.active || event.assignment ? <b>›</b> : null}</button>
+        <button className={`home-schedule-row ${event.active ? 'current' : event.completed ? 'completed' : event.elapsed ? 'elapsed' : 'upcoming'}`} onClick={() => { if (event.assignment && !['ACCEPTED', 'COMPLETED'].includes(event.assignment.status)) { setAssignmentId(event.assignment.id); setViewer(event.assignment.assignee_id); go('assignmentDetail') } else if (event.unassigned && event.careItem) void openSuggestion(event.careItem); else go('schedule') }}><time>{formatTime(event.time)}</time><span><strong>{event.title}</strong><small>{event.active ? `진행 중 · ${event.meta}` : event.meta}</small></span>{event.completed ? <b className="done"><img src={homeScheduleDoneIcon} alt="완료" /></b> : event.active || event.assignment ? <b>›</b> : null}</button>
         {event.careItem && <button className="home-schedule-row-delete" aria-label="일정 삭제" onClick={() => deleteCareItem(event.careItem!)}>✕</button>}
       </div>)}
       {!homeEvents.length && <p className="empty-line">오늘 등록된 일정이 없어요</p>}

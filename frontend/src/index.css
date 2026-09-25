@@ -979,7 +979,10 @@ a, a:link, a:visited, a:active { color: inherit; text-decoration: inherit; }
 .exact-timeline .home-schedule-row small { color: var(--fc-brand-strong); font-size: 9px; }
 .exact-timeline .home-schedule-row.completed time,
 .exact-timeline .home-schedule-row.completed strong,
-.exact-timeline .home-schedule-row.completed small { color: rgba(26,24,28,.24); }
+.exact-timeline .home-schedule-row.completed small,
+.exact-timeline .home-schedule-row.elapsed time,
+.exact-timeline .home-schedule-row.elapsed strong,
+.exact-timeline .home-schedule-row.elapsed small { color: rgba(26,24,28,.24); }
 .exact-timeline .home-schedule-row b.done { display: grid; width: 16px; height: 17px; place-items: center; }
 .exact-timeline .home-schedule-row b.done img { display: block; width: 16px; height: 17px; object-fit: contain; }
 .home-now-list { display: grid; gap: 11px; }
