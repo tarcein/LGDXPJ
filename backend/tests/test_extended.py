@@ -673,9 +673,11 @@ class ExtendedFlowTest(unittest.TestCase):
             microsoft = self.client.post("/api/calendar-connections/microsoft/authorize").json()["authorization_url"]
             self.assertIn("accounts.google.com", google)
             self.assertIn("calendar.events.readonly", google)
+            self.assertIn("prompt=consent+select_account", google)
             self.assertIn("google%2Fcallback", google)
             self.assertIn("login.microsoftonline.com/common", microsoft)
             self.assertIn("Calendars.Read", microsoft)
+            self.assertIn("prompt=select_account", microsoft)
             self.assertIn("microsoft%2Fcallback", microsoft)
 
     def test_calendar_oauth_exposes_provider_error_without_credentials(self):

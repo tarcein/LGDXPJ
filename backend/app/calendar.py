@@ -103,13 +103,14 @@ def authorize(provider: str, request: Request, payload: CalendarAuthorizeRequest
         params = {
             "client_id": client_id, "redirect_uri": _redirect_uri(provider), "response_type": "code",
             "scope": "https://www.googleapis.com/auth/calendar.events.readonly",
-            "access_type": "offline", "prompt": "consent", "state": state,
+            "access_type": "offline", "prompt": "consent select_account", "state": state,
         }
     else:
         base = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
         params = {
             "client_id": client_id, "redirect_uri": _redirect_uri(provider), "response_type": "code",
-            "response_mode": "query", "scope": "openid profile offline_access Calendars.Read", "state": state,
+            "response_mode": "query", "scope": "openid profile offline_access Calendars.Read",
+            "prompt": "select_account", "state": state,
         }
     return {"authorization_url": base + "?" + urlencode(params)}
 
