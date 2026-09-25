@@ -5,8 +5,9 @@ const config: CapacitorConfig = {
   appName: 'ZIPPY',
   webDir: 'dist',
   server: {
-    // Local Android testing uses the LAN HTTP backend; production must use HTTPS.
-    androidScheme: 'http',
+    // Keep native origins secure on both platforms. API traffic uses the public HTTPS backend.
+    androidScheme: 'https',
+    iosScheme: 'capacitor',
   },
 };
 

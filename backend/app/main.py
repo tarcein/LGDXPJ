@@ -169,6 +169,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:4173", "http://127.0.0.1:4173",
         "http://localhost", "https://localhost", "capacitor://localhost",
         *_configured_origins,
     ],
@@ -398,7 +399,7 @@ class NotificationPreferenceUpdate(BaseModel):
 
 class PushTokenCreate(BaseModel):
     token: str = Field(min_length=20, max_length=4096)
-    platform: str = Field(default="ANDROID", pattern="^(ANDROID)$")
+    platform: str = Field(default="ANDROID", pattern="^(ANDROID|IOS)$")
 
 
 @app.get("/api/health")
@@ -794,48 +795,81 @@ def _schedule_datetime(value: str) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=ZoneInfo("Asia/Seoul"))
 
 
-def _same_place_continuation(previous: dict, current: dict) -> bool:
-    previous_place = (previous.get("location_name") or "").strip().casefold()
-    current_place = (current.get("location_name") or "").strip().casefold()
-    if not previous_place or previous_place != current_place:
-        return False
-    if not previous.get("merge_same_location") or not current.get("merge_same_location"):
-        return False
-    if not previous.get("has_end_time") or not current.get("has_end_time"):
-        return False
-    previous_end = _schedule_datetime(previous["ends_at"])
-    current_start = _schedule_datetime(current["starts_at"])
-    local_zone = ZoneInfo("Asia/Seoul")
-    if previous_end.astimezone(local_zone).date() != current_start.astimezone(local_zone).date():
-        return False
-    gap = current_start - previous_end
-    return timedelta(0) <= gap <= timedelta(minutes=30)
+def _merged_schedule_boundaries(schedules: list[dict]) -> tuple[set[str], set[str]]:
+    """Find internal care boundaries in same-place family schedule blocks.
 
-
-def _reconcile_child_schedule_care_items(db, child_id: str) -> None:
-    """Keep only meaningful care boundaries for a child's schedule chain.
-
-    Consecutive activities at the same named place (up to a 30 minute gap) keep
-    the first arrival and final departure. Internal pickup/drop-off items and
-    their now-obsolete assignments are removed.
+    Same-child activities at the same normalized location always form one block
+    on the same day. Different children's activities form a block when they
+    overlap or are within 60 minutes. Only the earliest arrival and latest
+    departure remain.
     """
+    local_zone = ZoneInfo("Asia/Seoul")
+    by_place_and_day: dict[tuple[str, date], list[dict]] = {}
+    for schedule in schedules:
+        place = (schedule.get("location_name") or "").strip().casefold()
+        if not place:
+            continue
+        starts_at = _schedule_datetime(schedule["starts_at"])
+        key = (place, starts_at.astimezone(local_zone).date())
+        by_place_and_day.setdefault(key, []).append(schedule)
+
+    suppressed_starts: set[str] = set()
+    suppressed_ends: set[str] = set()
+    maximum_gap = timedelta(minutes=60)
+
+    for location_schedules in by_place_and_day.values():
+        eligible = [schedule for schedule in location_schedules
+                    if bool(schedule.get("merge_same_location")) and bool(schedule.get("has_end_time"))]
+        visited: set[str] = set()
+        for schedule in eligible:
+            if schedule["id"] in visited:
+                continue
+            component: list[dict] = []
+            stack = [schedule]
+            while stack:
+                current = stack.pop()
+                if current["id"] in visited:
+                    continue
+                visited.add(current["id"])
+                component.append(current)
+                current_start = _schedule_datetime(current["starts_at"])
+                current_end = _schedule_datetime(current["ends_at"])
+                for candidate in eligible:
+                    if candidate["id"] in visited:
+                        continue
+                    candidate_start = _schedule_datetime(candidate["starts_at"])
+                    candidate_end = _schedule_datetime(candidate["ends_at"])
+                    separation = max(current_start - candidate_end, candidate_start - current_end, timedelta(0))
+                    if candidate["child_id"] == current["child_id"] or separation <= maximum_gap:
+                        stack.append(candidate)
+            if len(component) > 1:
+                first = min(component, key=lambda item: (_schedule_datetime(item["starts_at"]), _schedule_datetime(item["ends_at"])))
+                last = max(component, key=lambda item: (_schedule_datetime(item["ends_at"]), _schedule_datetime(item["starts_at"])))
+                suppressed_starts.update(item["id"] for item in component if item["id"] != first["id"])
+                suppressed_ends.update(item["id"] for item in component if item["id"] != last["id"])
+
+    return suppressed_starts, suppressed_ends
+
+
+def _reconcile_family_schedule_care_items(db) -> None:
+    """Keep only meaningful care boundaries across the whole family schedule."""
     schedules = rows(
         db,
         """SELECT * FROM child_schedule
-             WHERE family_id = ? AND child_id = ? ORDER BY starts_at, ends_at""",
-        (family_id(), child_id),
+             WHERE family_id = ? ORDER BY starts_at, ends_at""",
+        (family_id(),),
     )
-    for index, schedule in enumerate(schedules):
-        joins_previous = index > 0 and _same_place_continuation(schedules[index - 1], schedule)
-        joins_next = index + 1 < len(schedules) and _same_place_continuation(schedule, schedules[index + 1])
+    suppressed_starts, suppressed_ends = _merged_schedule_boundaries(schedules)
+    for schedule in schedules:
+        child_id = schedule["child_id"]
         has_end_time = bool(schedule.get("has_end_time"))
         desired: dict[str, tuple[str, str]] = {}
-        if not joins_previous and bool(schedule.get("start_assignment_required", 1)):
+        if schedule["id"] not in suppressed_starts and bool(schedule.get("start_assignment_required", 1)):
             desired["START"] = (
                 f"{schedule['title']} 등원" if has_end_time else schedule["title"],
                 schedule["starts_at"],
             )
-        if has_end_time and not joins_next and bool(schedule.get("end_assignment_required", 1)):
+        if has_end_time and schedule["id"] not in suppressed_ends and bool(schedule.get("end_assignment_required", 1)):
             desired["END"] = (f"{schedule['title']} 하원", schedule["ends_at"])
 
         existing = rows(
@@ -1013,7 +1047,7 @@ def create_child_schedule(payload: ChildScheduleCreate):
             )
             created.append(one(db, "SELECT * FROM child_schedule WHERE id = ?", (schedule_id,)))
 
-        _reconcile_child_schedule_care_items(db, payload.child_id)
+        _reconcile_family_schedule_care_items(db)
         created_ids = [schedule["id"] for schedule in created]
         placeholders = ",".join("?" for _ in created_ids)
         care_item_ids = [item["id"] for item in rows(
@@ -1072,7 +1106,6 @@ def update_child_schedule(schedule_id: str, payload: ChildScheduleUpdate):
         duration = normalized_end - payload.starts_at
         care_item_id = None
         all_suggestions = []
-        affected_children = {schedule["child_id"], payload.child_id}
         responsibility_fields = {
             "start_assignment_required", "end_assignment_required",
             "start_assignee_id", "start_external_assignee_name",
@@ -1122,8 +1155,7 @@ def update_child_schedule(schedule_id: str, payload: ChildScheduleUpdate):
             )
             target_ids.append(target["id"])
             all_suggestions = rank_members(db, family_id(), starts_at, target_child_id=payload.child_id)
-        for affected_child in affected_children:
-            _reconcile_child_schedule_care_items(db, affected_child)
+        _reconcile_family_schedule_care_items(db)
         assigned_count = 0
         assignment_requests: dict[str, tuple[int, str]] = {}
         if responsibilities_supplied:
@@ -1188,7 +1220,6 @@ def delete_child_schedule(schedule_id: str, delete_scope: str = "SINGLE"):
             targets = rows(db, """SELECT * FROM child_schedule
                 WHERE family_id = ? AND recurrence_id = ? AND starts_at >= ? ORDER BY starts_at""",
                 (family_id(), schedule["recurrence_id"], schedule["starts_at"]))
-        affected_children = {target["child_id"] for target in targets}
         care_items_by_schedule = {
             target["id"]: rows(db, "SELECT id FROM care_item WHERE child_schedule_id = ? AND family_id = ?",
                                (target["id"], family_id()))
@@ -1198,8 +1229,7 @@ def delete_child_schedule(schedule_id: str, delete_scope: str = "SINGLE"):
             for care_item in care_items_by_schedule[target["id"]]:
                 _delete_care_item_cascade(db, care_item["id"])
             db.execute("DELETE FROM child_schedule WHERE id = ? AND family_id = ?", (target["id"], family_id()))
-        for affected_child in affected_children:
-            _reconcile_child_schedule_care_items(db, affected_child)
+        _reconcile_family_schedule_care_items(db)
         return {"deleted": True, "schedule_id": schedule_id,
                 "deleted_count": len(targets),
                 "recurring_instance_only": bool(schedule.get("recurrence_id")) and delete_scope == "SINGLE"}
@@ -1594,7 +1624,9 @@ def complete_assignment_record(db, assignment_id: str, note_text: str, has_photo
     next_assignee_id = next_assignment["assignee_id"] if next_assignment else None
     recipient = next_assignee_id if next_assignee_id != assignment["assignee_id"] else None
     handoff_id = None
-    if recipient:
+    # Routine completion without a note stays in completion history. Create an
+    # inbox handoff only when there is a real special note for the next carer.
+    if recipient and note:
         handoff_id = str(uuid4())
         details = f"{item['title']} 완료"
         if note:

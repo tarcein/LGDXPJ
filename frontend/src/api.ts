@@ -90,6 +90,7 @@ export interface EligibilityCriteria {
 }
 
 const tokenKey = 'family-care-access-token'
+const productionApiBase = 'https://zippy-api.dx6project.site'
 // ponytail: localStorage keeps the prototype signed in; replace with an HttpOnly cookie when real account auth lands.
 const legacyToken = sessionStorage.getItem(tokenKey)
 if (legacyToken && !localStorage.getItem(tokenKey)) localStorage.setItem(tokenKey, legacyToken)
@@ -109,9 +110,10 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   const token = localStorage.getItem(tokenKey)
   if (token) headers.set('Authorization', `Bearer ${token}`)
+  const configuredApiBase = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
   const apiBase = window.location.port === '5173'
     ? ''
-    : (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+    : configuredApiBase || productionApiBase
   const response = await fetch(`${apiBase}/api${path}`, {
     ...init,
     headers,

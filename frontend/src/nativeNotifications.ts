@@ -12,27 +12,31 @@ const LiveCareStatus = registerPlugin<{
 }>('LiveCareStatus')
 export type NativeNoticeAction = { actionType?: string | null; actionId?: string | null }
 
+export const isNativeApp = () => Capacitor.isNativePlatform()
 export const isAndroidApp = () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'
+export const isIosApp = () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios'
 
 export async function setupNativeNotifications(onAction?: (action: NativeNoticeAction) => void) {
-  if (!isAndroidApp()) return false
+  if (!isNativeApp()) return false
 
-  const localPermission = await LocalNotifications.requestPermissions() 
+  const localPermission = await LocalNotifications.requestPermissions()
   if (localPermission.display === 'granted') {
-    await LocalNotifications.createChannel({
-      id: channelId,
-      name: '가족 돌봄 실시간 알림',
-      description: '이동·인수인계 상태를 잠금화면에 표시합니다.',
-      importance: 4,
-      visibility: 1,
-    })
-    await LocalNotifications.createChannel({
-      id: liveStatusChannelId,
-      name: '돌봄 현황판',
-      description: '현재 돌봄 진행 상태를 표시합니다.',
-      importance: 2,
-      visibility: 1,
-    })
+    if (isAndroidApp()) {
+      await LocalNotifications.createChannel({
+        id: channelId,
+        name: '가족 돌봄 실시간 알림',
+        description: '이동·인수인계 상태를 잠금화면에 표시합니다.',
+        importance: 4,
+        visibility: 1,
+      })
+      await LocalNotifications.createChannel({
+        id: liveStatusChannelId,
+        name: '돌봄 현황판',
+        description: '현재 돌봄 진행 상태를 표시합니다.',
+        importance: 2,
+        visibility: 1,
+      })
+    }
     if (onAction) {
       await LocalNotifications.addListener('localNotificationActionPerformed', event => {
         const notification = event.notification as typeof event.notification & { data?: { extra?: unknown } }
@@ -93,7 +97,8 @@ export async function syncPushToken() {
   const token = localStorage.getItem(pushTokenKey)
   if (!token || !hasFamilyToken()) return false
   try {
-    await api('/push-tokens', { method: 'POST', body: JSON.stringify({ token, platform: 'ANDROID' }) })
+    const platform = isIosApp() ? 'IOS' : 'ANDROID'
+    await api('/push-tokens', { method: 'POST', body: JSON.stringify({ token, platform }) })
     return true
   } catch {
     return false
@@ -101,8 +106,9 @@ export async function syncPushToken() {
 }
 
 export async function showNativeNotice(id: string, title: string, body: string, actionType?: string | null, actionId?: string | null) {
-  if (!isAndroidApp()) return false
-  await LocalNotifications.schedule({ notifications: [{ id: Math.abs(hash(id)), title, body, channelId, ongoing: true, autoCancel: false, extra: { actionType, actionId } }] })
+  if (!isNativeApp()) return false
+  const androidOptions = isAndroidApp() ? { channelId, ongoing: true, autoCancel: false } : {}
+  await LocalNotifications.schedule({ notifications: [{ id: Math.abs(hash(id)), title, body, ...androidOptions, extra: { actionType, actionId } }] })
   return true
 }
 

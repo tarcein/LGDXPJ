@@ -1,4 +1,4 @@
-const CACHE = 'zippy-pwa-v1'
+const CACHE = 'zippy-pwa-v2'
 const SHELL = ['/', '/manifest.webmanifest', '/app-icon.png']
 
 self.addEventListener('install', event => {
@@ -7,7 +7,10 @@ self.addEventListener('install', event => {
 })
 
 self.addEventListener('activate', event => {
-  event.waitUntil(self.clients.claim())
+  event.waitUntil(Promise.all([
+    caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))),
+    self.clients.claim(),
+  ]))
 })
 
 self.addEventListener('fetch', event => {
@@ -17,7 +20,12 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET' || url.origin !== self.location.origin) return
 
   if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).catch(() => caches.match('/')))
+    event.respondWith(
+      fetch(request).then(response => {
+        if (response.ok) caches.open(CACHE).then(cache => cache.put('/', response.clone()))
+        return response
+      }).catch(() => caches.match('/') ),
+    )
     return
   }
 

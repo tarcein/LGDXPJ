@@ -367,6 +367,46 @@ class ExtendedFlowTest(unittest.TestCase):
         saved = [item for item in snapshot["child_schedules"] if item["id"] in schedule_ids]
         self.assertTrue(all(item["location_name"] == "한빛초등학교" for item in saved))
 
+    def test_same_location_schedules_merge_across_children_with_a_short_gap(self):
+        first = self.client.post("/api/child-schedules", json={
+            "child_id": "jiu", "title": "수영", "category": "ACTIVITY",
+            "starts_at": "2026-09-28T09:00:00+09:00", "ends_at": "2026-09-28T12:36:00+09:00",
+            "location_name": "한강",
+        }).json()
+        second = self.client.post("/api/child-schedules", json={
+            "child_id": "hayun", "title": "피크닉", "category": "ACTIVITY",
+            "starts_at": "2026-09-28T13:08:00+09:00", "ends_at": "2026-09-28T15:00:00+09:00",
+            "location_name": "한강", "merge_same_location": True,
+        }).json()
+
+        snapshot = self.client.get("/api/bootstrap").json()
+        schedule_ids = {first["id"], second["id"]}
+        boundaries = [item for item in snapshot["items"] if item.get("child_schedule_id") in schedule_ids]
+        self.assertEqual(
+            [(item["child_id"], item["boundary_type"], item["starts_at"][11:16]) for item in boundaries],
+            [("jiu", "START", "09:00"), ("hayun", "END", "15:00")],
+        )
+
+    def test_same_child_same_location_schedules_merge_without_a_time_limit(self):
+        first = self.client.post("/api/child-schedules", json={
+            "child_id": "jiu", "title": "오전 독서", "category": "ACTIVITY",
+            "starts_at": "2026-09-28T09:00:00+09:00", "ends_at": "2026-09-28T10:00:00+09:00",
+            "location_name": "도서관",
+        }).json()
+        second = self.client.post("/api/child-schedules", json={
+            "child_id": "jiu", "title": "저녁 독서", "category": "ACTIVITY",
+            "starts_at": "2026-09-28T18:00:00+09:00", "ends_at": "2026-09-28T19:00:00+09:00",
+            "location_name": "도서관", "merge_same_location": True,
+        }).json()
+
+        snapshot = self.client.get("/api/bootstrap").json()
+        schedule_ids = {first["id"], second["id"]}
+        boundaries = [item for item in snapshot["items"] if item.get("child_schedule_id") in schedule_ids]
+        self.assertEqual(
+            [(item["boundary_type"], item["starts_at"][11:16]) for item in boundaries],
+            [("START", "09:00"), ("END", "19:00")],
+        )
+
     def test_same_location_schedules_can_keep_separate_pickup_boundaries(self):
         first = self.client.post("/api/child-schedules", json={
             "child_id": "hayun", "title": "유치원", "category": "SCHOOL",
@@ -884,6 +924,14 @@ class ExtendedFlowTest(unittest.TestCase):
             self.assertEqual(callback.status_code, 307)
             self.assertEqual(callback.headers["location"], "http://127.0.0.1:5173/?calendar=google-connected")
 
+    def test_native_push_token_accepts_ios(self):
+        token = "ios-device-token-1234567890"
+        response = self.client.post("/api/push-tokens", json={"token": token, "platform": "IOS"})
+        self.assertEqual(response.status_code, 200)
+        with database() as db:
+            saved = db.execute("SELECT platform FROM push_device_token WHERE token = ?", (token,)).fetchone()
+        self.assertEqual(saved["platform"], "IOS")
+
     def test_free_voice_chat_and_handoff_note(self):
         with patch("app.extended.ai.transcribe_audio", return_value="오늘 하원 누가 맡아?"), patch("app.extended.ai.answer", return_value=("할머니가 담당입니다.", 23)) as answer:
             voice = self.client.post("/api/assistant/voice", files={"file": ("voice.webm", b"demo-voice", "audio/webm")})
@@ -963,6 +1011,7 @@ class ExtendedFlowTest(unittest.TestCase):
             ("학교 하원", "2026-09-20T15:00:00+09:00", "2026-09-20T15:30:00+09:00"),
             ("태권도 이동", "2026-09-20T16:00:00+09:00", "2026-09-20T16:30:00+09:00"),
             ("저녁 돌봄", "2026-09-20T17:00:00+09:00", "2026-09-20T17:30:00+09:00"),
+            ("귀가", "2026-09-20T18:00:00+09:00", "2026-09-20T18:30:00+09:00"),
         ]:
             created = self.client.post("/api/child-schedules", headers=headers(owner), json={
                 "child_id": child["id"], "title": title, "category": "ACADEMY",
@@ -979,9 +1028,13 @@ class ExtendedFlowTest(unittest.TestCase):
         third = self.client.post("/api/assignments", headers=headers(owner), json={
             "item_id": item_ids[2], "assignee_id": dad["member_id"],
         }).json()
+        fourth = self.client.post("/api/assignments", headers=headers(owner), json={
+            "item_id": item_ids[3], "assignee_id": owner["member_id"],
+        }).json()
         self.client.post(f"/api/assignments/{first['id']}/respond", headers=headers(grandma), json={"decision": "ACCEPTED"})
         self.client.post(f"/api/assignments/{second['id']}/respond", headers=headers(grandma), json={"decision": "ACCEPTED"})
         self.client.post(f"/api/assignments/{third['id']}/respond", headers=headers(dad), json={"decision": "ACCEPTED"})
+        self.client.post(f"/api/assignments/{fourth['id']}/respond", headers=headers(owner), json={"decision": "ACCEPTED"})
 
         owner_notices_before = len(self.client.get("/api/bootstrap", headers=headers(owner)).json()["notifications"])
         self.assertEqual(self.client.post(
@@ -1004,6 +1057,13 @@ class ExtendedFlowTest(unittest.TestCase):
                        if item["assignment_id"] == second["id"] and item["to_member_id"] == dad["member_id"])
         self.assertIn("무릎에 작은 상처", handoff["special_note"])
         self.assertIn("완료 사진 있음", handoff["briefing"])
+
+        no_note_completion = self.client.post(
+            f"/api/assignments/{third['id']}/complete-handoff", headers=headers(dad), data={"note": ""},
+        )
+        self.assertEqual(no_note_completion.status_code, 200)
+        owner_after_no_note = self.client.get("/api/bootstrap", headers=headers(owner)).json()
+        self.assertFalse(any(item["assignment_id"] == third["id"] for item in owner_after_no_note["handoffs"]))
 
         direct = self.client.post("/api/album/photos", headers=headers(owner),
                                   files={"file": ("family.png", png, "image/png")}, data={"caption": "주말 나들이"})

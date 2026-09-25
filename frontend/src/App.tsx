@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Browser } from '@capacitor/browser'
 import { Capacitor } from '@capacitor/core'
-import { api, send, upload, setFamilyToken, hasFamilyToken, trackPerformanceEvent, ApiError, formatDate, formatTime, type Assignment, type Bootstrap, type CareItem, type Child, type Screen, type Suggestion, type FamilyMe, type FamilySession, type ChatAnswer, type EmergencyRequest, type CalendarConnection, type Notice, type AlbumPhoto, type Benefit, type BenefitLocation, type CareInstitution, type EligibilityCriteria, type BillingConfig, type BillingOrder, type ChatCard, type DeviceAlertsResponse, type DeviceAlertTestResult } from './api'
+import { api, send, upload, setFamilyToken, hasFamilyToken, trackPerformanceEvent, ApiError, formatDate, formatTime, type Assignment, type Bootstrap, type CareItem, type Child, type Screen, type Suggestion, type FamilyMe, type FamilySession, type ChatAnswer, type EmergencyRequest, type CalendarConnection, type Notice, type Handoff, type AlbumPhoto, type Benefit, type BenefitLocation, type CareInstitution, type EligibilityCriteria, type BillingConfig, type BillingOrder, type ChatCard, type DeviceAlertsResponse, type DeviceAlertTestResult } from './api'
 import { speechMessageFor } from './deviceAlertShared'
 import voiceIcon from '../../asset/assistant-main-logo-centered.png'
 import googleIcon from '../../asset/google.png'
@@ -1082,16 +1082,73 @@ function App() {
   const memberIsOnline = (targetMemberId: string) => targetMemberId === me?.member.id || !!boot?.members.find(item => item.id === targetMemberId)?.is_online
   const member = (id: string) => boot?.members.find(m => m.id === id)?.name ?? '가족'
   const child = (id: string | null) => boot?.children.find(c => c.id === id)?.name ?? '가족'
+  const hiddenMergedCareItemIds = useMemo(() => {
+    const schedules = boot?.child_schedules ?? []
+    const groups = new Map<string, typeof schedules>()
+    schedules.forEach(schedule => {
+      const location = (schedule.location_name ?? '').trim().toLocaleLowerCase()
+      if (!location) return
+      const day = new Date(schedule.starts_at).toLocaleDateString('sv-SE')
+      const key = `${location}|${day}`
+      groups.set(key, [...(groups.get(key) ?? []), schedule])
+    })
+
+    const hiddenStarts = new Set<string>()
+    const hiddenEnds = new Set<string>()
+    groups.forEach(group => {
+      const ordered = [...group].sort((left, right) => new Date(left.starts_at).getTime() - new Date(right.starts_at).getTime())
+      const eligible = ordered.filter(schedule => schedule.merge_same_location !== false && schedule.merge_same_location !== 0 && !!schedule.has_end_time)
+      const visited = new Set<string>()
+      eligible.forEach(schedule => {
+        if (visited.has(schedule.id)) return
+        const component: typeof schedules = []
+        const stack = [schedule]
+        while (stack.length) {
+          const current = stack.pop()!
+          if (visited.has(current.id)) continue
+          visited.add(current.id)
+          component.push(current)
+          const currentStart = new Date(current.starts_at).getTime()
+          const currentEnd = new Date(current.ends_at).getTime()
+          eligible.forEach(candidate => {
+            if (visited.has(candidate.id)) return
+            const candidateStart = new Date(candidate.starts_at).getTime()
+            const candidateEnd = new Date(candidate.ends_at).getTime()
+            const separation = Math.max(currentStart - candidateEnd, candidateStart - currentEnd, 0)
+            if (candidate.child_id === current.child_id || separation <= 60 * 60_000) stack.push(candidate)
+          })
+        }
+        if (component.length > 1) {
+          const first = component.reduce((earliest, item) => new Date(item.starts_at).getTime() < new Date(earliest.starts_at).getTime() ? item : earliest)
+          const last = component.reduce((latest, item) => new Date(item.ends_at).getTime() > new Date(latest.ends_at).getTime() ? item : latest)
+          component.forEach(item => {
+            if (item.id !== first.id) hiddenStarts.add(item.id)
+            if (item.id !== last.id) hiddenEnds.add(item.id)
+          })
+        }
+      })
+    })
+
+    const scheduleById = new Map(schedules.map(schedule => [schedule.id, schedule]))
+    return new Set((boot?.items ?? []).filter(item => {
+      if (!item.child_schedule_id) return false
+      const schedule = scheduleById.get(item.child_schedule_id)
+      if (!schedule) return false
+      const boundary = item.boundary_type ?? (schedule.has_end_time && item.starts_at === schedule.ends_at ? 'END' : 'START')
+      return boundary === 'START' ? hiddenStarts.has(schedule.id) : hiddenEnds.has(schedule.id)
+    }).map(item => item.id))
+  }, [boot])
+  const visibleCareItems = useMemo(() => boot?.items.filter(item => !hiddenMergedCareItemIds.has(item.id)) ?? [], [boot, hiddenMergedCareItemIds])
   // boot.items/assignments keep growing as a family uses the app, and these lists feed
   // O(n) lookups (itemFor) used all over the render — memoized so typing in an unrelated
   // field elsewhere doesn't re-filter/re-scan them on every keystroke.
-  const items = useMemo(() => boot?.items.filter(i => filter === 'all' || i.child_id === filter) ?? [], [boot, filter])
+  const items = useMemo(() => visibleCareItems.filter(i => filter === 'all' || i.child_id === filter), [visibleCareItems, filter])
   const pending = items.filter(i => i.status === 'NEEDS_REVIEW')
-  const allPending = boot?.items.filter(i => i.status === 'NEEDS_REVIEW') ?? []
-  const assignments = useMemo(() => boot?.assignments.filter(a => !['CANCELED', 'REJECTED'].includes(a.status)) ?? [], [boot])
+  const allPending = visibleCareItems.filter(i => i.status === 'NEEDS_REVIEW')
+  const assignments = useMemo(() => boot?.assignments.filter(a => !['CANCELED', 'REJECTED'].includes(a.status) && !hiddenMergedCareItemIds.has(a.item_id)) ?? [], [boot, hiddenMergedCareItemIds])
   const careViewerId = me?.authenticated ? me.member.id : viewer
   const viewerAssignments = useMemo(() => assignments.filter(a => a.assignee_id === careViewerId), [assignments, careViewerId])
-  const itemFor = (a: Assignment | undefined) => a ? boot?.items.find(i => i.id === a.item_id) : undefined
+  const itemFor = (a: Assignment | undefined) => a ? visibleCareItems.find(i => i.id === a.item_id) : undefined
   const activeAssignmentForItem = (careItemId: string) => assignments.find(a => a.item_id === careItemId && ['ACCEPTED', 'CANDIDATE_ACCEPTED', 'PROPOSED', 'COMPLETED'].includes(a.status))
   const isLiveAssignment = (assignment?: Assignment) => {
     if (assignment?.status !== 'ACCEPTED') return false
@@ -1107,11 +1164,11 @@ function App() {
   const caregiverForCareItem = (careItemId: string) => {
     const assignment = activeAssignmentForItem(careItemId)
     if (assignment) return { name: member(assignment.assignee_id), status: assignment.status }
-    const externalName = boot?.items.find(item => item.id === careItemId)?.external_assignee_name?.trim()
+    const externalName = visibleCareItems.find(item => item.id === careItemId)?.external_assignee_name?.trim()
     return externalName ? { name: externalName, status: 'EXTERNAL' } : null
   }
   const caregiverStatusLabel = (status: string) => status === 'EXTERNAL' ? '외부 담당' : status === 'COMPLETED' ? '완료' : status === 'ACCEPTED' ? '담당 확정' : status === 'PROPOSED' ? '수락 확인 중' : status === 'CANDIDATE_ACCEPTED' ? '최종 확인 중' : status === 'RECONFIRMATION_REQUIRED' ? '재배정 필요' : '요청 중'
-  const activeItem = boot?.items.find(i => i.id === itemId) ?? null
+  const activeItem = visibleCareItems.find(i => i.id === itemId) ?? null
   const activeAssignment = boot?.assignments.find(a => a.id === assignmentId) ?? null
   const unread = boot?.notifications.filter(n => !n.is_read).length ?? 0
   const notificationMemberId = me?.member.id ?? viewer
@@ -1121,9 +1178,9 @@ function App() {
   useEffect(() => {
     if (!boot || !me?.authenticated) return
     const now = Date.now()
-    const candidates = boot.assignments
+    const candidates = assignments
       .filter(item => !['COMPLETED', 'CANCELED', 'CANCELLED', 'REJECTED'].includes(item.status))
-      .map(assignment => ({ assignment, item: boot.items.find(item => item.id === assignment.item_id) }))
+      .map(assignment => ({ assignment, item: visibleCareItems.find(item => item.id === assignment.item_id) }))
       .filter(candidate => candidate.item)
       .sort((left, right) => {
         const statusRank = (status: string) => status === 'ACCEPTED' ? 0 : 1
@@ -1138,7 +1195,7 @@ function App() {
       void clearLiveCareStatus()
       return
     }
-    const careItem = boot.items.find(item => item.id === active.item_id)
+    const careItem = visibleCareItems.find(item => item.id === active.item_id)
     const child = boot.children.find(item => item.id === careItem?.child_id)
     const caregiver = boot.members.find(item => item.id === active.assignee_id)
     const schedule = boot.child_schedules.find(item => item.id === careItem?.child_schedule_id)
@@ -1220,15 +1277,15 @@ function App() {
   const calendarsReady = calendarConnections.length === 2 && calendarConnections.every(connection => connection.configured)
   const connectedCalendarCount = calendarConnections.filter(connection => connection.connected).length
   const todayKey = dateKey(new Date())
-  const todayCare = boot?.items.filter(i => !i.child_schedule_id && i.starts_at && dateKey(i.starts_at) === todayKey && i.item_type !== 'SUPPLY' && i.item_type !== 'HOMEWORK') ?? []
+  const todayCare = visibleCareItems.filter(i => !i.child_schedule_id && i.starts_at && dateKey(i.starts_at) === todayKey && i.item_type !== 'SUPPLY' && i.item_type !== 'HOMEWORK')
   const todayChildSchedules = boot?.child_schedules.filter(s => dateKey(s.starts_at) === todayKey) ?? []
   const dueDateOf = (item: CareItem) => {
     if (item.starts_at) return dateKey(item.starts_at)
     const nextDay = new Date(item.created_at); nextDay.setDate(nextDay.getDate() + 1)
     return dateKey(nextDay)
   }
-  const activeSupplies = boot?.items.filter(i => i.item_type === 'SUPPLY' && i.status !== 'DONE') ?? []
-  const allSupplies = boot?.items.filter(i => i.item_type === 'SUPPLY') ?? []
+  const activeSupplies = visibleCareItems.filter(i => i.item_type === 'SUPPLY' && i.status !== 'DONE')
+  const allSupplies = visibleCareItems.filter(i => i.item_type === 'SUPPLY')
   const supplyWindowEnd = new Date(); supplyWindowEnd.setDate(supplyWindowEnd.getDate() + 6)
   const weekSupplies = activeSupplies.filter(item => {
     const due = dueDateOf(item)
@@ -1242,8 +1299,8 @@ function App() {
     ;(groups[dueDateOf(item)] ??= []).push(item)
     return groups
   }, {})).sort(([left], [right]) => left.localeCompare(right))
-  const activeHomework = boot?.items.filter(i => i.item_type === 'HOMEWORK' && i.status !== 'DONE') ?? []
-  const allHomework = boot?.items.filter(i => i.item_type === 'HOMEWORK') ?? []
+  const activeHomework = visibleCareItems.filter(i => i.item_type === 'HOMEWORK' && i.status !== 'DONE')
+  const allHomework = visibleCareItems.filter(i => i.item_type === 'HOMEWORK')
   const weekHomework = activeHomework.filter(item => {
     const due = dueDateOf(item)
     return due >= todayKey && due <= dateKey(supplyWindowEnd)
@@ -1258,7 +1315,16 @@ function App() {
   // shown on the dedicated 준비물/숙제 확인 screens.
   const homeSupplyAlerts = weekSupplies.filter(item => dueDateOf(item) === todayKey || dueDateOf(item) === tomorrowKey)
   const homeHomeworkAlerts = weekHomework.filter(item => dueDateOf(item) === todayKey)
-  const pendingHandoffs = boot?.handoffs.filter(h => h.to_member_id === careViewerId && h.status === 'PENDING') ?? []
+  const pendingHandoffs = boot?.handoffs.filter(h => h.to_member_id === careViewerId && h.status === 'PENDING' && h.special_note?.trim()) ?? []
+  const handoffSummary = (handoff: Handoff) => {
+    const assignment = assignments.find(item => item.id === handoff.assignment_id)
+    const careItem = assignment ? itemFor(assignment) : undefined
+    return {
+      title: careItem?.title ?? '돌봄 인수인계',
+      time: careItem?.starts_at ? formatTime(careItem.starts_at) : '',
+      note: handoff.special_note?.trim() ?? '',
+    }
+  }
   // "오늘의 배정" / "맡은 일" counts must reflect actual today's duties, not every
   // still-active assignment ever created — otherwise stale items pile the count up forever.
   // Chained off the memoized assignments/viewerAssignments above so an unrelated
@@ -1282,10 +1348,10 @@ function App() {
   }
   const careRouteSteps = [
     ...(boot?.child_schedules ?? []).filter(schedule => schedule.child_id === careRouteChildId && dateKey(schedule.starts_at) === careRouteDate).map(schedule => {
-      const careItem = boot?.items.find(item => item.child_schedule_id === schedule.id)
+      const careItem = visibleCareItems.find(item => item.child_schedule_id === schedule.id)
       return { id: `schedule-${schedule.id}`, label: schedule.title, startsAt: schedule.starts_at, status: routeStatus(careItem) }
     }),
-    ...(boot?.items ?? []).filter(item => !item.child_schedule_id && item.child_id === careRouteChildId && item.starts_at && dateKey(item.starts_at) === careRouteDate && item.item_type !== 'SUPPLY').map(item => ({
+    ...visibleCareItems.filter(item => !item.child_schedule_id && item.child_id === careRouteChildId && item.starts_at && dateKey(item.starts_at) === careRouteDate && item.item_type !== 'SUPPLY').map(item => ({
       id: `care-${item.id}`, label: item.title, startsAt: item.starts_at!, status: routeStatus(item),
     })),
   ].sort((left, right) => left.startsAt.localeCompare(right.startsAt))
@@ -1295,7 +1361,7 @@ function App() {
   const homeEventRows = [
     ...todayCare.map(item => { const assignment = activeAssignmentForItem(item.id); const assignedName = assignment ? member(assignment.assignee_id) : item.external_assignee_name?.trim(); return { id: `care-${item.id}`, time: item.starts_at!, title: item.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: item.status === 'DONE' || assignment?.status === 'COMPLETED', unassigned: !assignment && !assignedName, careItem: item, assignment } }),
     ...todayChildSchedules.flatMap(item => {
-      const careItems = boot?.items.filter(candidate => candidate.child_schedule_id === item.id) ?? []
+      const careItems = visibleCareItems.filter(candidate => candidate.child_schedule_id === item.id)
       if (!careItems.length) return [{ id: `child-${item.id}`, time: item.starts_at, title: item.title, meta: child(item.child_id), completed: false, unassigned: false, careItem: undefined as CareItem | undefined, assignment: undefined as Assignment | undefined }]
       return careItems.map(careItem => {
         const assignment = activeAssignmentForItem(careItem.id)
@@ -1334,7 +1400,7 @@ function App() {
   // typing in an unrelated field (e.g. the registration form open on top of this
   // same screen) doesn't re-run that work on every keystroke.
   const filteredChildSchedules = useMemo(() => boot?.child_schedules.filter(s => scheduleScope === 'all' || s.child_id === scheduleScope) ?? [], [boot, scheduleScope])
-  const filteredCareSchedules = useMemo(() => boot?.items.filter(i => !i.child_schedule_id && i.starts_at && ['SCHEDULE', 'CHANGE', 'TODO'].includes(i.item_type) && (scheduleScope === 'all' || i.child_id === scheduleScope)) ?? [], [boot, scheduleScope])
+  const filteredCareSchedules = useMemo(() => visibleCareItems.filter(i => !i.child_schedule_id && i.starts_at && ['SCHEDULE', 'CHANGE', 'TODO'].includes(i.item_type) && (scheduleScope === 'all' || i.child_id === scheduleScope)), [visibleCareItems, scheduleScope])
   const calendarEventsFor = (key: string) => [
     ...(boot?.schedules ?? []).filter(s => dateKey(s.starts_at) === key && personalScheduleVisible(s.member_id)).map(s => ({ id: 'personal-' + s.id, title: s.title, color: caregiverColor(s.member_id), startsAt: s.starts_at, endsAt: s.ends_at, meta: `${member(s.member_id)} · ${s.kind === 'WORK' ? '업무 일정' : '개인 루틴'}` })),
     ...filteredChildSchedules.filter(s => dateKey(s.starts_at) === key).map(s => ({ id: 'child-' + s.id, title: s.title, color: childColor(s.child_id), startsAt: s.starts_at, endsAt: s.ends_at, meta: `${child(s.child_id)} · ${childScheduleLabel[s.category] ?? '아이 일정'}` })),
@@ -1558,7 +1624,7 @@ function App() {
       const required = schedule[`${prefix}_assignment_required` as 'start_assignment_required' | 'end_assignment_required']
       const storedAssignee = schedule[`${prefix}_assignee_id` as 'start_assignee_id' | 'end_assignee_id']
       const storedExternal = schedule[`${prefix}_external_assignee_name` as 'start_external_assignee_name' | 'end_external_assignee_name'] ?? ''
-      const careItem = boot?.items.find(item => item.child_schedule_id === schedule.id && (item.boundary_type ?? 'START') === boundary)
+      const careItem = visibleCareItems.find(item => item.child_schedule_id === schedule.id && (item.boundary_type ?? 'START') === boundary)
       const assignment = careItem ? activeAssignmentForItem(careItem.id) : undefined
       const externalName = storedExternal || careItem?.external_assignee_name || ''
       return { selection: required === false || required === 0 ? '__NONE__' : externalName ? '__EXTERNAL__' : storedAssignee || assignment?.assignee_id || '', externalName }
@@ -1600,11 +1666,16 @@ function App() {
       const proposedStart = new Date(`${scheduleDate}T${normalizeClock(scheduleStartTime)}`)
       const proposedEnd = new Date(`${scheduleDate}T${normalizeClock(scheduleEndTime)}`)
       const adjacent = boot?.child_schedules.find(item => {
-        if (item.child_id !== childScheduleChild || (item.location_name ?? '').trim().toLocaleLowerCase() !== childScheduleLocation.trim().toLocaleLowerCase()) return false
+        if ((item.location_name ?? '').trim().toLocaleLowerCase() !== childScheduleLocation.trim().toLocaleLowerCase()) return false
+        if (item.merge_same_location === false || item.merge_same_location === 0 || !item.has_end_time) return false
         const existingStart = new Date(item.starts_at); const existingEnd = new Date(item.ends_at)
-        const gapAfter = proposedStart.getTime() - existingEnd.getTime()
-        const gapBefore = existingStart.getTime() - proposedEnd.getTime()
-        return (gapAfter >= 0 && gapAfter <= 30 * 60_000) || (gapBefore >= 0 && gapBefore <= 30 * 60_000)
+        if (dateKey(existingStart) !== dateKey(proposedStart)) return false
+        const separation = Math.max(
+          proposedStart.getTime() - existingEnd.getTime(),
+          existingStart.getTime() - proposedEnd.getTime(),
+          0,
+        )
+        return item.child_id === childScheduleChild || separation <= 60 * 60_000
       })
       if (adjacent && !Number.isNaN(proposedStart.getTime()) && !Number.isNaN(proposedEnd.getTime())) {
         const first = new Date(Math.min(proposedStart.getTime(), new Date(adjacent.starts_at).getTime()))
@@ -1845,7 +1916,7 @@ function App() {
     if (completionPhoto) form.append('photo', completionPhoto)
     await upload('/assignments/' + activeAssignment.id + '/complete-handoff', form)
     setShowSheet(false); setNote(''); setCompletionPhoto(null); setCompletionPreview('')
-  }, '완료 기록과 인수인계를 가족에게 전했어요')
+  }, note.trim() ? '완료 기록과 인수인계를 가족에게 전했어요' : '완료 기록을 저장했어요')
 
   const updateChildPhoto = (childId: string, file: File) => {
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 8 * 1024 * 1024) { setError('8MB 이하 JPG, PNG, WebP 사진을 선택해주세요'); return }
@@ -2012,7 +2083,7 @@ function App() {
     <Section>오늘 일정</Section>
     <Card className="home-timeline exact-timeline">
       {homeEvents.map(event => <div key={event.id} className="home-schedule-row-wrap">
-        <button className={`home-schedule-row ${event.active ? 'current' : event.completed ? 'completed' : event.elapsed ? 'elapsed' : 'upcoming'}`} onClick={() => { if (event.assignment && !['ACCEPTED', 'COMPLETED'].includes(event.assignment.status)) { setAssignmentId(event.assignment.id); setViewer(event.assignment.assignee_id); go('assignmentDetail') } else if (event.unassigned && event.careItem) void openSuggestion(event.careItem); else go('schedule') }}><time>{formatTime(event.time)}</time><span><strong>{event.title}</strong><small>{event.active ? `진행 중 · ${event.meta}` : event.meta}</small></span>{event.completed ? <b className="done"><img src={homeScheduleDoneIcon} alt="완료" /></b> : event.active || event.assignment ? <b>›</b> : null}</button>
+        <button className={`home-schedule-row ${event.completed ? 'completed' : event.active ? 'current' : event.elapsed ? 'elapsed' : 'upcoming'}`} onClick={() => { if (event.assignment && !['ACCEPTED', 'COMPLETED'].includes(event.assignment.status)) { setAssignmentId(event.assignment.id); setViewer(event.assignment.assignee_id); go('assignmentDetail') } else if (event.unassigned && event.careItem) void openSuggestion(event.careItem); else go('schedule') }}><time>{formatTime(event.time)}</time><span><strong>{event.title}</strong><small>{event.active ? `진행 중 · ${event.meta}` : event.meta}</small></span>{event.completed ? <b className="done"><img src={homeScheduleDoneIcon} alt="완료" /></b> : event.active || event.assignment ? <b>›</b> : null}</button>
         {event.careItem && <button className="home-schedule-row-delete" aria-label="일정 삭제" onClick={() => deleteCareItem(event.careItem!)}>✕</button>}
       </div>)}
       {!homeEvents.length && <p className="empty-line">오늘 등록된 일정이 없어요</p>}
@@ -2020,7 +2091,7 @@ function App() {
     <Section>지금 해야 할 것</Section>
     <div className="home-now-list">
       {activeExceptions.slice(0, 1).map(exception => <button key={exception.id} className="attention" onClick={() => go('exception')}><i><img src={homeAttentionIcon} alt="" /></i><span><strong>지금 확인이 필요해요</strong><small>{exception.reason}</small></span><b>›</b></button>)}
-      {pendingHandoffs.slice(0, 1).map(handoff => <button key={handoff.id} onClick={() => go('tasks')}><i><img src={homeHandoffIcon} alt="" /></i><span><strong>인수인계 확인</strong><small>{member(handoff.from_member_id)} → {member(handoff.to_member_id)} · {handoff.briefing}</small></span><b>›</b></button>)}
+      {pendingHandoffs.slice(0, 1).map(handoff => { const summary = handoffSummary(handoff); return <button key={handoff.id} onClick={() => go('tasks')}><i><img src={homeHandoffIcon} alt="" /></i><span><strong>인수인계 확인</strong><small>{member(handoff.from_member_id)} → {member(handoff.to_member_id)}{summary.time ? ` · ${summary.time}` : ''} · {summary.note}</small></span><b>›</b></button> })}
       {homeSupplyAlerts.slice(0, 3).map(item => <button key={item.id} className="attention" onClick={() => go('supplies')}><i><img src={homeSupplyIcon} alt="" /></i><span><strong>{dueDateOf(item) === todayKey ? '오늘 준비물 확인' : '내일 준비물 확인'}</strong><small>{item.title} · {child(item.child_id)}{item.detail ? ` · ${item.detail}` : ''}</small></span><b>›</b></button>)}
       {homeHomeworkAlerts.slice(0, 3).map(item => <button key={item.id} className="attention" onClick={() => go('homework')}><i style={{ fontSize: 22 }}>📝</i><span><strong>오늘 숙제 확인</strong><small>{item.title} · {child(item.child_id)}</small></span><b>›</b></button>)}
       {!activeExceptions.length && !pendingHandoffs.length && !homeSupplyAlerts.length && !homeHomeworkAlerts.length && <div className="home-now-empty"><i>✓</i><span><strong>지금 확인할 일이 없어요</strong><small>새 요청이나 준비물이 생기면 여기에 표시돼요.</small></span></div>}
@@ -2078,7 +2149,7 @@ function App() {
   if (boot && screen === 'tasks') page = <>
     <div className="viewer-switch"><strong>내 담당</strong></div>
     <Card className="task-summary"><span className="green-check">✓</span><div><strong>오늘 확인할 돌봄 {todayViewerAssignments.length}건</strong><p>요청을 열어 세부내용을 확인하고 응답할 수 있어요</p></div></Card>
-    {pendingHandoffs.length > 0 && <><Section>받은 인수인계</Section>{pendingHandoffs.map(h => <Card key={h.id} className={'handoff-card inline-handoff ' + (handoffId === h.id ? 'selected-request' : '')}><span className="small-badge danger">확인 필요</span><strong>{h.briefing}</strong>{h.special_note && <p>특이사항 · {h.special_note}</p>}<small>{member(h.from_member_id)}님이 전달</small><button className="outline-button wide-button" onClick={() => run(() => send('/handoffs/' + h.id + '/acknowledge', 'POST'), '인수인계를 확인했어요')}>확인했어요</button></Card>)}</>}
+    {pendingHandoffs.length > 0 && <><Section>받은 인수인계</Section>{pendingHandoffs.map(h => { const summary = handoffSummary(h); return <Card key={h.id} className={'handoff-card inline-handoff ' + (handoffId === h.id ? 'selected-request' : '')}><span className="small-badge danger">확인 필요</span><strong>{summary.title}{summary.time ? ` · ${summary.time}` : ''}</strong><p>특이사항 · {summary.note}</p><small>{member(h.from_member_id)}님이 전달</small><button className="outline-button wide-button" onClick={() => run(() => send('/handoffs/' + h.id + '/acknowledge', 'POST'), '인수인계를 확인했어요')}>확인했어요</button></Card> })}</>}
     <Section>오늘 할 일</Section>
     {todayViewerAssignments.map(a => { const i = itemFor(a); return i && <Card key={a.id} className={'task-card ' + (assignmentId === a.id ? 'selected-request' : '')}><div className="task-top"><span className="time">{formatTime(i.starts_at) || '시간 미정'}</span><span className={'small-badge ' + (['PROPOSED', 'CANDIDATE_ACCEPTED'].includes(a.status) ? 'pending' : a.status === 'RECONFIRMATION_REQUIRED' ? 'danger' : 'ok')}>{a.status === 'PROPOSED' ? '응답 필요' : caregiverStatusLabel(a.status)}</span></div><strong>{i.title} — {child(i.child_id)}</strong>{visibleCareItemDetail(i.detail) && <p>{visibleCareItemDetail(i.detail)}</p>}{a.status === 'PROPOSED' ? <div className="task-actions"><button className="primary-button" onClick={() => run(() => send('/assignments/' + a.id + '/respond', 'POST', { decision: 'ACCEPTED' }), '배정을 수락했어요')}>맡을게요</button><button className="outline-button" onClick={() => run(() => send('/assignments/' + a.id + '/respond', 'POST', { decision: 'REJECTED' }), '다른 담당자를 찾을게요')}>어려워요</button></div> : a.status === 'CANDIDATE_ACCEPTED' ? <p className="source-text">수락 응답을 보냈어요. 주돌봄자의 최종 확정을 기다리고 있어요.</p> : a.status === 'ACCEPTED' ? <button className="primary-button wide-button" onClick={() => { setAssignmentId(a.id); setNote(''); setCompletionPhoto(null); setCompletionPreview(''); setShowSheet(true) }}>완료 체크</button> : <p className="source-text">{a.note ? '특이사항 · ' + a.note : '특이사항 없음'}</p>}</Card> })}
     {weekViewerAssignments.length ? <><Section>이번 주 내 담당</Section><Card className="stats-card"><div><strong>{weekViewerAssignments.length}</strong><span>맡은 일</span></div><div><strong>{weekViewerAssignments.filter(a => a.status === 'COMPLETED').length}</strong><span>완료</span></div><div><strong>{weekViewerAssignments.filter(a => a.note).length}</strong><span>특이사항</span></div></Card></> : <Empty title="아직 맡은 일이 없어요" text="가족이 돌봄을 요청하면 이곳에서 확인할 수 있어요" />}
@@ -2392,7 +2463,7 @@ function App() {
     {policyOpen && <BottomSheet className="policy-sheet" onDismiss={() => setPolicyOpen(null)}><header><div><span>법적 고지</span><h2>{policyContent[policyOpen].title}</h2><small>{policyContent[policyOpen].notice}</small></div><button aria-label="닫기" onClick={() => setPolicyOpen(null)}>×</button></header><div className="policy-draft-notice"><strong>정식 출시 전 법무 검토가 필요한 초안입니다.</strong><span>운영자·연락처·외부 수탁자 정보는 실제 계약에 맞게 확정해야 합니다.</span></div><div className="policy-body">{policyContent[policyOpen].sections.map(section => <section key={section.title}><h3>{section.title}</h3><p>{section.body}</p></section>)}</div><button className="primary-button wide-button" onClick={() => setPolicyOpen(null)}>확인</button></BottomSheet>}
     {calendarPrivacyPromptOpen && <BottomSheet className="calendar-privacy-sheet" onDismiss={() => setCalendarPrivacyPromptOpen(false)}><span className="privacy-prompt-icon">🗓️</span><h2>가족에게 일정 제목을<br />보여줄까요?</h2><p>캘린더 연동은 완료됐어요. 이제 가족방에서 보일 범위를 선택해주세요.</p><div className="calendar-privacy-options"><button className="recommended" disabled={calendarPrivacyBusy} onClick={() => void saveCalendarVisibility(false)}><i>✓</i><span><strong>시간만 공개</strong><small>일정 제목은 ‘바쁨’으로 표시</small></span><em>추천</em></button><button disabled={calendarPrivacyBusy} onClick={() => void saveCalendarVisibility(true)}><i /><span><strong>일정 제목 공개</strong><small>가족이 일정 내용까지 확인</small></span></button></div><small className="calendar-privacy-note">캘린더 제공자의 접근 권한과는 별개예요. 나중에 가족 › 정보 공개에서 바꿀 수 있어요.</small><button className="text-link centered" disabled={calendarPrivacyBusy} onClick={() => setCalendarPrivacyPromptOpen(false)}>나중에 설정</button></BottomSheet>}
     {scheduleSheet === 'DAY' && boot && <div className="schedule-overlay" onClick={() => setScheduleSheet('NONE')}><section className="schedule-day-sheet" onClick={e => e.stopPropagation()}><header><div><small>선택한 날짜</small><h2>{new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(selectedDate + 'T12:00:00'))}</h2></div><button aria-label="날짜 일정 닫기" onClick={() => setScheduleSheet('NONE')}>×</button></header><div className="day-sheet-events">{boot.schedules.filter(s => dateKey(s.starts_at) === selectedDate && personalScheduleVisible(s.member_id)).map(s => <Card key={s.id} className="calendar-event personal"><i style={{ background: caregiverColor(s.member_id) }} /><time>{formatTime(s.starts_at)}</time><div><strong>{s.title}</strong><p>{member(s.member_id)} · {s.kind === 'WORK' ? '업무 일정' : '고정 루틴'}</p></div><span className={'caregiver-pill ' + (s.member_id === me?.member.id ? 'self' : '')}>{s.member_id === me?.member.id ? '나' : '돌봄자'}</span>{s.member_id === me?.member.id && !s.external_source && <button className="schedule-row-edit" onClick={() => openPersonalScheduleEdit(s)}>수정</button>}</Card>)}{filteredChildSchedules.filter(s => dateKey(s.starts_at) === selectedDate).flatMap(s => {
-  const linkedItems = boot.items.filter(i => i.child_schedule_id === s.id)
+  const linkedItems = visibleCareItems.filter(i => i.child_schedule_id === s.id)
   const rowsForSchedule: (CareItem | null)[] = linkedItems.length ? linkedItems : [null]
   return rowsForSchedule.map((careItem, index) => {
     const caregiver = careItem ? caregiverForCareItem(careItem.id) : null
@@ -2458,7 +2529,7 @@ function App() {
     {recurrenceEditPrompt && editingSchedule && (() => { const original = editingSchedule.type === 'CHILD' ? boot?.child_schedules.find(item => item.id === editingSchedule.id) : boot?.schedules.find(item => item.id === editingSchedule.id); return <BottomSheet className="recurrence-edit-sheet" onDismiss={() => setRecurrenceEditPrompt(false)}><span className="sheet-handle" /><h2>매주 이렇게 바꿀까요?</h2><p>반복 일정에서 바꿀 범위를 선택해주세요.</p><div className="recurrence-time-change"><span><small>기존</small><strong>{formatTime(original?.starts_at)}</strong></span><b>→</b><span><small>{scheduleDate.slice(5).replace('-', '월 ')}일</small><strong>{normalizeClock(scheduleStartTime)}</strong></span></div><button className={recurrenceEditScope === 'SINGLE' ? 'scope-choice active' : 'scope-choice'} onClick={() => setRecurrenceEditScope('SINGLE')}><i /><span><strong>{scheduleDate.slice(5).replace('-', '월 ')}일만 변경</strong><small>이 날짜의 일정만 그대로 유지</small></span></button><button className={recurrenceEditScope === 'FUTURE' ? 'scope-choice active' : 'scope-choice'} onClick={() => setRecurrenceEditScope('FUTURE')}><i /><span><strong>이후 반복 일정도 변경</strong><small>선택한 날짜부터 같은 시간으로 바뀝니다</small></span></button><button className="primary-button wide-button recurrence-apply" onClick={() => { const scope = recurrenceEditScope; setRecurrenceEditPrompt(false); saveSchedule(scope) }}>적용</button></BottomSheet> })()}
     {recurrenceDeletePrompt && editingSchedule && <BottomSheet className="recurrence-edit-sheet recurrence-delete-sheet" onDismiss={() => setRecurrenceDeletePrompt(false)}><span className="sheet-handle" /><h2>반복 일정을 어떻게 삭제할까요?</h2><p>선택한 날짜만 지우거나 이후 일정을 함께 지울 수 있어요.</p><button className={recurrenceDeleteScope === 'SINGLE' ? 'scope-choice active' : 'scope-choice'} onClick={() => setRecurrenceDeleteScope('SINGLE')}><i /><span><strong>이 일정만 삭제하기</strong><small>선택한 날짜의 일정만 삭제합니다</small></span></button><button className={recurrenceDeleteScope === 'FUTURE' ? 'scope-choice active' : 'scope-choice'} onClick={() => setRecurrenceDeleteScope('FUTURE')}><i /><span><strong>이후 일정도 삭제하기</strong><small>선택한 날짜부터 반복 일정을 함께 삭제합니다</small></span></button><button className="schedule-delete-button wide-button recurrence-apply" onClick={() => { const scope = recurrenceDeleteScope; setRecurrenceDeletePrompt(false); deleteSchedule(scope) }}>선택한 범위 삭제</button></BottomSheet>}
     {patternSuggestionOpen && boot && <BottomSheet className="pattern-suggestion-sheet" onDismiss={() => setPatternSuggestionOpen(false)}><span className="sheet-handle" /><h2>이 패턴을 기본값으로<br />반영할까요?</h2><p>반복해서 바뀐 담당 패턴을 다음 추천에 반영할 수 있어요.</p><div className="pattern-change"><span><small>현재 기본값</small><strong>{me?.member.name ?? '나'}</strong></span><b>→</b><span><small>추천 담당</small><strong>{members.find(item => item.id !== me?.member.id)?.name ?? '다른 가족'}</strong></span></div><button className="primary-button wide-button" onClick={() => { localStorage.setItem(`family-care-pattern:${boot.family.id}:${childScheduleChild}`, members.find(item => item.id !== me?.member.id)?.id ?? ''); setPatternSuggestionOpen(false); setToast('다음 배정부터 새 기본 패턴을 반영해요') }}>기본값 바꾸기</button><div className="pattern-secondary"><button onClick={() => { setPatternSuggestionOpen(false); setToast('이번 변경만 유지했어요') }}>이번만 유지</button><button onClick={() => { localStorage.setItem(`family-care-pattern-dismissed:${boot.family.id}:${childScheduleChild}`, '1'); setPatternSuggestionOpen(false) }}>다시 묻지 않기</button></div></BottomSheet>}
-    {showSheet && <BottomSheet className="completion-sheet" onDismiss={() => setShowSheet(false)}><h2>특이사항이 있었나요?</h2><p>여기서 남긴 내용이 다음 돌봄자에게 자동으로 인수인계돼요.</p><label className="form-label">특이사항</label><textarea className="text-area" rows={4} value={note} onChange={e => setNote(e.target.value)} placeholder="수기로 입력하거나 아래에서 말해주세요. 없으면 빈칸도 괜찮아요." /><button className="outline-button wide-button" disabled={completionVoiceBusy} onClick={toggleCompletionRecording}>{completionRecording ? '■ 음성 인식 끝내기' : completionVoiceBusy ? '음성 인식 중…' : '● 음성 인식'}</button><label className="form-label">완료 사진 (선택)</label><input ref={completionCameraInputRef} className="hidden-capture-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={e => { selectCompletionPhoto(e.currentTarget.files?.[0]); e.currentTarget.value = '' }} /><input ref={completionPhotoInputRef} className="hidden-capture-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={e => { selectCompletionPhoto(e.currentTarget.files?.[0]); e.currentTarget.value = '' }} />{completionPreview && <div className="completion-preview"><img src={completionPreview} alt="선택한 완료 사진" /><button onClick={() => { setCompletionPhoto(null); setCompletionPreview('') }}>×</button></div>}<div className="completion-photo-actions"><button className="outline-button" disabled={plan !== 'PRO'} onClick={() => completionCameraInputRef.current?.click()}>사진 촬영</button><button className="outline-button" disabled={plan !== 'PRO'} onClick={() => completionPhotoInputRef.current?.click()}>앨범에서 선택</button></div>{plan !== 'PRO' && <button className="text-link centered" onClick={() => { setShowSheet(false); go('plan') }}>완료 사진은 Pro에서 사용할 수 있어요</button>}<button className="primary-button wide-button" disabled={completionVoiceBusy || completionRecording} onClick={complete}>완료하고 인수인계하기</button><button className="text-link centered" onClick={() => setShowSheet(false)}>돌아가기</button></BottomSheet>}
+    {showSheet && <BottomSheet className="completion-sheet" onDismiss={() => setShowSheet(false)}><h2>특이사항이 있었나요?</h2><p>여기서 남긴 내용이 다음 돌봄자에게 자동으로 인수인계돼요.</p><label className="form-label">특이사항</label><textarea className="text-area" rows={4} value={note} onChange={e => setNote(e.target.value)} placeholder="수기로 입력하거나 아래에서 말해주세요. 없으면 빈칸도 괜찮아요." /><button className="outline-button wide-button" disabled={completionVoiceBusy} onClick={toggleCompletionRecording}>{completionRecording ? '■ 음성 인식 끝내기' : completionVoiceBusy ? '음성 인식 중…' : '● 음성 인식'}</button><label className="form-label">완료 사진 (선택)</label><input ref={completionCameraInputRef} className="hidden-capture-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={e => { selectCompletionPhoto(e.currentTarget.files?.[0]); e.currentTarget.value = '' }} /><input ref={completionPhotoInputRef} className="hidden-capture-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={e => { selectCompletionPhoto(e.currentTarget.files?.[0]); e.currentTarget.value = '' }} />{completionPreview && <div className="completion-preview"><img src={completionPreview} alt="선택한 완료 사진" /><button onClick={() => { setCompletionPhoto(null); setCompletionPreview('') }}>×</button></div>}<div className="completion-photo-actions"><button className="outline-button" disabled={plan !== 'PRO'} onClick={() => completionCameraInputRef.current?.click()}>사진 촬영</button><button className="outline-button" disabled={plan !== 'PRO'} onClick={() => completionPhotoInputRef.current?.click()}>앨범에서 선택</button></div>{plan !== 'PRO' && <button className="text-link centered" onClick={() => { setShowSheet(false); go('plan') }}>완료 사진은 Pro에서 사용할 수 있어요</button>}<button className="primary-button wide-button" disabled={completionVoiceBusy || completionRecording} onClick={complete}>{note.trim() ? '완료하고 인수인계하기' : '완료하기'}</button><button className="text-link centered" onClick={() => setShowSheet(false)}>돌아가기</button></BottomSheet>}
     {error && <div className="error-toast" role="alert"><button aria-label="닫기" onClick={() => setError('')}>×</button>{error}</div>}{toast && <div className="success-toast" role="status">{toast}</div>}
     </div></div>
   </div>
