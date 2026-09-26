@@ -9,6 +9,7 @@ import logging
 import secrets
 import asyncio
 from datetime import datetime, timedelta
+from typing import Literal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -25,6 +26,7 @@ from .performance import record_event
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 TOSS_API = "https://api.tosspayments.com/v1"
 logger = logging.getLogger(__name__)
+ANNUAL_AMOUNT = 76_000
 
 
 def _now() -> datetime:
@@ -37,6 +39,11 @@ def _add_month(value: datetime) -> datetime:
     if month == 13:
         month, year = 1, year + 1
     return value.replace(year=year, month=month, day=min(value.day, calendar.monthrange(year, month)[1]))
+
+
+def _add_year(value: datetime) -> datetime:
+    year = value.year + 1
+    return value.replace(year=year, day=min(value.day, calendar.monthrange(year, value.month)[1]))
 
 
 def _amount() -> int:
@@ -136,7 +143,7 @@ def _charge(db, subscription: dict, billing_key: str, *, target_family_id: str |
     )
     db.execute(
         """UPDATE family_subscription SET billing_key = ?, status = 'ACTIVE',
-           current_period_start = ?, current_period_end = ?, next_billing_at = ?,
+           current_period_start = ?, current_period_end = ?, next_billing_at = ?, billing_cycle = 'MONTHLY',
            cancel_at_period_end = 0, canceled_at = NULL, renewal_failure_count = 0,
            last_renewal_error = NULL, updated_at = ?
            WHERE family_id = ?""",
@@ -164,15 +171,15 @@ def _integration_mode() -> str:
     return "BILLING_AUTH"
 
 
-def _activate_paid_period(db, *, approved_at: str | None = None) -> tuple[str, str]:
+def _activate_paid_period(db, *, approved_at: str | None = None, cycle: str = "MONTHLY") -> tuple[str, str]:
     now = _now()
-    next_at = _add_month(now)
+    next_at = _add_year(now) if cycle == "ANNUAL" else _add_month(now)
     db.execute(
         """UPDATE family_subscription SET status = 'ACTIVE', current_period_start = ?,
-           current_period_end = ?, next_billing_at = NULL, cancel_at_period_end = 0,
+           current_period_end = ?, next_billing_at = NULL, billing_cycle = ?, cancel_at_period_end = 0,
            canceled_at = NULL, renewal_failure_count = 0, last_renewal_error = NULL,
            updated_at = ? WHERE family_id = ?""",
-        (now.isoformat(), next_at.isoformat(), now.isoformat(), family_id()),
+        (now.isoformat(), next_at.isoformat(), cycle, now.isoformat(), family_id()),
     )
     db.execute("UPDATE family_group SET plan = 'PRO' WHERE id = ?", (family_id(),))
     db.execute("DELETE FROM plan_preview WHERE family_id = ?", (family_id(),))
@@ -188,6 +195,10 @@ class WidgetPaymentConfirmation(BaseModel):
     payment_key: str = Field(min_length=1, max_length=300)
     order_id: str = Field(min_length=6, max_length=64)
     amount: int = Field(ge=100)
+
+
+class WidgetOrderRequest(BaseModel):
+    cycle: Literal["MONTHLY", "ANNUAL"] = "MONTHLY"
 
 
 def reconcile_subscription(db, target_family_id: str) -> dict | None:
@@ -338,7 +349,7 @@ def resume_subscription():
 
 
 @router.post("/orders", status_code=201)
-def create_widget_order():
+def create_widget_order(payload: WidgetOrderRequest = WidgetOrderRequest()):
     with database() as db:
         _require_billing_owner(db)
         subscription = dict(_ensure_subscription(db))
@@ -348,16 +359,17 @@ def create_widget_order():
             raise HTTPException(409, detail={"code": "WIDGET_KEY_REQUIRED", "message": "앱 안 결제수단 화면에는 결제위젯 키가 필요합니다"})
         order_id = "FC-" + uuid4().hex
         created_at = _now().isoformat()
+        amount = ANNUAL_AMOUNT if payload.cycle == "ANNUAL" else int(subscription["amount"])
         db.execute(
-            """INSERT INTO payment_transaction(order_id, family_id, provider, amount, status, created_at)
-               VALUES (?, ?, 'TOSS_WIDGET', ?, 'READY', ?)""",
-            (order_id, family_id(), int(subscription["amount"]), created_at),
+            """INSERT INTO payment_transaction(order_id, family_id, provider, amount, billing_cycle, status, created_at)
+               VALUES (?, ?, 'TOSS_WIDGET', ?, ?, 'READY', ?)""",
+            (order_id, family_id(), amount, payload.cycle, created_at),
         )
     return {
         "provider": "TOSS", "integration_mode": "WIDGET", "configured": True,
         "client_key": setting("TOSS_BILLING_CLIENT_KEY"), "customer_key": subscription["customer_key"],
-        "order_id": order_id, "order_name": "ZIPPY Pro 월 이용권",
-        "amount": int(subscription["amount"]), "currency": "KRW", "status": subscription["status"],
+        "order_id": order_id, "order_name": f"ZIPPY Pro {'연' if payload.cycle == 'ANNUAL' else '월'} 이용권",
+        "amount": amount, "billing_cycle": payload.cycle, "currency": "KRW", "status": subscription["status"],
         "next_billing_at": subscription.get("next_billing_at"),
     }
 
@@ -378,6 +390,7 @@ def confirm_widget_payment(payload: WidgetPaymentConfirmation):
         if transaction["status"] == "DONE":
             subscription = dict(_ensure_subscription(db))
             return {"plan": "PRO", "status": "ACTIVE", "amount": payload.amount,
+                    "billing_cycle": transaction["billing_cycle"],
                     "current_period_end": subscription.get("current_period_end"), "already_processed": True}
         if transaction["status"] != "READY":
             raise HTTPException(409, "이미 종료된 결제 주문입니다")
@@ -401,13 +414,14 @@ def confirm_widget_payment(payload: WidgetPaymentConfirmation):
     with database() as db:
         _require_billing_owner(db)
         transaction = db.execute(
-            "SELECT status FROM payment_transaction WHERE order_id = ? AND family_id = ?",
+            "SELECT status, billing_cycle FROM payment_transaction WHERE order_id = ? AND family_id = ?",
             (payload.order_id, family_id()),
         ).fetchone()
         if transaction is None:
             raise HTTPException(404, "결제 주문을 찾을 수 없습니다")
         if transaction["status"] != "DONE":
-            approved_at, period_end = _activate_paid_period(db, approved_at=payment.get("approvedAt"))
+            cycle = transaction["billing_cycle"]
+            approved_at, period_end = _activate_paid_period(db, approved_at=payment.get("approvedAt"), cycle=cycle)
             db.execute(
                 """UPDATE payment_transaction SET status = 'DONE', payment_key = ?, approved_at = ?
                    WHERE order_id = ? AND family_id = ?""",
@@ -417,13 +431,14 @@ def confirm_widget_payment(payload: WidgetPaymentConfirmation):
                 db, "payment_completed", target_family_id=family_id(),
                 target_member_id=member_id(), correlation_id=payload.order_id,
                 properties={"amount": payload.amount, "provider": "TOSS_WIDGET",
-                            "cycle": "MONTHLY"}, occurred_at=approved_at,
+                            "cycle": cycle}, occurred_at=approved_at,
             )
         else:
             subscription = dict(_ensure_subscription(db))
             period_end = subscription.get("current_period_end")
     return {"plan": "PRO", "status": "ACTIVE", "order_id": payload.order_id,
-            "amount": payload.amount, "current_period_end": period_end}
+            "amount": payload.amount, "billing_cycle": transaction["billing_cycle"],
+            "current_period_end": period_end}
 
 
 @router.post("/activate")

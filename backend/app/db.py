@@ -286,6 +286,7 @@ CREATE TABLE IF NOT EXISTS family_subscription (
   family_id TEXT PRIMARY KEY REFERENCES family_group(id),
   provider TEXT NOT NULL DEFAULT 'TOSS', customer_key TEXT NOT NULL UNIQUE,
   billing_key TEXT, status TEXT NOT NULL DEFAULT 'PENDING', amount INTEGER NOT NULL DEFAULT 7900,
+  billing_cycle TEXT NOT NULL DEFAULT 'MONTHLY',
   current_period_start TEXT, current_period_end TEXT, next_billing_at TEXT,
   cancel_at_period_end INTEGER NOT NULL DEFAULT 0, canceled_at TEXT,
   renewal_failure_count INTEGER NOT NULL DEFAULT 0, last_renewal_error TEXT,
@@ -294,6 +295,7 @@ CREATE TABLE IF NOT EXISTS family_subscription (
 CREATE TABLE IF NOT EXISTS payment_transaction (
   order_id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
   provider TEXT NOT NULL DEFAULT 'TOSS', amount INTEGER NOT NULL,
+  billing_cycle TEXT NOT NULL DEFAULT 'MONTHLY',
   status TEXT NOT NULL, payment_key TEXT, approved_at TEXT, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS calendar_oauth_state (
@@ -398,6 +400,8 @@ def initialize() -> None:
                 ("family_subscription", "canceled_at", "TEXT"),
                 ("family_subscription", "renewal_failure_count", "INTEGER NOT NULL DEFAULT 0"),
                 ("family_subscription", "last_renewal_error", "TEXT"),
+                ("family_subscription", "billing_cycle", "TEXT NOT NULL DEFAULT 'MONTHLY'"),
+                ("payment_transaction", "billing_cycle", "TEXT NOT NULL DEFAULT 'MONTHLY'"),
                 ("family_member", "created_at", "TEXT NOT NULL DEFAULT ''"),
                 ("family_session", "last_seen_at", "TEXT NOT NULL DEFAULT ''"),
                 ("child", "photo_storage_path", "TEXT"),
@@ -420,7 +424,8 @@ def initialize() -> None:
                 ("care_assignment", (("requested_by_member_id", "TEXT REFERENCES family_member(id)"), ("reminder_sent_at", "TEXT"))),
                 ("calendar_oauth_state", (("return_url", "TEXT"),)),
                 ("media_asset", (("storage_path", "TEXT"), ("date_folder", "TEXT"))),
-                ("family_subscription", (("cancel_at_period_end", "INTEGER NOT NULL DEFAULT 0"), ("canceled_at", "TEXT"), ("renewal_failure_count", "INTEGER NOT NULL DEFAULT 0"), ("last_renewal_error", "TEXT"))),
+                ("family_subscription", (("cancel_at_period_end", "INTEGER NOT NULL DEFAULT 0"), ("canceled_at", "TEXT"), ("renewal_failure_count", "INTEGER NOT NULL DEFAULT 0"), ("last_renewal_error", "TEXT"), ("billing_cycle", "TEXT NOT NULL DEFAULT 'MONTHLY'"))),
+                ("payment_transaction", (("billing_cycle", "TEXT NOT NULL DEFAULT 'MONTHLY'"),)),
                 ("family_member", (("created_at", "TEXT NOT NULL DEFAULT ''"),)),
                 ("family_session", (("last_seen_at", "TEXT NOT NULL DEFAULT ''"),)),
                 ("child", (("photo_storage_path", "TEXT"), ("photo_mime_type", "TEXT"), ("photo_updated_at", "TEXT"), ("birth_date", "TEXT"), ("institution", "TEXT NOT NULL DEFAULT ''"))),

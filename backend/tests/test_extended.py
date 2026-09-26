@@ -1350,6 +1350,29 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual(subscription["plan"], "PRO")
         self.assertFalse(subscription["auto_renew_available"])
 
+        annual = self.client.post("/api/billing/orders", headers=headers, json={"cycle": "ANNUAL"})
+        self.assertEqual(annual.status_code, 201)
+        self.assertEqual(annual.json()["amount"], 76000)
+        self.assertEqual(annual.json()["billing_cycle"], "ANNUAL")
+        self.assertEqual(annual.json()["order_name"], "ZIPPY Pro 연 이용권")
+        annual_order = annual.json()
+        annual_paid = httpx.Response(200, request=request, json={
+            "status": "DONE", "orderId": annual_order["order_id"], "totalAmount": 76000,
+            "paymentKey": "annual-payment-key", "approvedAt": "2026-09-17T12:00:00+09:00",
+        })
+        with patch("app.payment.httpx.post", return_value=annual_paid):
+            annual_confirmed = self.client.post("/api/billing/confirm", headers=headers, json={
+                "payment_key": "annual-payment-key", "order_id": annual_order["order_id"], "amount": 76000,
+            })
+        self.assertEqual(annual_confirmed.status_code, 200)
+        self.assertEqual(annual_confirmed.json()["billing_cycle"], "ANNUAL")
+        annual_subscription = self.client.get("/api/subscription", headers=headers).json()
+        self.assertEqual(annual_subscription["billing_cycle"], "ANNUAL")
+        self.assertGreater(
+            (datetime.fromisoformat(annual_subscription["current_period_end"]) - datetime.now().astimezone()).days,
+            360,
+        )
+
         canceled = self.client.post("/api/billing/cancel", headers=headers)
         self.assertEqual(canceled.status_code, 200)
         self.assertTrue(canceled.json()["cancel_at_period_end"])

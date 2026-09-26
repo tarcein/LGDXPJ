@@ -67,7 +67,7 @@ export interface DeviceAlertTestResult { channel: 'TV' | 'VOICE' | null; device_
 export interface CalendarConnection { provider: 'google' | 'microsoft'; configured: boolean; api_key_configured?: boolean; connected: boolean; connected_at: string | null; synced_at: string | null }
 export interface AlbumPhoto { id: string; child_id: string | null; assignment_id: string | null; kind: string; file_name: string; mime_type: string; data_url: string; caption: string; created_at: string; date_folder?: string; storage_path?: string; uploaded_by_member_id?: string | null; can_delete: boolean }
 export interface BillingConfig { provider: 'TOSS'; configured: boolean; integration_mode: 'WIDGET' | 'BILLING_AUTH'; client_key: string; customer_key: string; amount: number; currency: 'KRW'; status: string; next_billing_at: string | null }
-export interface BillingOrder extends BillingConfig { order_id: string; order_name: string }
+export interface BillingOrder extends BillingConfig { order_id: string; order_name: string; billing_cycle: 'MONTHLY' | 'ANNUAL' }
 export interface BenefitLocation { city: string; district: string; updated_at: string }
 export interface Benefit {
   id: string; name: string; summary: string; category: string; organization: string; organization_type: string;

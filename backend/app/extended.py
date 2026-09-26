@@ -304,7 +304,7 @@ def subscription():
         plan = _plan(db)
         row = db.execute("SELECT enabled FROM plan_preview WHERE family_id = ?", (family_id(),)).fetchone()
         paid = db.execute(
-            """SELECT status, current_period_end, next_billing_at, billing_key,
+            """SELECT status, current_period_end, next_billing_at, billing_key, billing_cycle,
                cancel_at_period_end, canceled_at FROM family_subscription WHERE family_id = ?""",
             (family_id(),),
         ).fetchone()
@@ -319,6 +319,7 @@ def subscription():
             "cancel_at_period_end": bool(paid and paid["cancel_at_period_end"]),
             "canceled_at": paid["canceled_at"] if paid else None,
             "auto_renew_available": bool(paid and paid["billing_key"]),
+            "billing_cycle": paid["billing_cycle"] if paid else "MONTHLY",
             "renewal_mode": "AUTO_BILLING" if paid and paid["billing_key"] else "ONE_TIME"}
 
 
