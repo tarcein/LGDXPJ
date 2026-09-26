@@ -731,12 +731,15 @@ function App() {
   }, [proGateFeature, activeFamilyId])
   useEffect(() => {
     if (screen !== 'serviceLoading') return
+    let cancelled = false
     const timer = setTimeout(() => {
-      history.replaceState({ ...history.state, lgdxScreen: 'home' }, '')
-      setScreen('home')
-      void load().catch(reportError)
+      void load().then(() => {
+        if (cancelled) return
+        history.replaceState({ ...history.state, lgdxScreen: 'home' }, '')
+        setScreen('home')
+      }).catch(reportError)
     }, 1120)
-    return () => clearTimeout(timer)
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [screen])
   useEffect(() => { if (screen !== 'chat' && recorderRef.current?.state === 'recording') { cancelRecordingRef.current = true; recorderRef.current.stop() } }, [screen])
   useEffect(() => { if (!showSheet && completionRecorderRef.current?.state === 'recording') { completionCancelRecordingRef.current = true; completionRecorderRef.current.stop() } }, [showSheet])
