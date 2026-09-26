@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, send, formatDate, formatTime, type Assignment, type Bootstrap, type EmergencyRequest, type FamilyMe } from './api'
+import { api, send, trackPerformanceEvent, formatDate, formatTime, type Assignment, type Bootstrap, type EmergencyRequest, type FamilyMe } from './api'
 import { beep, contentKeyForNotice, speak, speechMessageFor, tierForNotice, type DeviceAlert } from './deviceAlertShared'
 import './tv.css'
 import tvNewsBackground from '../../asset/tv-news-background.png'
@@ -57,6 +57,11 @@ function TvDisplay() {
     activeAlertKey.current = next.key
     alertRef.current = next
     setAlert(next)
+    if (tvActiveRef.current) {
+      trackPerformanceEvent('device_alert_presented', {
+        channel: 'TV', device_id: 'tv_living', alert_kind: next.kind, content_key: next.contentKey,
+      }, next.key)
+    }
     if (startedRef.current && next.tier === 4 && emergencyTvSoundRef.current && tvActiveRef.current) {
       if (!voiceMuted) beep(true)
       if (!voiceMuted) speak(speechMessageFor(next))

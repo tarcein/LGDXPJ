@@ -43,6 +43,7 @@ EVENT_TRACKERS = {
     "chatbot_response_delivered": "DX",
     "chatbot_action_opened": "DX",
     "device_alert_used": "DX",
+    "device_alert_presented": "CX",
     # BX: acquisition, activation, plan limits, and subscription funnel.
     "family_created": "BX",
     "invite_created": "BX",
@@ -179,26 +180,46 @@ def _metric(metric_id: str, name: str, value: int | float | None, unit: str,
     }
 
 
-def _retention(events: list[dict], days_after: int, end: datetime) -> tuple[int, int, float | None]:
+def _retention(
+    events: list[dict],
+    days_after: int,
+    end: datetime,
+    *,
+    event_name: str = "app_opened",
+    subject_field: str = "member_id",
+) -> tuple[int, int, float | None]:
     opens: dict[str, list[datetime]] = defaultdict(list)
     for event in events:
-        if event["event_name"] != "app_opened" or not event.get("member_id"):
+        subject = event.get(subject_field)
+        if event["event_name"] != event_name or not subject:
             continue
         timestamp = _parse_time(event.get("occurred_at"))
         if timestamp:
-            opens[event["member_id"]].append(timestamp)
+            opens[subject].append(timestamp)
     eligible = retained = 0
     for timestamps in opens.values():
         timestamps.sort()
         first = timestamps[0]
         window_start = first + timedelta(days=days_after)
         window_end = window_start + timedelta(days=7)
-        if window_start > end:
+        if window_end > end:
             continue
         eligible += 1
         if any(window_start <= timestamp < window_end for timestamp in timestamps[1:]):
             retained += 1
     return retained, eligible, _ratio(retained, eligible)
+
+
+def _weekly_revisit(events: list[dict], end: datetime) -> tuple[int, int, float | None]:
+    days_by_family: dict[str, set] = defaultdict(set)
+    start = end - timedelta(days=7)
+    for event in events:
+        family_id = event.get("family_id")
+        timestamp = _parse_time(event.get("occurred_at"))
+        if event["event_name"] == "app_opened" and family_id and timestamp and start <= timestamp <= end:
+            days_by_family[family_id].add(timestamp.date())
+    revisited = sum(len(active_days) >= 2 for active_days in days_by_family.values())
+    return revisited, len(days_by_family), _ratio(revisited, len(days_by_family))
 
 
 def _average_minutes_between(events: list[dict], start_event: str, end_event: str) -> tuple[int, float | None]:
@@ -286,7 +307,6 @@ def performance_summary(
         schedules = _rows(db, "child_schedule", scope)
         intakes = _rows(db, "care_intake", scope)
         assignments = _rows(db, "care_assignment", scope)
-        handoffs = _rows(db, "care_handoff", scope)
         notices = _rows(db, "notification", scope)
         messages = _rows(db, "assistant_message", scope)
         preferences = [dict(row) for row in db.execute(
@@ -317,13 +337,12 @@ def performance_summary(
             active_family_ids.add(session["family_id"])
             active_member_ids.add(session["member_id"])
 
-    responded = [row for row in period_assignments if row.get("responded_at")]
     requestable = [row for row in period_assignments if row.get("source") != "ROUTINE_AUTO"]
-    accepted_or_done = [row for row in assignments if row.get("status") in {"ACCEPTED", "COMPLETED"}]
-    completed = [row for row in assignments if row.get("status") == "COMPLETED"]
+    responded = [row for row in requestable if row.get("responded_at")]
+    accepted_or_done = [row for row in period_assignments if row.get("status") in {"ACCEPTED", "COMPLETED"}]
+    completed = [row for row in period_assignments if row.get("status") == "COMPLETED"]
     role_match = [row for row in period_assignments if row.get("source") == "ROLE_MATCH"]
     role_match_adopted = [row for row in role_match if row.get("status") in {"ACCEPTED", "COMPLETED"}]
-    acknowledged = [row for row in handoffs if row.get("status") == "ACKNOWLEDGED"]
     opened_notices = [row for row in period_notices if bool(row.get("is_read"))]
     photo_intakes = [row for row in period_intakes if row.get("input_type") == "PHOTO_TRANSCRIPT"]
     user_messages = [row for row in period_messages if row.get("role") == "user"]
@@ -337,6 +356,10 @@ def performance_summary(
     )
     d7_retained, d7_eligible, d7_rate = _retention(events, 7, end)
     d30_retained, d30_eligible, d30_rate = _retention(events, 30, end)
+    weekly_revisited, weekly_active, weekly_revisit_rate = _weekly_revisit(events, end)
+    device_d30_retained, device_d30_eligible, device_d30_rate = _retention(
+        events, 30, end, event_name="device_alert_presented", subject_field="family_id"
+    )
     first_value_count, first_value_minutes = _first_value_minutes(
         families, events, intakes, assignments, end
     )
@@ -349,6 +372,23 @@ def performance_summary(
         }
     )
     ai_channel_views = event_counts["notification_opened"] + event_counts["chatbot_query"]
+    created_handoff_ids = {
+        event["correlation_id"] for event in period_events
+        if event["event_name"] == "handoff_completed" and event.get("correlation_id")
+    }
+    acknowledged_handoff_ids = {
+        event["correlation_id"] for event in period_events
+        if event["event_name"] == "handoff_acknowledged" and event.get("correlation_id")
+    }
+    device_alert_family_ids = {
+        event["family_id"] for event in period_events
+        if event["event_name"] == "device_alert_presented"
+    }
+    schedule_count = event_counts["schedule_created"] + len(period_child_schedules)
+    schedules_per_active_family_week = (
+        round(schedule_count / len(active_family_ids) / (days / 7), 2)
+        if active_family_ids else None
+    )
 
     paywall_families = {event["family_id"] for event in period_events if event["event_name"] == "pro_paywall_viewed"}
     cta_families = {event["family_id"] for event in period_events if event["event_name"] == "pro_cta_clicked"}
@@ -397,16 +437,16 @@ def performance_summary(
                 source="performance_event(feature_limit_reached) + payment_transaction"),
         _metric("BX-07", "기간 내 결제 매출", sum(int(row.get("amount", 0)) for row in completed_payments), "원",
                 target="월별 추이 상승", source="payment_transaction(status=DONE)"),
-        _metric("BX-08", "활성 구독 유지율", _ratio(sum(1 for row in subscriptions if row.get("status") == "ACTIVE"), len(subscriptions)), "%",
+        _metric("BX-08", "현재 활성 구독 비중", _ratio(sum(1 for row in subscriptions if row.get("status") == "ACTIVE"), len(subscriptions)), "%",
                 numerator=sum(1 for row in subscriptions if row.get("status") == "ACTIVE"), denominator=len(subscriptions),
                 target="90% 이상", source="family_subscription.status"),
     ]
 
     cx = [
-        _metric("CX-01", "월간 활성 가족방", len(active_family_ids), "개",
+        _metric("CX-01", "ZIPPY 월간 활성 가족방(MAH)", len(active_family_ids), "개",
                 target="전월 대비 상승", source="performance_event(app_opened) + family_session.last_seen_at"),
-        _metric("CX-02", "월간 활성 구성원", len(active_member_ids), "명",
-                target="가족방당 2명 이상", source="performance_event(app_opened) + family_session.last_seen_at"),
+        _metric("CX-02", "ZIPPY 월간 활성 구성원(MAU)", len(active_member_ids), "명",
+                target="전월 대비 상승", source="performance_event(app_opened) + family_session.last_seen_at"),
         _metric("CX-03", "D+7 리텐션", d7_rate, "%", numerator=d7_retained, denominator=d7_eligible,
                 target="40% 이상", source="performance_event(app_opened)"),
         _metric("CX-04", "D+30 리텐션", d30_rate, "%", numerator=d30_retained, denominator=d30_eligible,
@@ -419,13 +459,22 @@ def performance_summary(
         _metric("CX-07", "AI 채널 활용 비율", _ratio(ai_channel_views, information_views), "%",
                 numerator=ai_channel_views, denominator=information_views, target="70% 이상",
                 source="performance_event(notification_opened, chatbot_query, screen_view)"),
-        _metric("CX-08", "인수인계 확인률", _ratio(len(acknowledged), len(handoffs)), "%",
-                numerator=len(acknowledged), denominator=len(handoffs), target="95% 이상",
-                source="care_handoff.status"),
+        _metric("CX-08", "인수인계 확인률", _ratio(len(created_handoff_ids & acknowledged_handoff_ids), len(created_handoff_ids)), "%",
+                numerator=len(created_handoff_ids & acknowledged_handoff_ids), denominator=len(created_handoff_ids),
+                target="95% 이상", source="performance_event(handoff_completed, handoff_acknowledged)"),
+        _metric("CX-09", "가전 알림 월간 활성 가족방", len(device_alert_family_ids), "개",
+                target="월별 추이 상승", source="performance_event(device_alert_presented)"),
+        _metric("CX-10", "가전 알림 D+30 활성 유지율", device_d30_rate, "%",
+                numerator=device_d30_retained, denominator=device_d30_eligible,
+                target="6주 실측 후 기준 설정", source="performance_event(device_alert_presented)"),
+        _metric("CX-11", "ZIPPY 주간 재방문율", weekly_revisit_rate, "%",
+                numerator=weekly_revisited, denominator=weekly_active,
+                target="40% 이상", source="performance_event(app_opened)"),
     ]
 
     dx = [
-        _metric("DX-01", "일정 등록량", event_counts["schedule_created"] + len(period_child_schedules), "건",
+        _metric("DX-01", "가족방당 주간 일정 등록량", schedules_per_active_family_week, "건/가족·주",
+                numerator=schedule_count, denominator=len(active_family_ids),
                 target="가족방당 주 3건 이상", source="performance_event(schedule_created) + child_schedule.created_at"),
         _metric("DX-02", "OCR 알림장 등록량", len(photo_intakes), "건",
                 target="주간 이용 가족 증가", source="care_intake(input_type=PHOTO_TRANSCRIPT)"),

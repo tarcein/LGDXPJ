@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, formatDate, formatTime, type Assignment, type Bootstrap, type DeviceAlertSettings, type DeviceAlertsResponse, type DeviceCatalogItem, type EmergencyRequest, type FamilyMe } from './api'
+import { api, trackPerformanceEvent, formatDate, formatTime, type Assignment, type Bootstrap, type DeviceAlertSettings, type DeviceAlertsResponse, type DeviceCatalogItem, type EmergencyRequest, type FamilyMe } from './api'
 import { beep, contentKeyForNotice, resolveDeviceAlertChannel, speak, speechMessageFor, tierForNotice, type DeviceAlert } from './deviceAlertShared'
 import './tv.css'
 
@@ -32,12 +32,15 @@ function VoiceDeviceDisplay() {
 
   useEffect(() => {
     let cancelled = false
-    const announce = (alert: DeviceAlert, settings: DeviceAlertSettings) => {
+    const announce = (alert: DeviceAlert, settings: DeviceAlertSettings, deviceId: string) => {
       if (!startedRef.current || muted) return
       beep(alert.tier === 4)
       const message = speechMessageFor(alert)
       speak(message, { volume: settings.speech_volume / 100 })
       setLastSpoken({ message, at: Date.now() })
+      trackPerformanceEvent('device_alert_presented', {
+        channel: 'VOICE', device_id: deviceId, alert_kind: alert.kind, content_key: alert.contentKey,
+      }, alert.key)
     }
 
     const load = async () => {
@@ -76,7 +79,7 @@ function VoiceDeviceDisplay() {
             announce({
               key, tier: 4, kind: 'emergency', contentKey: 'emergency_request',
               title: `🚨 ${openEmergency.item_title}`, body: openEmergency.reason, meta: '',
-            }, settings)
+            }, settings, device.id)
           }
         }
 
@@ -91,7 +94,7 @@ function VoiceDeviceDisplay() {
               announce({
                 key: `notice:${incoming.id}`, tier: tierForNotice(incoming), kind: 'notice', contentKey,
                 title: incoming.title, body: incoming.body, meta: '',
-              }, settings)
+              }, settings, device.id)
             }
           }
         }
@@ -116,7 +119,7 @@ function VoiceDeviceDisplay() {
                 title: `${soon.careItem.title} 픽업 시간이에요`,
                 body: `${formatDate(soon.careItem.starts_at)} ${formatTime(soon.careItem.starts_at)} · 담당 ${member}`,
                 meta: '',
-              }, settings)
+              }, settings, device.id)
             }
           }
         }

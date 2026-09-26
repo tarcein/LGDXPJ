@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.db import database
 from app.main import app
+from app.performance import _retention, _weekly_revisit
 
 
 class PerformanceTrackerTest(unittest.TestCase):
@@ -33,12 +34,47 @@ class PerformanceTrackerTest(unittest.TestCase):
             json={"event_name": "screen_view", "properties": {"screen": "home"}},
         )
         self.assertEqual(recorded.status_code, 201)
+        presented = self.client.post(
+            "/api/performance/events",
+            json={
+                "event_name": "device_alert_presented",
+                "correlation_id": "notice:test",
+                "properties": {"channel": "TV", "device_id": "tv_living"},
+            },
+        )
+        self.assertEqual(presented.status_code, 201)
 
         summary = self.client.get("/api/performance/summary?days=30").json()
+        cx = {metric["id"]: metric for metric in summary["trackers"]["CX"]}
+        dx = {metric["id"]: metric for metric in summary["trackers"]["DX"]}
         self.assertEqual(set(summary["trackers"]), {"BX", "CX", "DX"})
         self.assertEqual(summary["event_counts"]["screen_view"], 1)
         self.assertEqual(summary["collection"]["event_table"], "performance_event")
-        self.assertTrue(any(metric["id"] == "CX-07" for metric in summary["trackers"]["CX"]))
+        self.assertEqual(cx["CX-09"]["value"], 1)
+        self.assertIsNone(cx["CX-10"]["value"])
+        self.assertIn("CX-11", cx)
+        self.assertTrue(dx["DX-05"]["value"] is None or dx["DX-05"]["value"] <= 100)
+
+    def test_retention_waits_for_the_full_observation_window(self) -> None:
+        first = datetime.fromisoformat("2026-01-01T00:00:00+09:00")
+        events = [
+            {"event_name": "app_opened", "member_id": "member-1", "occurred_at": first.isoformat()},
+            {"event_name": "app_opened", "member_id": "member-1",
+             "occurred_at": (first + timedelta(days=7)).isoformat()},
+        ]
+        self.assertEqual(_retention(events, 7, first + timedelta(days=13)), (0, 0, None))
+        self.assertEqual(_retention(events, 7, first + timedelta(days=14)), (1, 1, 100.0))
+
+    def test_weekly_revisit_counts_distinct_days_per_family(self) -> None:
+        end = datetime.fromisoformat("2026-01-08T12:00:00+09:00")
+        events = [
+            {"event_name": "app_opened", "family_id": "family-1", "occurred_at": "2026-01-02T09:00:00+09:00"},
+            {"event_name": "app_opened", "family_id": "family-1", "occurred_at": "2026-01-04T09:00:00+09:00"},
+            {"event_name": "app_opened", "family_id": "family-2", "occurred_at": "2026-01-06T09:00:00+09:00"},
+            {"event_name": "app_opened", "family_id": "family-2", "occurred_at": "2026-01-06T18:00:00+09:00"},
+            {"event_name": "app_opened", "family_id": "family-3", "occurred_at": "2025-12-31T09:00:00+09:00"},
+        ]
+        self.assertEqual(_weekly_revisit(events, end), (1, 2, 50.0))
 
     def test_core_workflow_writes_automatic_events(self) -> None:
         pickup = next(
