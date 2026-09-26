@@ -21,7 +21,7 @@ from .config import setting
 from .family import authenticated, family_id, member_id as current_member_id, owner_id, require_owner, resolve_bearer, reset_context, router as family_router, set_context
 from .media import image_mime as _child_image_mime, media_root as _child_media_root, read_file as _read_child_file
 from .performance import record_event
-from .services import classify_lines, find_schedule_collisions, rank_members
+from .services import clean_intake_title, classify_lines, find_schedule_collisions, rank_members
 
 def now() -> str:
     return datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
@@ -1286,7 +1286,8 @@ def store_intake(payload: IntakeCreate, parsed_items: list[dict]):
         registered_child_schedules = []
         for item in parsed_items:
             item_id = str(uuid4())
-            parsed_start = item.get("starts_at") if item["item_type"] in {"SCHEDULE", "CHANGE", "SUPPLY", "HOMEWORK"} else None
+            parsed_start = item.get("starts_at") if item["item_type"] in {"SCHEDULE", "CHANGE", "SUPPLY", "HOMEWORK", "TODO"} else None
+            title = clean_intake_title(item["title"])[:200]
             child_schedule_id = None
             # OCR/text extraction is always a draft first. Nothing is copied to
             # the calendar, supplies, or homework until the user reviews and
@@ -1297,7 +1298,7 @@ def store_intake(payload: IntakeCreate, parsed_items: list[dict]):
                    item_type, title, detail, starts_at, confidence, status, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (item_id, family_id(), intake_id, payload.child_id, child_schedule_id, item["item_type"],
-                 item["title"], item.get("detail", ""), parsed_start, item["confidence"], status, now()),
+                 title, item.get("detail", ""), parsed_start, item["confidence"], status, now()),
             )
             created.append(one(db, "SELECT * FROM care_item WHERE id = ?", (item_id,)))
         if created:

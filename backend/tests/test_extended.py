@@ -226,7 +226,7 @@ class ExtendedFlowTest(unittest.TestCase):
                 response = self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")}, data={"child_id": "jiu", "source": "CAMERA"})
                 self.assertEqual(response.status_code, 201)
                 self.assertEqual(response.json()["transcript"], text)
-                self.assertEqual([item["title"] for item in response.json()["items"]], ["9월 20일 현장학습"])
+                self.assertEqual([item["title"] for item in response.json()["items"]], ["현장학습"])
                 self.assertEqual(response.json()["items"][0]["detail"], text)
             blocked = self.client.post("/api/intakes/photo", files={"file": ("notice.png", image, "image/png")}, data={"child_id": "jiu"})
             self.assertEqual(blocked.status_code, 403)

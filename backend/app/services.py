@@ -44,8 +44,40 @@ def _extract_due_date(line: str, reference: datetime) -> str | None:
     return due.isoformat()
 
 
+def clean_intake_title(title: str) -> str:
+    """Remove list markers and date/time metadata already stored in item fields."""
+    cleaned = re.sub(r"^\s*(?:\d+\s*[.)]|[-•·])\s*", "", title)
+    patterns = (
+        r"\b\d{4}[./-]\d{1,2}[./-]\d{1,2}(?:\s*까지|\s*부터)?\b",
+        r"(?:\d{4}년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일(?:\s*까지|\s*부터)?",
+        r"(?<!\d)\d{1,2}[./-]\d{1,2}(?:\s*까지|\s*부터)?(?!\d)",
+        r"(?<!\d)\d{1,2}\s*일(?:\s*까지|\s*부터)",
+        r"(?:오전|오후)\s*\d{1,2}(?::\d{2}|\s*시(?:\s*\d{1,2}분)?)?",
+        r"(?<!\d)\d{1,2}\s*시(?:\s*\d{1,2}분)?",
+        r"(?<!\d)\d{1,2}:\d{2}(?!\d)",
+    )
+    for pattern in patterns:
+        cleaned = re.sub(pattern, " ", cleaned)
+    cleaned = re.sub(r"^(?:준비물|숙제|과제|일정)\s*[:：-]\s*", "", cleaned)
+    cleaned = re.sub(r"제출\s*하기\s*$", "제출", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,·~〜–—-/()[]:：")
+    return cleaned or title.strip()
+
+
+def _notice_lines(raw_content: str) -> list[str]:
+    lines: list[str] = []
+    for block in re.split(r"[\n。]+", raw_content):
+        if not block.strip():
+            continue
+        # OCR often returns an entire numbered list on one line. Split only on
+        # explicit list markers so dates such as "9월 27일" remain intact.
+        parts = re.split(r"(?:^|\s)(?=\d+\s*[.)]\s*)", block.strip())
+        lines.extend(part.strip(" -•\t") for part in parts if part.strip())
+    return lines
+
+
 def classify_lines(raw_content: str, reference: datetime | None = None) -> list[dict[str, str]]:
-    lines = [line.strip(" -•\t") for line in re.split(r"[\n。]+", raw_content) if line.strip()]
+    lines = _notice_lines(raw_content)
     if not lines:
         return []
     reference = reference or datetime.now(_SEOUL)
@@ -55,13 +87,13 @@ def classify_lines(raw_content: str, reference: datetime | None = None) -> list[
             item_type = "CHANGE"
         elif any(word in line for word in ("준비물", "챙기", "물품", "도시락")):
             item_type = "SUPPLY"
-        elif any(word in line for word in ("숙제", "일기", "독서록", "문제집", "받아쓰기")):
+        elif any(word in line for word in ("숙제", "일기", "독서록", "문제집", "받아쓰기", "보고서")):
             item_type = "HOMEWORK"
         elif any(word in line for word in ("제출", "신청", "회신", "확인")):
             item_type = "TODO"
         else:
             item_type = "SCHEDULE" if re.search(r"\d{1,2}[:시]\d{0,2}", line) else "TODO"
-        entry = {"item_type": item_type, "title": line[:200], "confidence": "LOW"}
+        entry = {"item_type": item_type, "title": clean_intake_title(line)[:200], "confidence": "LOW"}
         if item_type in {"SUPPLY", "HOMEWORK"}:
             due = _extract_due_date(line, reference)
             if due:

@@ -37,6 +37,20 @@ class ClassifyLinesTest(unittest.TestCase):
         self.assertEqual(items[0]["item_type"], "HOMEWORK")
         self.assertNotIn("starts_at", items[0])
 
+    def test_numbered_notice_is_split_and_titles_exclude_numbers_and_dates(self):
+        reference = datetime(2026, 9, 26, 10, 0, tzinfo=_SEOUL)
+        items = classify_lines(
+            "1. 물감 챙기기 2. 체육복 챙기기 3. 일기쓰기 4. 9월 27일까지 체험학습 보고서 제출하기",
+            reference=reference,
+        )
+
+        self.assertEqual(
+            [item["title"] for item in items],
+            ["물감 챙기기", "체육복 챙기기", "일기쓰기", "체험학습 보고서 제출"],
+        )
+        self.assertEqual([item["item_type"] for item in items], ["SUPPLY", "SUPPLY", "HOMEWORK", "HOMEWORK"])
+        self.assertTrue(items[3]["starts_at"].startswith("2026-09-27"))
+
 
 if __name__ == "__main__":
     unittest.main()
