@@ -64,6 +64,34 @@ def clean_intake_title(title: str) -> str:
     return cleaned or title.strip()
 
 
+def split_checklist_items(items: list[dict]) -> list[dict]:
+    """Split comma-separated supplies and homework into independently editable items."""
+    expanded: list[dict] = []
+    for item in items:
+        if item.get("item_type") not in {"SUPPLY", "HOMEWORK"}:
+            expanded.append(item)
+            continue
+        title = str(item.get("title") or "")
+        detail = str(item.get("detail") or "")
+        source = title if re.search(r"[,，]", title) else detail if re.search(r"[,，]", detail) else title
+        parts = [clean_intake_title(part)[:200] for part in re.split(r"[,，]", source)]
+        parts = [part for part in parts if part]
+        if len(parts) < 2:
+            expanded.append(item)
+            continue
+        for part in parts:
+            expanded.append({**item, "title": part})
+    unique: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in expanded:
+        key = (str(item.get("item_type") or ""), str(item.get("title") or "").strip(), str(item.get("starts_at") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique[:20]
+
+
 def _notice_lines(raw_content: str) -> list[str]:
     lines: list[str] = []
     for block in re.split(r"[\n。]+", raw_content):
@@ -99,7 +127,7 @@ def classify_lines(raw_content: str, reference: datetime | None = None) -> list[
             if due:
                 entry["starts_at"] = due
         result.append(entry)
-    return result
+    return split_checklist_items(result)
 
 
 def is_busy(db: Any, member_id: str, starts_at: str | None) -> bool:

@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from app.services import classify_lines
+from app.services import classify_lines, split_checklist_items
 
 _SEOUL = ZoneInfo("Asia/Seoul")
 
@@ -36,6 +36,21 @@ class ClassifyLinesTest(unittest.TestCase):
         items = classify_lines("숙제: 수학 문제집", reference=reference)
         self.assertEqual(items[0]["item_type"], "HOMEWORK")
         self.assertNotIn("starts_at", items[0])
+
+    def test_comma_separated_homework_is_saved_as_individual_items(self):
+        items = classify_lines("숙제: 수학책 44페이지까지, 부모님 사인 받아오기")
+
+        self.assertEqual([item["title"] for item in items], ["수학책 44페이지까지", "부모님 사인 받아오기"])
+        self.assertEqual([item["item_type"] for item in items], ["HOMEWORK", "HOMEWORK"])
+
+    def test_already_split_ai_items_are_not_duplicated_by_the_source_quote(self):
+        source = "숙제: 수학책 44페이지까지, 부모님 사인 받아오기"
+        items = split_checklist_items([
+            {"item_type": "HOMEWORK", "title": "수학책 44페이지까지", "detail": source},
+            {"item_type": "HOMEWORK", "title": "부모님 사인 받아오기", "detail": source},
+        ])
+
+        self.assertEqual([item["title"] for item in items], ["수학책 44페이지까지", "부모님 사인 받아오기"])
 
     def test_numbered_notice_is_split_and_titles_exclude_numbers_and_dates(self):
         reference = datetime(2026, 9, 26, 10, 0, tzinfo=_SEOUL)

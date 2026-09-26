@@ -148,6 +148,7 @@ CREATE TABLE IF NOT EXISTS family_member (
 CREATE TABLE IF NOT EXISTS child (
   id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
   name TEXT NOT NULL, age_label TEXT NOT NULL,
+  birth_date TEXT, institution TEXT NOT NULL DEFAULT '',
   photo_storage_path TEXT, photo_mime_type TEXT, photo_updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS personal_schedule (
@@ -402,6 +403,8 @@ def initialize() -> None:
                 ("child", "photo_storage_path", "TEXT"),
                 ("child", "photo_mime_type", "TEXT"),
                 ("child", "photo_updated_at", "TEXT"),
+                ("child", "birth_date", "TEXT"),
+                ("child", "institution", "TEXT NOT NULL DEFAULT ''"),
             ):
                 db.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {definition}")
                 db.commit()
@@ -420,7 +423,7 @@ def initialize() -> None:
                 ("family_subscription", (("cancel_at_period_end", "INTEGER NOT NULL DEFAULT 0"), ("canceled_at", "TEXT"), ("renewal_failure_count", "INTEGER NOT NULL DEFAULT 0"), ("last_renewal_error", "TEXT"))),
                 ("family_member", (("created_at", "TEXT NOT NULL DEFAULT ''"),)),
                 ("family_session", (("last_seen_at", "TEXT NOT NULL DEFAULT ''"),)),
-                ("child", (("photo_storage_path", "TEXT"), ("photo_mime_type", "TEXT"), ("photo_updated_at", "TEXT"))),
+                ("child", (("photo_storage_path", "TEXT"), ("photo_mime_type", "TEXT"), ("photo_updated_at", "TEXT"), ("birth_date", "TEXT"), ("institution", "TEXT NOT NULL DEFAULT ''"))),
             ):
                 columns = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
                 for name, definition in additions:

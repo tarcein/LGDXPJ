@@ -40,6 +40,25 @@ class ExtendedFlowTest(unittest.TestCase):
             os.environ.pop(key, None)
         self.temp.cleanup()
 
+    def test_child_profile_stores_birth_date_and_institution_separately(self):
+        room = self.client.post("/api/families", json={"name": "프로필 가족", "owner_name": "엄마"}).json()
+        owner_headers = {"Authorization": "Bearer " + room["access_token"]}
+
+        created = self.client.post("/api/children", headers=owner_headers, json={
+            "name": "민솔", "birth_date": "2020-10-01", "institution": "별빛유치원",
+        })
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json()["birth_date"], "2020-10-01")
+        self.assertEqual(created.json()["institution"], "별빛유치원")
+        self.assertIn("별빛유치원", created.json()["age_label"])
+
+        updated = self.client.patch(f"/api/children/{created.json()['id']}", headers=owner_headers, json={
+            "name": "민솔", "birth_date": "2020-10-01", "institution": "새봄초등학교",
+        })
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["institution"], "새봄초등학교")
+        self.assertIn("새봄초등학교", updated.json()["age_label"])
+
     def test_subsidy24_benefits_are_normalized_for_pro_family(self):
         os.environ["LGDX_DEV_MODE"] = "1"
         os.environ["LGDX_DEV_TOKEN"] = "local-test-token"

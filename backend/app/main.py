@@ -21,7 +21,7 @@ from .config import setting
 from .family import authenticated, family_id, member_id as current_member_id, owner_id, require_owner, resolve_bearer, reset_context, router as family_router, set_context
 from .media import image_mime as _child_image_mime, media_root as _child_media_root, read_file as _read_child_file
 from .performance import record_event
-from .services import clean_intake_title, classify_lines, find_schedule_collisions, rank_members
+from .services import clean_intake_title, classify_lines, find_schedule_collisions, rank_members, split_checklist_items
 
 def now() -> str:
     return datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
@@ -181,12 +181,33 @@ app.add_middleware(
 
 class ChildCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    age_label: str = Field(min_length=1, max_length=30)
+    birth_date: date | None = None
+    institution: str = Field(default="", max_length=100)
+    age_label: str | None = Field(default=None, min_length=1, max_length=30)
 
 
 class ChildUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    age_label: str = Field(min_length=1, max_length=30)
+    birth_date: date | None = None
+    institution: str | None = Field(default=None, max_length=100)
+    age_label: str | None = Field(default=None, min_length=1, max_length=30)
+
+
+def child_profile_values(birth_date: date | None, institution: str, fallback_age_label: str | None = None):
+    normalized_institution = institution.strip()
+    if birth_date:
+        today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+        if birth_date > today:
+            raise HTTPException(422, "생년월일은 오늘보다 이후일 수 없습니다")
+        age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+        age_label = f"만 {age}세"
+        if normalized_institution:
+            age_label += f" · {normalized_institution}"
+        return birth_date.isoformat(), normalized_institution, age_label
+    fallback = (fallback_age_label or "").strip()
+    if not fallback:
+        raise HTTPException(422, "생년월일을 선택해주세요")
+    return None, normalized_institution, fallback
 
 
 class MemberCreate(BaseModel):
@@ -506,17 +527,27 @@ def create_child(payload: ChildCreate):
             db.commit()
             raise HTTPException(403, detail={"code": "PLAN_LIMIT", "message": "무료 플랜은 자녀 2명까지 등록할 수 있습니다"})
         child_id = str(uuid4())
-        db.execute("INSERT INTO child (id, family_id, name, age_label) VALUES (?, ?, ?, ?)", (child_id, family_id(), payload.name, payload.age_label))
+        birth_date, institution, age_label = child_profile_values(payload.birth_date, payload.institution, payload.age_label)
+        db.execute(
+            "INSERT INTO child (id, family_id, name, age_label, birth_date, institution) VALUES (?, ?, ?, ?, ?, ?)",
+            (child_id, family_id(), payload.name.strip(), age_label, birth_date, institution),
+        )
         return _child_payload(one(db, "SELECT * FROM child WHERE id = ?", (child_id,)))
 
 
 @app.patch("/api/children/{child_id}")
 def update_child(child_id: str, payload: ChildUpdate):
     with database() as db:
-        one(db, "SELECT id FROM child WHERE id = ? AND family_id = ?", (child_id, family_id()))
+        current = one(db, "SELECT * FROM child WHERE id = ? AND family_id = ?", (child_id, family_id()))
+        stored_birth_date = date.fromisoformat(current["birth_date"]) if current.get("birth_date") else None
+        birth_date, institution, age_label = child_profile_values(
+            payload.birth_date or stored_birth_date,
+            payload.institution if payload.institution is not None else current.get("institution") or "",
+            payload.age_label or current["age_label"],
+        )
         db.execute(
-            "UPDATE child SET name = ?, age_label = ? WHERE id = ? AND family_id = ?",
-            (payload.name.strip(), payload.age_label.strip(), child_id, family_id()),
+            "UPDATE child SET name = ?, age_label = ?, birth_date = ?, institution = ? WHERE id = ? AND family_id = ?",
+            (payload.name.strip(), age_label, birth_date, institution, child_id, family_id()),
         )
         return _child_payload(one(db, "SELECT * FROM child WHERE id = ?", (child_id,)))
 
@@ -1290,7 +1321,7 @@ def store_intake(payload: IntakeCreate, parsed_items: list[dict]):
         )
         created = []
         registered_child_schedules = []
-        for item in parsed_items:
+        for item in split_checklist_items(parsed_items):
             item_id = str(uuid4())
             parsed_start = item.get("starts_at") if item["item_type"] in {"SCHEDULE", "CHANGE", "SUPPLY", "HOMEWORK", "TODO"} else None
             title = clean_intake_title(item["title"])[:200]

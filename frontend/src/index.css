@@ -100,6 +100,7 @@ a, a:link, a:visited, a:active { color: inherit; text-decoration: inherit; }
 .home-schedule-row-delete { flex: none; align-self: center; width: 24px; height: 24px; margin-left: 2px; border: none; background: transparent; color: #b7bac0; font-size: 12px; line-height: 1; cursor: pointer; }
 .home-schedule-row-delete:active { color: #8b9099; }
 .home-schedule-row { display: flex; flex: 1; align-items: center; gap: 9px; min-width: 0; width: 100%; min-height: 48px; border-bottom: 1px solid #eceef1; background: transparent; text-align: left; }
+.home-schedule-row:disabled { cursor: default; opacity: 1; }
 .home-schedule-row-wrap:last-child .home-schedule-row { border-bottom: 0; }
 .home-schedule-row time { width: 37px; color: #8b9099; font: 700 10px 'Courier New', monospace; }
 .home-schedule-row > i, .child-color { flex: none; width: 7px; height: 7px; border-radius: 50%; }
@@ -1632,3 +1633,4 @@ a, a:link, a:visited, a:active { color: inherit; text-decoration: inherit; }
 .child-profile-photo-card input { display: none; }
 .child-profile-photo-card b { color: #c4123f; font-size: 14px; }
 .child-profile-form { display: grid; gap: 9px; }
+.child-age-preview { margin: -4px 0 5px; color: #7b8089; font-size: 10px; font-weight: 700; }
