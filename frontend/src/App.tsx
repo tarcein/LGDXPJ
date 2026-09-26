@@ -453,6 +453,7 @@ function App() {
   const [deviceAlertTestResult, setDeviceAlertTestResult] = useState<DeviceAlertTestResult | null>(null)
   const [deviceAlertTestForceOff, setDeviceAlertTestForceOff] = useState(false)
   const contentRef = useRef<HTMLElement>(null)
+  const chatBodyRef = useRef<HTMLDivElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -706,6 +707,14 @@ function App() {
     return () => clearTimeout(timer)
   }, [deviceAlertTestResult])
   useEffect(() => { contentRef.current?.scrollTo(0, 0) }, [screen])
+  useEffect(() => {
+    if (screen !== 'chat') return
+    const frame = requestAnimationFrame(() => {
+      const body = chatBodyRef.current
+      if (body) body.scrollTop = body.scrollHeight
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [screen, chatMessages.length])
   useEffect(() => {
     if (!activeFamilyId) return
     if (performanceOpenedFamilyRef.current !== activeFamilyId) {
@@ -2568,7 +2577,7 @@ function App() {
   if (boot && screen === 'chat') page = <section className="assistant-chat-page" data-figma-node="714:2989">
     <header className="assistant-chat-header"><button aria-label="채팅 닫기" onClick={() => history.back()}>‹</button><img src={chatHeaderIcon} alt="" /><strong>케어 어시스턴트</strong><span className="assistant-plan">{plan === 'PRO' ? <Pro /> : 'FREE'}</span></header>
     <div className="assistant-token-bar"><div><span><i />AI 토큰</span><strong>{chatRemaining.toLocaleString()} <small>/ {chatTokenLimit.toLocaleString()}</small></strong></div><div className="assistant-token-track"><i style={{ width: `${chatRemainingPercent}%` }} /></div></div>
-    <div className="assistant-chat-body">
+    <div ref={chatBodyRef} className="assistant-chat-body">
       {!chatMessages.length && <Card className="chat-intro"><img className="voice-mark" src={voiceIcon} alt="" /><strong>무엇을 도와드릴까요?</strong><p>가족방의 일정·돌봄 정보·배정을 바탕으로<br />AI가 답해요. 배정 변경은 확인 없이 실행하지 않아요.</p></Card>}
       <div className="chat-thread">{chatMessages.map((m, index) => <div key={index} className={'chat-bubble ' + m.from}><div className="chat-copy">{m.text}</div>{m.from === 'agent' && m.cards?.map((card, cardIndex) => <article className="chat-summary-card" key={card.title + cardIndex}><small>{card.eyebrow}</small><strong>{card.title}</strong><p>{card.description}</p>{card.screen && <button onClick={() => { trackPerformanceEvent('chatbot_action_opened', { screen: card.screen }); go(card.screen as Screen) }}>{chatScreenLabel[card.screen as Screen] ?? '관련 화면 보기'}</button>}</article>)}</div>)}</div>
       <div className="chat-prompts">{['확인할 알림 알려줘', '오늘 담당 배정은?', '등록된 일정은?', '내일 준비물 확인'].map(text => <button key={text} disabled={chatBusy} onClick={() => sendChat(text)}>{text}</button>)}</div>
