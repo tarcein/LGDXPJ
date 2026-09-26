@@ -413,14 +413,13 @@ a, a:link, a:visited, a:active { color: inherit; text-decoration: inherit; }
 .calendar-provider-actions { display: grid; flex: none; justify-items: end; gap: 8px; }
 .calendar-provider-actions .disconnect { color: #8d6670; font-size: 9px; }
 .calendar-management-page { padding-bottom: 20px; }
-.personal-routine-list { display: grid; gap: 9px; }
-.personal-routine-card { display: flex; align-items: center; gap: 11px; width: 100%; margin: 0; padding: 14px; text-align: left; }
-.personal-routine-card > i { display: grid; width: 35px; height: 35px; flex: none; place-items: center; border-radius: 11px; color: #c4123f; background: #fceaf0; font-size: 19px; font-style: normal; }
-.personal-routine-card > span { display: grid; min-width: 0; flex: 1; gap: 2px; }
-.personal-routine-card strong { overflow: hidden; color: #222631; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.personal-routine-card small { color: #676d78; font-size: 10px; }
-.personal-routine-card em { color: #a0a4ac; font-size: 9px; font-style: normal; }
-.personal-routine-card > b { flex: none; color: #c4123f; font-size: 10px; }
+.personal-weekly-help { margin-top: -3px; }
+.personal-weekly-timetable { margin-bottom: 4px; background: #f4efff; border-color: #dfd2fa; }
+.personal-weekly-timetable .weekly-day-header { border-color: #dfd2fa; background: #e9defd; }
+.personal-weekly-timetable .weekly-time-axis { border-color: #e3daf5; background: #faf8ff; }
+.personal-weekly-timetable .weekly-day-column { border-color: rgba(185,163,222,.42); }
+.personal-weekly-event { border-color: #cbb1ef; color: #63358f; background: #faf5ff; }
+.personal-weekly-event small { color: #805ba3; }
 .personal-routine-add { margin-top: 14px; }
 .calendar-privacy-sheet { padding: 14px 20px calc(24px + env(safe-area-inset-bottom)); }
 .privacy-prompt-icon { display: grid; width: 46px; height: 46px; margin: 4px 0 13px; place-items: center; border-radius: 15px; background: #fceaf0; font-size: 23px; }
@@ -1510,6 +1509,9 @@ a, a:link, a:visited, a:active { color: inherit; text-decoration: inherit; }
 .supply-week-link { display: flex; align-items: center; gap: 10px; width: calc(100% - 36px); min-height: 59px; margin: 14px auto 0; padding: 10px 14px; border: 1px solid #f3d776; border-radius: 14px; color: #1e2939; background: #fff9e8; text-align: left; }
 .supply-week-link > i { display: grid; width: 35px; height: 35px; flex: none; place-items: center; border-radius: 10px; background: #fff3c7; }
 .supply-week-link > i img { width: 26px; height: 26px; object-fit: contain; }
+.homework-week-link { margin-top: 9px; border-color: #e1d8f7; background: #faf7ff; }
+.homework-week-link > i { color: #6c4a91; background: #eee5ff; font-size: 21px; font-style: normal; }
+.homework-week-link small { color: #746488; }
 .supply-week-link > span { display: grid; min-width: 0; flex: 1; gap: 2px; }
 .supply-week-link strong { font-size: 12px; }
 .supply-week-link small { overflow: hidden; color: #8d7041; font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1531,6 +1533,7 @@ a, a:link, a:visited, a:active { color: inherit; text-decoration: inherit; }
 .supply-item-delete { flex: none; width: 24px; height: 24px; border: none; background: transparent; color: #b7bac0; font-size: 12px; line-height: 1; cursor: pointer; }
 .supply-item-delete:active { color: #8b9099; }
 .homework-form-card { margin-bottom: 4px; }
+.supply-form-card { margin-bottom: 4px; }
 .homework-item-body { display: grid; flex: 1; min-width: 0; gap: 2px; text-align: left; background: transparent; }
 .homework-item-body strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .homework-item-body small { color: #7c818a; font-size: 10px; }

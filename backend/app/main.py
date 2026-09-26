@@ -371,6 +371,12 @@ class HomeworkCreate(BaseModel):
     due_date: date | None = None
 
 
+class SupplyCreate(BaseModel):
+    child_id: str = Field(min_length=1)
+    title: str = Field(min_length=1, max_length=200)
+    due_date: date | None = None
+
+
 class AssignmentCreate(BaseModel):
     item_id: str
     assignee_id: str
@@ -1329,6 +1335,24 @@ def create_homework(payload: HomeworkCreate):
             """INSERT INTO care_item(id, family_id, child_id, item_type, title, detail,
                starts_at, confidence, status, created_at)
                VALUES (?, ?, ?, 'HOMEWORK', ?, '', ?, 'HIGH', 'CONFIRMED', ?)""",
+            (item_id, family_id(), payload.child_id, payload.title, starts_at, now()),
+        )
+        return one(db, "SELECT * FROM care_item WHERE id = ?", (item_id,))
+
+
+@app.post("/api/supplies", status_code=201)
+def create_supply(payload: SupplyCreate):
+    with database() as db:
+        one(db, "SELECT id FROM child WHERE id = ? AND family_id = ?", (payload.child_id, family_id()))
+        item_id = str(uuid4())
+        starts_at = (
+            datetime.combine(payload.due_date, datetime.min.time(), tzinfo=ZoneInfo("Asia/Seoul")).isoformat()
+            if payload.due_date else None
+        )
+        db.execute(
+            """INSERT INTO care_item(id, family_id, child_id, item_type, title, detail,
+               starts_at, confidence, status, created_at)
+               VALUES (?, ?, ?, 'SUPPLY', ?, '', ?, 'HIGH', 'CONFIRMED', ?)""",
             (item_id, family_id(), payload.child_id, payload.title, starts_at, now()),
         )
         return one(db, "SELECT * FROM care_item WHERE id = ?", (item_id,))

@@ -321,6 +321,9 @@ function App() {
   const [captureTranscript, setCaptureTranscript] = useState('')
   const [captureFromPhoto, setCaptureFromPhoto] = useState(false)
   const [captureBusy, setCaptureBusy] = useState(false)
+  const [supplyChild, setSupplyChild] = useState('')
+  const [supplyTitle, setSupplyTitle] = useState('')
+  const [supplyDate, setSupplyDate] = useState('')
   const [homeworkChild, setHomeworkChild] = useState('')
   const [homeworkTitle, setHomeworkTitle] = useState('')
   const [homeworkDate, setHomeworkDate] = useState('')
@@ -1312,16 +1315,6 @@ function App() {
       return { schedule, count: ordered.length }
     })
     .toSorted((left, right) => left.schedule.starts_at.localeCompare(right.schedule.starts_at))
-  const personalRoutineCadence = (schedule: Bootstrap['schedules'][number]) => {
-    const rule = schedule.recurrence_rule ?? ''
-    if (rule.startsWith('WEEKLY:')) {
-      const dayLabels = ['월', '화', '수', '목', '금', '토', '일']
-      const days = rule.split(':')[1]?.split(',').map(Number).filter(day => day >= 0 && day < 7) ?? []
-      if (days.length) return `매주 ${days.map(day => dayLabels[day]).join('·')}요일`
-    }
-    if (rule.startsWith('DATES:')) return '선택한 날짜 반복'
-    return schedule.recurrence_id ? '반복 루틴' : '한 번 등록한 루틴'
-  }
   const todayCare = visibleCareItems.filter(i => !i.child_schedule_id && i.starts_at && dateKey(i.starts_at) === todayKey && i.item_type !== 'SUPPLY' && i.item_type !== 'HOMEWORK')
   const todayChildSchedules = boot?.child_schedules.filter(s => dateKey(s.starts_at) === todayKey) ?? []
   const dueDateOf = (item: CareItem) => {
@@ -2052,6 +2045,13 @@ function App() {
   const toggleItemDone = (item: CareItem) => {
     void run(() => send('/items/' + item.id + '/done', 'PATCH', { done: item.status !== 'DONE' }), item.status === 'DONE' ? '완료 표시를 해제했어요' : '완료로 표시했어요')
   }
+  const addSupply = () => {
+    if (!supplyChild || !supplyTitle.trim()) { setError('아이와 준비물 내용을 입력해주세요'); return }
+    void run(async () => {
+      await send('/supplies', 'POST', { child_id: supplyChild, title: supplyTitle.trim(), due_date: supplyDate || null })
+      setSupplyTitle(''); setSupplyDate('')
+    }, '준비물을 등록했어요')
+  }
   const addHomework = () => {
     if (!homeworkChild || !homeworkTitle.trim()) { setError('아이와 숙제 내용을 입력해주세요'); return }
     void run(async () => {
@@ -2158,6 +2158,23 @@ function App() {
     : []
   const weeklyPixelsPerMinute = .72
   const weeklyTimelineHeight = Math.max(84, (weeklyEndMinute - weeklyStartMinute) * weeklyPixelsPerMinute)
+  const personalWeeklyEntries = [...new Map((boot?.schedules ?? [])
+    .filter(item => item.member_id === personalRoutineOwnerId && item.kind === 'ROUTINE' && !item.external_source && !!item.recurrence_id)
+    .map(item => {
+      const start = new Date(item.starts_at); const end = new Date(item.ends_at)
+      const key = `${start.getDay()}-${start.getHours()}:${start.getMinutes()}-${end.getHours()}:${end.getMinutes()}-${item.title}`
+      return [key, item] as const
+    })).values()]
+  const personalWeeklyStartMinute = personalWeeklyEntries.length
+    ? Math.floor(Math.min(...personalWeeklyEntries.map(item => { const value = new Date(item.starts_at); return value.getHours() * 60 + value.getMinutes() })) / 60) * 60
+    : 0
+  const personalWeeklyEndMinute = personalWeeklyEntries.length
+    ? Math.min(24 * 60, Math.ceil(Math.max(...personalWeeklyEntries.map(item => { const value = item.has_end_time ? new Date(item.ends_at) : new Date(item.starts_at); return value.getHours() * 60 + value.getMinutes() })) / 60) * 60)
+    : 0
+  const personalWeeklyHourLabels = personalWeeklyEntries.length
+    ? Array.from({ length: Math.max(2, (personalWeeklyEndMinute - personalWeeklyStartMinute) / 60 + 1) }, (_, index) => personalWeeklyStartMinute / 60 + index)
+    : []
+  const personalWeeklyTimelineHeight = Math.max(84, (personalWeeklyEndMinute - personalWeeklyStartMinute) * weeklyPixelsPerMinute)
   const childLocationControl = (className = '') => <div className={`schedule-location-field ${className}`.trim()}>
     <label><span>위치</span><select aria-label="아이 일정 위치" value={addingChildScheduleLocation ? '__new__' : childScheduleLocation} onChange={event => {
       if (event.target.value === '__new__') { setAddingChildScheduleLocation(true); setChildScheduleLocation('') }
@@ -2292,11 +2309,21 @@ function App() {
         <div className={'figma-calendar-agenda ' + (selectedEvents.length ? 'has-events' : 'is-empty')}><small>{selectedDate === todayKey ? '오늘 일정' : '선택한 일정'} · {selectedEvents.length}건</small>{selectedEvents.map(event => <button key={event.id} onClick={() => setScheduleSheet('DAY')}><i style={{ background: event.color }} /><span><strong>{event.title}</strong><small>{selectedDate.slice(5).replace('-', '/')} · {formatTime(event.startsAt)} · {event.meta.split(' · ')[0]}</small></span></button>)}{!selectedEvents.length && <p>등록된 일정이 없어요</p>}</div>
       </div>
       <button className="supply-week-link" onClick={() => go('supplies')}><i><img src={homeSupplyIcon} alt="" /></i><span><strong>준비물 확인</strong><small>오늘부터 일주일 · {weekSupplies.length ? `${weekSupplies.length}개 준비물` : '등록된 준비물 없음'}</small></span><b>›</b></button>
+      <button className="supply-week-link homework-week-link" onClick={() => go('homework')}><i aria-hidden="true">📝</i><span><strong>숙제 확인</strong><small>{activeHomework.length ? `등록된 숙제 ${activeHomework.length}개` : '숙제 직접 등록 및 확인'}</small></span><b>›</b></button>
       <button className="weekly-timetable-link" onClick={() => { setWeeklyTimetableChild(weeklyTimetableChild || boot.children[0]?.id || ''); setWeeklyTimetableOpen(true) }}><span><strong>주간 시간표</strong><small>아이별 반복 루틴을 한눈에 확인하고 수정해요</small></span><b>›</b></button>
     </section>
   }
   if (boot && screen === 'supplies') page = <section className="supplies-page">
-    <div className="eyebrow">앞으로 7일</div><h2 className="page-title">준비물 확인</h2><p className="hero-copy">오늘부터 일주일 동안 챙겨야 할 준비물을 날짜별로 모았어요.</p>
+    <div className="eyebrow">앞으로 7일</div><h2 className="page-title">준비물 확인</h2><p className="hero-copy">오늘부터 일주일 동안 챙겨야 할 준비물을 날짜별로 모았어요. 여기서 바로 추가할 수도 있어요.</p>
+    <Card className="form-card homework-form-card supply-form-card">
+      <label className="form-label">아이</label>
+      <div className="choice-row">{boot.children.map(c => <button key={c.id} className={'choice-chip ' + (supplyChild === c.id ? 'active' : '')} onClick={() => setSupplyChild(c.id)}>{c.name}</button>)}</div>
+      <label className="form-label">준비물</label>
+      <input className="form-control" value={supplyTitle} onChange={e => setSupplyTitle(e.target.value)} placeholder="예: 물감, 체육복" />
+      <label className="form-label">챙길 날짜 (선택)</label>
+      <input type="date" className="form-control" value={supplyDate} onChange={e => setSupplyDate(e.target.value)} />
+      <button className="primary-button wide-button" onClick={addSupply}>준비물 등록</button>
+    </Card>
     {supplyGroups.map(([dueDate, dueItems]) => <section className="supply-day" key={dueDate}><h3>{dueDate === todayKey ? '오늘' : formatDate(dueDate + 'T12:00:00')}</h3><div>{dueItems.map(item => <Card className={'supply-item-card' + (item.status === 'DONE' ? ' item-done' : '')} key={item.id}>{item.status === 'NEEDS_REVIEW' ? <em className="item-review-badge">확인 필요</em> : <input type="checkbox" className="item-checkbox" checked={item.status === 'DONE'} onChange={() => toggleItemDone(item)} aria-label={item.title + ' 완료 체크'} />}<i><img src={homeSupplyIcon} alt="" /></i><span><strong>{item.title}</strong><small>{child(item.child_id)}{item.detail ? ` · ${item.detail}` : ''}</small></span><button className="supply-item-delete" aria-label="준비물 삭제" onClick={() => deleteCareItem(item)}>✕</button></Card>)}</div></section>)}
     {!supplyGroups.length && <Empty title="일주일 안에 챙길 준비물이 없어요" text="알림장을 등록하면 준비물을 날짜별로 정리해드려요" />}
     <button className="primary-button wide-button supply-register" onClick={() => go('capture')}>알림장 등록하기</button>
@@ -2402,9 +2429,19 @@ function App() {
     <Section>캘린더 연동 현황</Section>
     {calendarConnections.map(connection => { const label = connection.provider === 'google' ? 'Google Calendar' : 'Outlook Calendar'; return <Card key={connection.provider} className="calendar-provider"><img className="provider-icon" src={connection.provider === 'google' ? googleIcon : outlookIcon} alt="" /><div><strong>{label}</strong><p>{connection.connected ? `연결됨${connection.synced_at ? ' · 최근 동기화 ' + formatDate(connection.synced_at) : ''}` : connection.configured ? '계정을 연결할 수 있어요' : 'OAuth 앱 설정이 필요해요'}</p></div>{connection.connected ? <span className="calendar-provider-actions"><button className="text-link" onClick={() => syncCalendar(connection.provider)}>동기화</button><button className="text-link disconnect" onClick={() => void disconnectCalendar(connection.provider)}>연동 해제</button></span> : <button className="text-link" disabled={!connection.configured} onClick={() => connectCalendar(connection.provider)}>{connection.configured ? '연결' : '설정 전'}</button>}</Card> })}
     <Card className="info-note">{calendarsReady ? '연결된 캘린더의 일정은 일정 탭에서 함께 확인할 수 있어요.' : '사용할 캘린더의 OAuth 설정이 완료되면 연결 버튼이 활성화돼요.'}</Card>
-    <Section action={<button className="text-link" onClick={() => { setScheduleMember(personalRoutineOwnerId); openNewScheduleForm('PERSONAL', 'REPEAT') }}>＋ 루틴 등록</button>}>내 개인 루틴</Section>
-    <div className="personal-routine-list">{personalRoutineGroups.map(({ schedule, count }) => <button className="card personal-routine-card" key={schedule.recurrence_id || schedule.id} onClick={() => openPersonalScheduleEdit(schedule)}><i>↻</i><span><strong>{schedule.title}</strong><small>{personalRoutineCadence(schedule)} · {formatTime(schedule.starts_at)}{schedule.has_end_time === false || schedule.has_end_time === 0 ? '' : `~${formatTime(schedule.ends_at)}`}</small><em>{dateKey(schedule.starts_at) >= todayKey ? `다음 ${formatDate(schedule.starts_at)}` : `마지막 ${formatDate(schedule.starts_at)}`}{count > 1 ? ` · ${count}회 등록` : ''}</em></span><b>수정 ›</b></button>)}</div>
-    {!personalRoutineGroups.length && <Empty title="등록한 개인 루틴이 없어요" text="운동·출퇴근처럼 반복되는 내 일정을 등록해보세요" />}
+    <Section action={<button className="text-link" onClick={() => { setScheduleMember(personalRoutineOwnerId); openNewScheduleForm('PERSONAL', 'REPEAT') }}>＋ 루틴 등록</button>}>내 개인 주간 시간표</Section>
+    <p className="weekly-help personal-weekly-help">루틴의 요일과 시간대를 한눈에 확인하고, 일정 블록을 눌러 수정할 수 있어요.</p>
+    {personalWeeklyHourLabels.length ? <div className="weekly-timeline personal-weekly-timetable">
+      <div className="weekly-day-header"><span />{['월', '화', '수', '목', '금', '토', '일'].map(day => <strong key={day}>{day}</strong>)}</div>
+      <div className="weekly-timeline-body">
+        <div className="weekly-time-axis" style={{ height: personalWeeklyTimelineHeight }}>{personalWeeklyHourLabels.map(hour => <time key={hour} style={{ top: Math.min(personalWeeklyTimelineHeight - 10, (hour * 60 - personalWeeklyStartMinute) * weeklyPixelsPerMinute) }}>{hour}시</time>)}</div>
+        <div className="weekly-day-columns" style={{ height: personalWeeklyTimelineHeight }}>{[1, 2, 3, 4, 5, 6, 0].map(day => <div className="weekly-day-column" key={day}>{personalWeeklyEntries.filter(item => new Date(item.starts_at).getDay() === day).map(item => {
+          const start = new Date(item.starts_at); const end = item.has_end_time ? new Date(item.ends_at) : new Date(start.getTime() + 30 * 60_000)
+          const startMinute = start.getHours() * 60 + start.getMinutes(); const duration = Math.max(20, (end.getTime() - start.getTime()) / 60_000)
+          return <button key={item.id} className="weekly-event-block personal-weekly-event" style={{ top: (startMinute - personalWeeklyStartMinute) * weeklyPixelsPerMinute, height: Math.max(24, duration * weeklyPixelsPerMinute) }} onClick={() => openPersonalScheduleEdit(item)}><strong>{item.title}</strong><small>{localClock(item.starts_at)}{item.has_end_time === false || item.has_end_time === 0 ? '' : `–${localClock(item.ends_at)}`}</small></button>
+        })}</div>)}</div>
+      </div>
+    </div> : <Empty title="등록한 반복 루틴이 없어요" text="운동·출퇴근처럼 반복되는 내 일정을 등록해보세요" />}
     <button className="primary-button wide-button personal-routine-add" onClick={() => { setScheduleMember(personalRoutineOwnerId); openNewScheduleForm('PERSONAL', 'REPEAT') }}>개인 루틴 등록하기</button>
   </section>
   if (boot && screen === 'permissions') { const targetMember = me?.member.id ?? viewer; page = <><div className="eyebrow">내 정보 공개 범위</div><h2 className="hero-title">보여주고 싶은 정보만<br />직접 선택해요</h2><p className="hero-copy">각 구성원이 자신의 정보 공개 범위를 직접 관리해요. 다른 가족의 설정은 변경할 수 없어요.</p><Section>{member(targetMember)}님의 공개 범위</Section>{[['SCHEDULE_DETAIL', '개인 일정 내용', '켜면 제목까지, 끄면 시간과 바쁨 여부만 표시'], ['WORK_DETAIL', '업무 내용', '켜면 제목까지, 끄면 시간과 바쁨 여부만 표시'], ['LOCATION', '현황', '돌봄 이동 현황']].map(([scope, name, detail]) => { const allowed = !!boot.permissions.find(p => p.member_id === targetMember && p.scope === scope)?.is_allowed; return <Card key={scope} className="permission-row"><div><strong>{name}</strong><p>{detail}</p></div><button className={'switch ' + (allowed ? 'on' : '')} role="switch" aria-checked={allowed} aria-label={name + ' 공개'} onClick={() => run(() => send('/members/' + targetMember + '/permissions', 'PATCH', { scope, is_allowed: !allowed }), '내 공개 범위를 변경했어요')}><span /></button></Card> })}<Card className="info-note">개인 일정 내용은 기본 비공개예요. 꺼두면 다른 가족에게 일정 제목 대신 ‘바쁨’으로 보여요.</Card></> }
