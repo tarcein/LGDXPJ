@@ -412,6 +412,16 @@ a, a:link, a:visited, a:active { color: inherit; text-decoration: inherit; }
 .calendar-provider div { flex: 1; }
 .calendar-provider-actions { display: grid; flex: none; justify-items: end; gap: 8px; }
 .calendar-provider-actions .disconnect { color: #8d6670; font-size: 9px; }
+.calendar-management-page { padding-bottom: 20px; }
+.personal-routine-list { display: grid; gap: 9px; }
+.personal-routine-card { display: flex; align-items: center; gap: 11px; width: 100%; margin: 0; padding: 14px; text-align: left; }
+.personal-routine-card > i { display: grid; width: 35px; height: 35px; flex: none; place-items: center; border-radius: 11px; color: #c4123f; background: #fceaf0; font-size: 19px; font-style: normal; }
+.personal-routine-card > span { display: grid; min-width: 0; flex: 1; gap: 2px; }
+.personal-routine-card strong { overflow: hidden; color: #222631; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.personal-routine-card small { color: #676d78; font-size: 10px; }
+.personal-routine-card em { color: #a0a4ac; font-size: 9px; font-style: normal; }
+.personal-routine-card > b { flex: none; color: #c4123f; font-size: 10px; }
+.personal-routine-add { margin-top: 14px; }
 .calendar-privacy-sheet { padding: 14px 20px calc(24px + env(safe-area-inset-bottom)); }
 .privacy-prompt-icon { display: grid; width: 46px; height: 46px; margin: 4px 0 13px; place-items: center; border-radius: 15px; background: #fceaf0; font-size: 23px; }
 .calendar-privacy-sheet h2 { line-height: 1.35; }
