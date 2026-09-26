@@ -1355,8 +1355,19 @@ function App() {
   const homeOpenEmergency = emergencyRequests.find(request => request.status === 'OPEN')
   const homeEmergencyAssignment = homeOpenEmergency ? assignments.find(assignment => assignment.id === homeOpenEmergency.assignment_id) : undefined
   const homeEmergencyItem = homeEmergencyAssignment ? itemFor(homeEmergencyAssignment) : undefined
+  const homeMovingAssignment = assignments.find(a => isLiveAssignment(a))
   const movingAssignment = assignments.find(a => isLiveAssignment(a) && (!careStatusChild || itemFor(a)?.child_id === careStatusChild))
   const movingItem = movingAssignment ? itemFor(movingAssignment) : undefined
+  const upcomingHomeAssignment = todayAssignments
+    .filter(assignment => assignment.status === 'ACCEPTED')
+    .filter(assignment => {
+      const item = itemFor(assignment)
+      return !!item?.starts_at && item.status !== 'DONE' && new Date(item.starts_at).getTime() > timelineNow
+    })
+    .toSorted((left, right) => (itemFor(left)?.starts_at ?? '').localeCompare(itemFor(right)?.starts_at ?? ''))[0]
+  const homeCareAssignment = homeMovingAssignment ?? upcomingHomeAssignment
+  const homeCareItem = homeCareAssignment ? itemFor(homeCareAssignment) : undefined
+  const homeCareIsMoving = homeCareAssignment?.id === homeMovingAssignment?.id
   const careDisplayAssignment = movingAssignment
     ?? todayAssignments.find(a => a.status === 'ACCEPTED' && (!careStatusChild || itemFor(a)?.child_id === careStatusChild))
     ?? [...todayAssignments].reverse().find(a => a.status === 'COMPLETED' && (!careStatusChild || itemFor(a)?.child_id === careStatusChild))
@@ -2156,7 +2167,7 @@ function App() {
     go('assignments')
   }} />
   if (boot && screen === 'home') page = <div className="figma-home">
-    {homeEmergencyAssignment && homeEmergencyItem ? <button className="home-travel emergency" onClick={() => go('assignments')}><span className="travel-avatar">!</span><span><strong>긴급 도움 요청으로 조율 중</strong><small>{child(homeEmergencyItem.child_id)} · {homeEmergencyItem.title} · 대체 담당자를 찾고 있어요</small></span><b>›</b></button> : movingAssignment && movingItem ? <button className="home-travel" onClick={() => go('assignments')}><span className="travel-avatar">{member(movingAssignment.assignee_id).slice(0, 1)}</span><span><strong>{member(movingAssignment.assignee_id)}와 함께 {movingItem.title} 이동 중</strong><small>{child(movingItem.child_id)} · {member(movingAssignment.assignee_id)} 담당</small></span><b>›</b></button> : null}
+    {homeEmergencyAssignment && homeEmergencyItem ? <button className="home-travel emergency" onClick={() => go('assignments')}><span className="travel-avatar">!</span><span><strong>긴급 도움 요청으로 조율 중</strong><small>{child(homeEmergencyItem.child_id)} · {homeEmergencyItem.title} · 대체 담당자를 찾고 있어요</small></span><b>›</b></button> : homeCareAssignment && homeCareItem ? <button className="home-travel" onClick={() => go('assignments')}><span className="travel-avatar">{member(homeCareAssignment.assignee_id).slice(0, 1)}</span><span><strong>{member(homeCareAssignment.assignee_id)}님과 {homeCareItem.title} {homeCareIsMoving ? '중' : '예정'}</strong><small>{child(homeCareItem.child_id)} · {formatTime(homeCareItem.starts_at)} {homeCareIsMoving ? '진행 중' : '예정'}</small></span><b>›</b></button> : null}
     {activeExceptions.length > 0 && <button className="family-alert home-alert" onClick={() => go('exception')}><span className="small-badge danger">확인 {activeExceptions.length}</span><strong>{activeExceptions[0].reason}</strong><span>›</span></button>}
     <Section>오늘 일정</Section>
     <Card className="home-timeline exact-timeline">
@@ -2180,7 +2191,7 @@ function App() {
     {pending.length > 0 && <Card className="inbox-summary" onClick={() => pending[0] && openReview(pending[0])}><span className="summary-dot">●</span><div><strong>확인할 돌봄 정보 {pending.length}건</strong><p>등록한 내용은 확인 후 역할 배정에 반영돼요</p></div><span className="chevron">›</span></Card>}
     <Section>확인 필요 {pending.length}</Section>{pending.length ? pending.map(i => <Card key={i.id} className="review-card"><div className="review-meta"><span className="child-pill">{child(i.child_id)}</span><span>{typeLabel[i.item_type]}</span></div><strong>{i.title}</strong><p>{visibleCareItemDetail(i.detail) || '추출된 내용을 확인해주세요'}</p><div className="card-actions"><button onClick={() => openReview(i)}>확인하기</button><button onClick={() => setToast('나중에 다시 확인할 수 있어요')}>나중에</button></div></Card>) : <Empty title="확인할 것이 없어요" text="새로운 알림장이 들어오면 이곳에 표시돼요" />}
     <Section>아이 일정</Section>{boot.child_schedules.filter(s => filter === 'all' || s.child_id === filter).slice(0, 5).map(s => <Card key={s.id} className="schedule-card"><i className="child-color" style={{ background: childColor(s.child_id) }} /><span className="time">{formatTime(s.starts_at) || '—'}</span><div><strong>{s.title}</strong><p>{child(s.child_id)} · {childScheduleLabel[s.category] ?? '기타'}</p></div><span className="green-check">✓</span></Card>)}{items.filter(i => !i.child_schedule_id && ['SCHEDULE', 'CHANGE', 'TODO'].includes(i.item_type) && ['CONFIRMED', 'ASSIGNED', 'DONE'].includes(i.status)).slice(0, 5).map(i => <Card key={i.id} className="schedule-card"><i className="child-color" style={{ background: childColor(i.child_id) }} /><span className="time">{formatTime(i.starts_at) || '—'}</span><div><strong>{i.title}</strong><p>{child(i.child_id)} · 알림장</p></div><span className="green-check">✓</span></Card>)}
-    <Section>준비물</Section>{items.filter(i => i.item_type === 'SUPPLY' && ['CONFIRMED', 'ASSIGNED', 'DONE'].includes(i.status)).slice(0, 5).map(i => <Card key={i.id} className="schedule-card"><i className="child-color" style={{ background: childColor(i.child_id) }} /><div><strong>{i.title}</strong><p>{child(i.child_id)} · {i.detail}</p></div><span className="green-check">✓</span></Card>)}
+    <Section action={<button className="text-link" onClick={() => go('supplies')}>준비물 확인 ›</button>}>준비물</Section>{items.filter(i => i.item_type === 'SUPPLY' && ['CONFIRMED', 'ASSIGNED', 'DONE'].includes(i.status)).slice(0, 5).map(i => <Card key={i.id} className="schedule-card"><i className="child-color" style={{ background: childColor(i.child_id) }} /><div><strong>{i.title}</strong><p>{child(i.child_id)} · {i.detail}</p></div><span className="green-check">✓</span></Card>)}
     <Section action={<button className="text-link" onClick={() => go('homework')}>숙제 확인 ›</button>}>숙제</Section>{items.filter(i => i.item_type === 'HOMEWORK' && ['CONFIRMED', 'ASSIGNED', 'DONE'].includes(i.status)).slice(0, 5).map(i => <Card key={i.id} className="schedule-card"><i className="child-color" style={{ background: childColor(i.child_id) }} /><div><strong>{i.title}</strong><p>{child(i.child_id)}</p></div><span className="green-check">✓</span></Card>)}
     <div className="inbox-buttons"><button className="primary-button" onClick={() => go('capture')}>알림장 촬영</button><button className="outline-button" onClick={() => go('capture')}>직접 입력</button></div>
   </>
