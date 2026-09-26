@@ -1382,10 +1382,6 @@ class ExtendedFlowTest(unittest.TestCase):
         assigned = [item for item in refreshed["assignments"] if item["item_id"] in care_ids]
         self.assertEqual(len(assigned), len(care_ids))
         self.assertTrue(all(item["status"] == "ACCEPTED" for item in assigned))
-        with database() as db:
-            db.execute("UPDATE care_assignment SET status = 'PROPOSED', responded_at = NULL WHERE id = ?", (assigned[0]["id"],))
-        repaired = self.client.get("/api/bootstrap").json()["assignments"]
-        self.assertEqual(next(item for item in repaired if item["id"] == assigned[0]["id"])["status"], "ACCEPTED")
 
     def test_intake_items_require_review_before_they_are_applied(self):
         bootstrap = self.client.get("/api/bootstrap").json()

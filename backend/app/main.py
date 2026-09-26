@@ -438,42 +438,6 @@ def bootstrap(tv: bool = False):
     utc_now = datetime.now(timezone.utc)
     online_cutoff = (utc_now - timedelta(minutes=2)).isoformat()
     with database() as db:
-        # Repair schedule defaults created by older clients so the deployed
-        # family room immediately follows the current rules as well.
-        db.execute(
-            """UPDATE child_schedule
-                  SET start_assignment_required = 0, end_assignment_required = 0,
-                      start_assignee_id = NULL, end_assignee_id = NULL,
-                      start_external_assignee_name = '', end_external_assignee_name = ''
-                WHERE family_id = ?
-                  AND LOWER(REPLACE(TRIM(location_name), ' ', '')) IN ('집', '우리집', '자택', 'home')""",
-            (family_id(),),
-        )
-        _reconcile_family_schedule_care_items(db)
-        timestamp = now()
-        db.execute(
-            """UPDATE care_assignment AS a
-                  SET status = 'ACCEPTED', responded_at = COALESCE(responded_at, ?)
-                WHERE a.family_id = ? AND a.status IN ('PROPOSED', 'CANDIDATE_ACCEPTED')
-                  AND EXISTS (
-                    SELECT 1 FROM care_item i
-                    JOIN child_schedule s ON s.id = i.child_schedule_id
-                    WHERE i.id = a.item_id
-                      AND ((s.start_assignee_id = a.assignee_id
-                            AND (i.boundary_type = 'START' OR (i.boundary_type IS NULL AND i.starts_at = s.starts_at)))
-                        OR (s.end_assignee_id = a.assignee_id
-                            AND (i.boundary_type = 'END' OR (i.boundary_type IS NULL AND i.starts_at = s.ends_at))))
-                  )""",
-            (timestamp, family_id()),
-        )
-        db.execute(
-            """UPDATE care_item SET status = CASE WHEN status = 'DONE' THEN status ELSE 'ASSIGNED' END
-                WHERE family_id = ? AND EXISTS (
-                  SELECT 1 FROM care_assignment a
-                  WHERE a.item_id = care_item.id AND a.status = 'ACCEPTED'
-                )""",
-            (family_id(),),
-        )
         return {
             "family": one(db, "SELECT * FROM family_group WHERE id = ?", (family_id(),)),
             "members": rows(db, """SELECT m.*, CASE WHEN EXISTS (
