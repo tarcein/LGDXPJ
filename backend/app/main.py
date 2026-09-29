@@ -935,7 +935,17 @@ def _reconcile_family_schedule_care_items(db) -> None:
              WHERE family_id = ? ORDER BY starts_at, ends_at""",
         (family_id(),),
     )
+    existing_by_schedule: dict[str, list[dict]] = {}
+    for item in rows(
+        db,
+        """SELECT * FROM care_item
+             WHERE family_id = ? AND child_schedule_id IS NOT NULL
+             ORDER BY child_schedule_id, starts_at""",
+        (family_id(),),
+    ):
+        existing_by_schedule.setdefault(item["child_schedule_id"], []).append(item)
     suppressed_starts, suppressed_ends = _merged_schedule_boundaries(schedules)
+    stale_item_ids: list[str] = []
     for schedule in schedules:
         child_id = schedule["child_id"]
         has_end_time = bool(schedule.get("has_end_time"))
@@ -948,11 +958,7 @@ def _reconcile_family_schedule_care_items(db) -> None:
         if has_end_time and schedule["id"] not in suppressed_ends and bool(schedule.get("end_assignment_required", 1)):
             desired["END"] = (f"{schedule['title']} 하원", schedule["ends_at"])
 
-        existing = rows(
-            db,
-            "SELECT * FROM care_item WHERE family_id = ? AND child_schedule_id = ? ORDER BY starts_at",
-            (family_id(), schedule["id"]),
-        )
+        existing = existing_by_schedule.get(schedule["id"], [])
         by_boundary: dict[str, dict] = {}
         for item in existing:
             boundary = item.get("boundary_type")
@@ -967,11 +973,18 @@ def _reconcile_family_schedule_care_items(db) -> None:
                 has_end_time, schedule.get("location_name") or "",
             )
             if item:
-                db.execute(
-                    """UPDATE care_item SET child_id = ?, title = ?, detail = ?, starts_at = ?, boundary_type = ?
-                         WHERE id = ? AND family_id = ?""",
-                    (child_id, title, detail, item_starts_at, boundary, item["id"], family_id()),
-                )
+                if any((
+                    item.get("child_id") != child_id,
+                    item.get("title") != title,
+                    item.get("detail") != detail,
+                    item.get("starts_at") != item_starts_at,
+                    item.get("boundary_type") != boundary,
+                )):
+                    db.execute(
+                        """UPDATE care_item SET child_id = ?, title = ?, detail = ?, starts_at = ?, boundary_type = ?
+                             WHERE id = ? AND family_id = ?""",
+                        (child_id, title, detail, item_starts_at, boundary, item["id"], family_id()),
+                    )
             else:
                 _create_schedule_care_item(
                     db, child_id, schedule["id"], title, schedule["category"], item_starts_at,
@@ -981,7 +994,8 @@ def _reconcile_family_schedule_care_items(db) -> None:
 
         for boundary, item in by_boundary.items():
             if boundary not in desired:
-                _delete_care_item_cascade(db, item["id"])
+                stale_item_ids.append(item["id"])
+    _delete_care_items_cascade(db, stale_item_ids)
 
 
 def _normalize_boundary_responsibility(assignee_id: str | None, external_name: str | None) -> tuple[str | None, str]:
@@ -1276,22 +1290,30 @@ def update_child_schedule(schedule_id: str, payload: ChildScheduleUpdate):
                 "recurring_instance_only": bool(schedule.get("recurrence_id")) and payload.update_scope == "SINGLE"}
 
 
+def _delete_care_items_cascade(db, item_ids: list[str]) -> None:
+    unique_ids = list(dict.fromkeys(item_ids))
+    for offset in range(0, len(unique_ids), 400):
+        chunk = unique_ids[offset:offset + 400]
+        placeholders = ",".join("?" for _ in chunk)
+        assignment_scope = (
+            f"SELECT id FROM care_assignment WHERE family_id = ? AND item_id IN ({placeholders})"
+        )
+        params = (family_id(), *chunk)
+        for table in ("care_exception", "care_handoff", "emergency_request", "device_alert_outbox"):
+            db.execute(f"DELETE FROM {table} WHERE assignment_id IN ({assignment_scope})", params)
+        # Keep uploaded photos even when their schedule/assignment is removed.
+        db.execute(f"UPDATE media_asset SET assignment_id = NULL WHERE assignment_id IN ({assignment_scope})", params)
+        db.execute(f"DELETE FROM care_assignment WHERE family_id = ? AND item_id IN ({placeholders})", params)
+        db.execute(
+            f"""DELETE FROM notification WHERE family_id = ? AND action_type = 'CARE_SUGGESTION'
+                  AND action_id IN ({placeholders})""",
+            params,
+        )
+        db.execute(f"DELETE FROM care_item WHERE family_id = ? AND id IN ({placeholders})", params)
+
+
 def _delete_care_item_cascade(db, item_id: str) -> None:
-    assignment_ids = [row["id"] for row in db.execute(
-        "SELECT id FROM care_assignment WHERE item_id = ? AND family_id = ?", (item_id, family_id()),
-    ).fetchall()]
-    for assignment_id in assignment_ids:
-        db.execute("DELETE FROM care_exception WHERE assignment_id = ?", (assignment_id,))
-        db.execute("DELETE FROM care_handoff WHERE assignment_id = ?", (assignment_id,))
-        db.execute("DELETE FROM emergency_request WHERE assignment_id = ?", (assignment_id,))
-        # Keep uploaded photos even when the schedule/assignment they were attached
-        # to gets cleaned up — just detach them instead of deleting the asset.
-        db.execute("UPDATE media_asset SET assignment_id = NULL WHERE assignment_id = ?", (assignment_id,))
-        db.execute("DELETE FROM device_alert_outbox WHERE assignment_id = ?", (assignment_id,))
-    db.execute("DELETE FROM care_assignment WHERE item_id = ? AND family_id = ?", (item_id, family_id()))
-    db.execute("DELETE FROM notification WHERE family_id = ? AND action_type = 'CARE_SUGGESTION' AND action_id = ?",
-               (family_id(), item_id))
-    db.execute("DELETE FROM care_item WHERE id = ? AND family_id = ?", (item_id, family_id()))
+    _delete_care_items_cascade(db, [item_id])
 
 
 @app.delete("/api/child-schedules/{schedule_id}")
@@ -1306,15 +1328,18 @@ def delete_child_schedule(schedule_id: str, delete_scope: str = "SINGLE"):
             targets = rows(db, """SELECT * FROM child_schedule
                 WHERE family_id = ? AND recurrence_id = ? AND starts_at >= ? ORDER BY starts_at""",
                 (family_id(), schedule["recurrence_id"], schedule["starts_at"]))
-        care_items_by_schedule = {
-            target["id"]: rows(db, "SELECT id FROM care_item WHERE child_schedule_id = ? AND family_id = ?",
-                               (target["id"], family_id()))
-            for target in targets
-        }
-        for target in targets:
-            for care_item in care_items_by_schedule[target["id"]]:
-                _delete_care_item_cascade(db, care_item["id"])
-            db.execute("DELETE FROM child_schedule WHERE id = ? AND family_id = ?", (target["id"], family_id()))
+        target_ids = [target["id"] for target in targets]
+        placeholders = ",".join("?" for _ in target_ids)
+        care_item_ids = [item["id"] for item in rows(
+            db,
+            f"SELECT id FROM care_item WHERE family_id = ? AND child_schedule_id IN ({placeholders})",
+            (family_id(), *target_ids),
+        )]
+        _delete_care_items_cascade(db, care_item_ids)
+        db.execute(
+            f"DELETE FROM child_schedule WHERE family_id = ? AND id IN ({placeholders})",
+            (family_id(), *target_ids),
+        )
         _reconcile_family_schedule_care_items(db)
         return {"deleted": True, "schedule_id": schedule_id,
                 "deleted_count": len(targets),

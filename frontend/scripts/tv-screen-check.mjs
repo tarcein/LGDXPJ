@@ -149,6 +149,9 @@ try {
   await page.getByRole('button', { name: '연결됨' }).waitFor()
   if (await page.evaluate(() => window.__pushKeyLength) !== 65) throw new Error('Web Push 공개키가 브라우저 구독에 전달되지 않았습니다')
   if (webPushRegistration?.platform !== 'WEB' || !JSON.parse(webPushRegistration.token).endpoint) throw new Error('Web Push 구독 정보가 서버에 등록되지 않았습니다')
+  await page.goto((process.env.LGDX_TEST_URL ?? 'http://127.0.0.1:5173') + '?screen=notifications&action_type=EMERGENCY_REQUEST&action_id=old-emergency', { waitUntil: 'domcontentloaded' })
+  await page.locator('.emergency-request-page').waitFor()
+  if (new URL(page.url()).searchParams.has('action_type')) throw new Error('처리한 푸시 이동 정보가 URL에 남아 있습니다')
   console.log('TV, voice appliance, and PWA Web Push checks passed')
 } finally {
   await browser.close()

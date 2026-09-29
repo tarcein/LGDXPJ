@@ -109,7 +109,7 @@ const policyContent: Record<PolicyKind, { title: string; notice: string; section
     ],
   },
 }
-type ChatMessage = { from: 'me' | 'agent'; text: string; cards?: ChatCard[] }
+type ChatMessage = { from: 'me' | 'agent'; text: string; sentAt?: string; cards?: ChatCard[] }
 type EditingSchedule = { type: 'PERSONAL' | 'CHILD'; id: string }
 type ReviewDraft = { title: string; itemType: string; startsAt: string }
 type SubscriptionState = { plan: string; status: string; developer_preview: boolean; dev_switch_available: boolean; current_period_end?: string | null; next_billing_at?: string | null; cancel_at_period_end: boolean; canceled_at?: string | null; auto_renew_available: boolean; billing_cycle: 'MONTHLY' | 'ANNUAL'; renewal_mode: 'AUTO_BILLING' | 'ONE_TIME' }
@@ -306,6 +306,8 @@ function App() {
   const roleFromUrl = initialQuery.get('role')?.trim().toUpperCase() ?? ''
   const billingResultFromUrl = initialQuery.get('payment') ?? initialQuery.get('billing') ?? ''
   const calendarResultFromUrl = initialQuery.get('calendar') ?? ''
+  const pushActionType = initialQuery.get('action_type')?.trim() ?? ''
+  const pushActionId = initialQuery.get('action_id')?.trim() ?? ''
   const invitedRole = ['PARENT', 'GRANDPARENT', 'CAREGIVER'].includes(roleFromUrl) ? roleFromUrl : 'CAREGIVER'
   const savedScreen = localStorage.getItem(lastScreenKey) as Screen | null
   const restoredScreen = hasFamilyToken() && savedScreen && groups.some(group => group.pages.some(([id]) => id === savedScreen)) && !transientScreens.includes(savedScreen) ? savedScreen : null
@@ -493,6 +495,7 @@ function App() {
   const billingHandledRef = useRef(false)
   const calendarSyncHandledRef = useRef(false)
   const performanceOpenedFamilyRef = useRef('')
+  const pushActionHandledRef = useRef(false)
   const openNoticeRef = useRef<(notice: Notice) => Promise<void>>(async () => undefined)
   const tossWidgetsRef = useRef<TossWidgets | null>(null)
 
@@ -688,10 +691,10 @@ function App() {
   }, [screen, invitationFromUrl])
   useEffect(() => {
     if (screen === 'chat' && activeFamilyId) Promise.all([
-      api<{ messages: { role: string; content: string }[] }>('/assistant/history'),
+      api<{ messages: { role: string; content: string; created_at: string }[] }>('/assistant/history'),
       api<{ usage: { chat_tokens_today: number; chat_tokens_limit: number } }>('/features'),
     ]).then(([history, available]) => {
-      setChatMessages(history.messages.map(m => ({ from: m.role === 'user' ? 'me' : 'agent', text: m.content })))
+      setChatMessages(history.messages.map(m => ({ from: m.role === 'user' ? 'me' : 'agent', text: m.content, sentAt: m.created_at })))
       setChatUsedToday(available.usage.chat_tokens_today)
       setChatTokenLimit(available.usage.chat_tokens_limit)
     }).catch(reportError)
@@ -917,6 +920,21 @@ function App() {
     }
   }
   useEffect(() => { openNoticeRef.current = openNotice })
+  useEffect(() => {
+    if (!boot || !pushActionType || pushActionHandledRef.current) return
+    pushActionHandledRef.current = true
+    const cleanUrl = new URL(location.href)
+    cleanUrl.searchParams.delete('screen')
+    cleanUrl.searchParams.delete('action_type')
+    cleanUrl.searchParams.delete('action_id')
+    history.replaceState(history.state, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash)
+    const notice = boot.notifications.find(item => item.action_type === pushActionType
+      && (!pushActionId || item.action_id === pushActionId)) ?? {
+      id: 'push-action', title: '', body: '', level: 'IMPORTANT', member_id: null,
+      is_read: 1, created_at: new Date().toISOString(), action_type: pushActionType, action_id: pushActionId || null,
+    }
+    void openNoticeRef.current(notice).catch(reportError)
+  }, [boot, pushActionType, pushActionId])
   const enableBrowserNotifications = async (saveSubscription = true): Promise<string | null> => {
     if (Capacitor.isNativePlatform()) {
       const enabled = await setupNativeNotifications()
@@ -1490,17 +1508,17 @@ function App() {
       const assignment = activeAssignmentForItem(item.id)
       const confirmed = confirmedAssignmentForItem(item.id)
       const assignedName = confirmed ? member(confirmed.assignee_id) : item.external_assignee_name?.trim()
-      return { id: `care-${item.id}`, time: item.starts_at!, title: item.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: item.status === 'DONE' || confirmed?.status === 'COMPLETED', unassigned: !assignment && !assignedName, careItem: item, assignment }
+      return { id: `care-${item.id}`, time: item.starts_at!, title: item.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: item.status === 'DONE' || confirmed?.status === 'COMPLETED', unassigned: !assignment && !assignedName, careItem: item, childSchedule: undefined as Bootstrap['child_schedules'][number] | undefined, assignment }
     }),
     ...todayChildSchedules.flatMap(item => {
       const careItems = visibleCareItems.filter(candidate => candidate.child_schedule_id === item.id)
-      if (!careItems.length) return [{ id: `child-${item.id}`, time: item.starts_at, title: item.title, meta: child(item.child_id), completed: false, unassigned: false, careItem: undefined as CareItem | undefined, assignment: undefined as Assignment | undefined }]
+      if (!careItems.length) return [{ id: `child-${item.id}`, time: item.starts_at, title: item.title, meta: child(item.child_id), completed: false, unassigned: false, careItem: undefined as CareItem | undefined, childSchedule: item, assignment: undefined as Assignment | undefined }]
       return careItems.map(careItem => {
         const assignment = activeAssignmentForItem(careItem.id)
         const confirmed = confirmedAssignmentForItem(careItem.id)
         const externalName = careItem.external_assignee_name?.trim()
         const assignedName = confirmed ? member(confirmed.assignee_id) : externalName
-        return { id: `child-${careItem.id}`, time: careItem.starts_at ?? item.starts_at, title: careItem.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: careItem.status === 'DONE' || confirmed?.status === 'COMPLETED', unassigned: !assignment && !externalName, careItem, assignment }
+        return { id: `child-${careItem.id}`, time: careItem.starts_at ?? item.starts_at, title: careItem.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: careItem.status === 'DONE' || confirmed?.status === 'COMPLETED', unassigned: !assignment && !externalName, careItem, childSchedule: item, assignment }
       })
     }),
   ].sort((left, right) => left.time.localeCompare(right.time))
@@ -1560,7 +1578,8 @@ function App() {
     setChatBusy(true); setError('')
     try {
       const result = await send<ChatAnswer>('/assistant/chat', 'POST', { message: text })
-      setChatMessages(previous => [...previous, { from: 'me', text: compactChatTimes(result.message) }, { from: 'agent', text: compactChatTimes(result.answer), cards: result.cards.map(card => ({ ...card, description: compactChatTimes(card.description) })) }])
+      const sentAt = new Date().toISOString()
+      setChatMessages(previous => [...previous, { from: 'me', text: compactChatTimes(result.message), sentAt }, { from: 'agent', text: compactChatTimes(result.answer), sentAt, cards: result.cards.map(card => ({ ...card, description: compactChatTimes(card.description) })) }])
       setChatUsedToday(result.usage.used_today); setChatTokenLimit(result.usage.limit); setChatDraft('')
       if (result.schedule_changes.length || result.schedule_creations?.length) await load()
     } catch (e) { reportError(e) }
@@ -1573,7 +1592,8 @@ function App() {
     try {
       const form = new FormData(); form.append('file', file)
       const result = await upload<ChatAnswer & { transcript: string }>('/assistant/voice', form)
-      setChatMessages(previous => [...previous, { from: 'me', text: compactChatTimes(result.transcript) }, { from: 'agent', text: compactChatTimes(result.answer), cards: result.cards.map(card => ({ ...card, description: compactChatTimes(card.description) })) }])
+      const sentAt = new Date().toISOString()
+      setChatMessages(previous => [...previous, { from: 'me', text: compactChatTimes(result.transcript), sentAt }, { from: 'agent', text: compactChatTimes(result.answer), sentAt, cards: result.cards.map(card => ({ ...card, description: compactChatTimes(card.description) })) }])
       setChatUsedToday(result.usage.used_today); setChatTokenLimit(result.usage.limit)
       if (result.schedule_changes.length || result.schedule_creations?.length) await load()
     } catch (e) { reportError(e) }
@@ -1939,21 +1959,24 @@ function App() {
     if (!confirm(`${careItem.title}을(를) 삭제할까요?`)) return
     void run(() => send('/care-items/' + careItem.id, 'DELETE'), '삭제했어요')
   }
-  const deleteSchedule = (deleteScope?: 'SINGLE' | 'FUTURE') => {
-    if (!editingSchedule) return
-    const original = editingSchedule.type === 'CHILD'
-      ? boot?.child_schedules.find(item => item.id === editingSchedule.id)
-      : boot?.schedules.find(item => item.id === editingSchedule.id)
+  const deleteSchedule = (deleteScope?: 'SINGLE' | 'FUTURE', target: EditingSchedule | null = editingSchedule) => {
+    if (!target) return
+    const original = target.type === 'CHILD'
+      ? boot?.child_schedules.find(item => item.id === target.id)
+      : boot?.schedules.find(item => item.id === target.id)
     if (original?.recurrence_id && !deleteScope) {
+      setEditingSchedule(target)
       setRecurrenceDeleteScope('SINGLE')
       setRecurrenceDeletePrompt(true)
       return
     }
     if (!original?.recurrence_id && !confirm('이 일정을 삭제할까요?')) return
-    const target = editingSchedule
+    const closeFormAfterDelete = scheduleSheet === 'FORM'
     void run(async () => {
       await send(`/${target.type === 'CHILD' ? 'child-schedules' : 'schedules'}/${target.id}?delete_scope=${deleteScope ?? 'SINGLE'}`, 'DELETE')
-      setScheduleTitle(''); closeScheduleEdit()
+      setScheduleTitle('')
+      if (closeFormAfterDelete) closeScheduleEdit()
+      else setEditingSchedule(null)
     }, deleteScope === 'FUTURE' ? '이후 반복 일정도 함께 삭제했어요' : '일정을 삭제했어요')
   }
 
@@ -2299,7 +2322,7 @@ function App() {
     <Card className="home-timeline exact-timeline">
       {homeEvents.map(event => <div key={event.id} className="home-schedule-row-wrap">
         <button disabled={!event.assignment && !event.unassigned} className={`home-schedule-row ${event.completed ? 'completed' : event.active ? 'current' : event.elapsed ? 'elapsed' : 'upcoming'}`} onClick={() => { if (event.assignment) { setAssignmentId(event.assignment.id); setViewer(event.assignment.assignee_id); go('assignmentDetail') } else if (event.unassigned && event.careItem) void openSuggestion(event.careItem) }}><time>{formatTime(event.time)}</time><span><strong>{event.title}</strong><small>{event.active ? `진행 중 · ${event.meta}` : event.meta}</small></span>{event.completed ? <b className="done"><img src={homeScheduleDoneIcon} alt="완료" /></b> : event.active || event.assignment ? <b>›</b> : null}</button>
-        {event.careItem && <button className="home-schedule-row-delete" aria-label="일정 삭제" onClick={() => deleteCareItem(event.careItem!)}>✕</button>}
+        {(event.childSchedule || event.careItem) && <button className="home-schedule-row-delete" aria-label="일정 삭제" onClick={() => event.childSchedule ? deleteSchedule(undefined, { type: 'CHILD', id: event.childSchedule.id }) : deleteCareItem(event.careItem!)}>✕</button>}
       </div>)}
       {!homeEvents.length && <p className="empty-line">오늘 등록된 일정이 없어요</p>}
     </Card>
@@ -2476,7 +2499,7 @@ function App() {
         .filter(item => item.starts_at && dateKey(item.starts_at) >= todayKey && item.status !== 'NEEDS_REVIEW' && !assignedItemIds.has(item.id))
         .sort((left, right) => (left.starts_at ?? '').localeCompare(right.starts_at ?? ''))
         .slice(0, 12)
-        .map(item => ({ id: 'preview-' + item.id, kind: 'preview' as const, title: item.title, childName: child(item.child_id), date: `${formatDate(item.starts_at)} ${formatTime(item.starts_at)}`.trim(), due: dayDistance(item.starts_at), reason: '담당자가 아직 정해지지 않았어요', onOpen: () => go('assignments') })),
+        .map(item => ({ id: 'preview-' + item.id, kind: 'preview' as const, title: item.title, childName: child(item.child_id), date: `${formatDate(item.starts_at)} ${formatTime(item.starts_at)}`.trim(), due: dayDistance(item.starts_at), reason: '담당자가 아직 정해지지 않았어요', onOpen: () => void openSuggestion(item) })),
     ]
     const visibleNeedsRows = needsRows.filter(row => careNeedsFilter === 'all' || row.kind === careNeedsFilter)
     const careKindLabel = (kind: 'conflict' | 'preview') => kind === 'conflict' ? '일정 충돌' : '미리 확인'
@@ -2727,7 +2750,13 @@ function App() {
     <div className="assistant-token-bar"><div><span><i />AI 토큰</span><strong>{chatRemaining.toLocaleString()} <small>/ {chatTokenLimit.toLocaleString()}</small></strong></div><div className="assistant-token-track"><i style={{ width: `${chatRemainingPercent}%` }} /></div></div>
     <div ref={chatBodyRef} className="assistant-chat-body">
       {!chatMessages.length && <Card className="chat-intro"><img className="voice-mark" src={voiceIcon} alt="" /><strong>무엇을 도와드릴까요?</strong><p>가족방의 일정·돌봄 정보·배정을 바탕으로<br />AI가 답해요. 배정 변경은 확인 없이 실행하지 않아요.</p></Card>}
-      <div className="chat-thread">{chatMessages.map((m, index) => <div key={index} className={'chat-bubble ' + m.from}><div className="chat-copy">{m.text}</div>{m.from === 'agent' && m.cards?.map((card, cardIndex) => <article className="chat-summary-card" key={card.title + cardIndex}><small>{card.eyebrow}</small><strong>{card.title}</strong><p>{card.description}</p>{card.screen && <button onClick={() => { trackPerformanceEvent('chatbot_action_opened', { screen: card.screen }); go(card.screen as Screen) }}>{chatScreenLabel[card.screen as Screen] ?? '관련 화면 보기'}</button>}</article>)}</div>)}</div>
+      <div className="chat-thread">{chatMessages.map((m, index) => {
+        const sentAt = m.sentAt ?? new Date().toISOString()
+        const messageDay = dateKey(sentAt)
+        const previousSentAt = chatMessages[index - 1]?.sentAt
+        const showDate = !previousSentAt || dateKey(previousSentAt) !== messageDay
+        return <Fragment key={sentAt + index}>{showDate && <div className="chat-date-divider" role="separator"><span>{new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(sentAt))}</span></div>}<div className={'chat-bubble ' + m.from}><div className="chat-copy">{m.text}</div>{m.from === 'agent' && m.cards?.map((card, cardIndex) => <article className="chat-summary-card" key={card.title + cardIndex}><small>{card.eyebrow}</small><strong>{card.title}</strong><p>{card.description}</p>{card.screen && <button onClick={() => { trackPerformanceEvent('chatbot_action_opened', { screen: card.screen }); go(card.screen as Screen) }}>{chatScreenLabel[card.screen as Screen] ?? '관련 화면 보기'}</button>}</article>)}</div></Fragment>
+      })}</div>
       <div className="chat-prompts">{['확인할 알림 알려줘', '오늘 담당 배정은?', '등록된 일정은?', '내일 준비물 확인'].map(text => <button key={text} disabled={chatBusy} onClick={() => sendChat(text)}>{text}</button>)}</div>
     </div>
     {chatBusy && <div className="assistant-chat-loading" role="status" aria-live="polite" aria-label="답변을 준비하고 있어요"><div>{[chatLoading1, chatLoading2, chatLoading3, chatLoading4].map((source, index) => <img key={source} src={source} alt="" style={{ animationDelay: `${index * .38}s` }} />)}</div><span>답변을 준비하고 있어요</span></div>}

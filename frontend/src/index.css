@@ -546,6 +546,9 @@ input[type="datetime-local"]::-webkit-date-and-time-value { min-width: 0; margin
 .voice-actions { display: flex; gap: 8px; margin-top: 10px; }
 .voice-actions button { flex: 1; min-width: 0; padding: 12px; font-size: 14px; }
 .chat-thread { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; padding: 8px 0 20px; }
+.chat-date-divider { display: flex; align-items: center; align-self: stretch; gap: 10px; margin: 8px 0 5px; color: #8d929b; font-size: 10px; white-space: nowrap; }
+.chat-date-divider::before, .chat-date-divider::after { height: 1px; flex: 1; background: #dfe2e8; content: ''; }
+.chat-date-divider span { padding: 4px 9px; border-radius: 999px; background: #ebeef3; }
 .chat-bubble.me { align-self: flex-end; background: #c4123f; color: #fff; border-bottom-right-radius: 4px; }
 .chat-prompts { display: flex; gap: 6px; overflow-x: auto; margin: 6px 0 15px; }
 .chat-prompts button { flex: none; padding: 8px 10px; border-radius: 15px; color: #c4123f; background: #fff; font-size: 10px; }

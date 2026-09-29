@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from urllib.parse import urlencode
 
 from cryptography.hazmat.primitives import serialization
 from py_vapid import Vapid
@@ -82,7 +83,12 @@ def send_push(devices: list[dict], title: str, body: str,
     subject = setting("VAPID_SUBJECT")
     if not private_key or not subject:
         return []
-    payload = json.dumps({"title": title, "body": body, **data, "url": "/?screen=notifications"}, ensure_ascii=False)
+    target = {"screen": "notifications"}
+    if action_type:
+        target["action_type"] = action_type
+    if action_id:
+        target["action_id"] = action_id
+    payload = json.dumps({"title": title, "body": body, **data, "url": f"/?{urlencode(target)}"}, ensure_ascii=False)
     stale: list[str] = []
     for token in [device["token"] for device in devices if device["platform"] == "WEB"]:
         try:

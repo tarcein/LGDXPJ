@@ -978,7 +978,7 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual(stale, [])
         payload = json.loads(deliver.call_args.kwargs["data"])
         self.assertEqual(payload["action_id"], "assignment-1")
-        self.assertEqual(payload["url"], "/?screen=notifications")
+        self.assertEqual(payload["url"], "/?screen=notifications&action_type=ASSIGNMENT_REQUEST&action_id=assignment-1")
 
         invalid = self.client.post("/api/push-tokens", json={"token": "not-a-subscription-json-value", "platform": "WEB"})
         self.assertEqual(invalid.status_code, 422)

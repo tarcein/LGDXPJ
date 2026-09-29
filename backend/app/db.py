@@ -337,6 +337,7 @@ CREATE TABLE IF NOT EXISTS performance_event (
 CREATE INDEX IF NOT EXISTS idx_item_family_status ON care_item(family_id, status);
 CREATE INDEX IF NOT EXISTS idx_child_schedule_family ON child_schedule(family_id, child_id, starts_at);
 CREATE INDEX IF NOT EXISTS idx_assignment_family ON care_assignment(family_id, status);
+CREATE INDEX IF NOT EXISTS idx_assignment_family_item ON care_assignment(family_id, item_id);
 CREATE INDEX IF NOT EXISTS idx_notification_member ON notification(family_id, member_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_emergency_family_status ON emergency_request(family_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_media_family_created ON media_asset(family_id, created_at);
@@ -466,6 +467,10 @@ def initialize() -> None:
                     ((registered_at + timedelta(microseconds=index)).isoformat(), member["id"]),
                 )
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_external_schedule ON personal_schedule(family_id, member_id, external_source, external_id) WHERE external_id IS NOT NULL")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_item_family_schedule ON care_item(family_id, child_schedule_id)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_child_schedule_recurrence ON child_schedule(family_id, recurrence_id, starts_at)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_personal_schedule_recurrence ON personal_schedule(family_id, recurrence_id, starts_at)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_notification_family_action ON notification(family_id, action_type, action_id)")
         db.execute("INSERT INTO notification_preference(member_id) SELECT id FROM family_member WHERE 1=1 ON CONFLICT(member_id) DO NOTHING")
         db.execute("""INSERT INTO family_data_permission(member_id, scope, is_allowed)
                       SELECT id, 'SCHEDULE_DETAIL', 0 FROM family_member WHERE 1=1
