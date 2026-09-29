@@ -203,7 +203,7 @@ context_scope는 이번 질문에 맞춰 조회한 데이터 영역입니다. �
 - cards에는 가장 중요한 일정·알림·혜택만 최대 5개 담고, 관련 화면이 있으면 정확한 screen 값을 사용합니다.
 - 앱 사용법을 물으면 capability_catalog를 근거로 실제 화면 경로를 안내합니다.
 
-일정 등록·변경 원칙:
+일정 등록·변경·삭제 원칙:
 - 사용자가 '등록해줘', '추가해줘', '일정에 넣어줘'처럼 실행을 명확히 요청한 경우에만 schedule_creations를 만듭니다.
 - 위 실행 표현과 대상·날짜·시각이 모두 있으면 기존 일정 조회로 해석하지 말고 반드시 schedule_creations에 1개 이상 넣습니다. 등록된 일정이 없다는 답변을 하지 않습니다.
 - '내 일정', '내 개인 일정', '퇴근', '운동'은 PERSONAL입니다. '지우 일정', '아이 학원'처럼 아이 이름이 있으면 CHILD입니다.
@@ -213,6 +213,9 @@ context_scope는 이번 질문에 맞춰 조회한 데이터 영역입니다. �
 - context에 있는 정확한 schedule_id만 사용합니다. 대상을 하나로 특정할 수 없거나 날짜·시간이 불명확하면 변경하지 말고 질문합니다.
 - 개인 일정은 current_member 소유 일정만, 아이 일정은 family의 child_schedules만 변경 대상으로 삼습니다.
 - 외부 캘린더에서 가져온 일정은 앱에서 직접 변경할 수 없으므로 변경 명령을 만들지 않습니다.
+- 사용자가 '삭제해줘', '지워줘', '없애줘'처럼 실행을 명확히 요청한 경우에만 schedule_deletions를 만듭니다.
+- 삭제 대상을 하나로 특정할 수 없으면 삭제하지 말고 어떤 일정인지 질문합니다. 반복 일정은 사용자가 '이후 일정도', '앞으로 전부'처럼 명시한 경우에만 FUTURE이며, 그 외에는 SINGLE입니다.
+- 개인 일정은 current_member 소유 일정만 삭제할 수 있고, 외부 캘린더 일정은 앱에서 직접 삭제할 수 없습니다.
 - 실제 반영 여부는 서버가 검증하므로 답변에서 미리 완료됐다고 단정하지 않습니다.
 
 숙제 등록 원칙:
@@ -280,6 +283,16 @@ def answer(message: str, context: str, history: list[dict], max_output_tokens: i
                         "required": ["schedule_type", "child_id", "title", "starts_at", "ends_at", "kind", "category"],
                         "additionalProperties": False,
                     }},
+                    "schedule_deletions": {"type": "array", "maxItems": 3, "items": {
+                        "type": "object",
+                        "properties": {
+                            "schedule_type": {"type": "string", "enum": ["PERSONAL", "CHILD"]},
+                            "schedule_id": {"type": "string"},
+                            "delete_scope": {"type": "string", "enum": ["SINGLE", "FUTURE"]},
+                        },
+                        "required": ["schedule_type", "schedule_id", "delete_scope"],
+                        "additionalProperties": False,
+                    }},
                     "care_item_creations": {"type": "array", "maxItems": 3, "items": {
                         "type": "object",
                         "properties": {
@@ -292,7 +305,7 @@ def answer(message: str, context: str, history: list[dict], max_output_tokens: i
                         "additionalProperties": False,
                     }},
                 },
-                "required": ["answer", "cards", "schedule_changes", "schedule_creations", "care_item_creations"],
+                "required": ["answer", "cards", "schedule_changes", "schedule_creations", "schedule_deletions", "care_item_creations"],
                 "additionalProperties": False,
             },
         }},
@@ -315,6 +328,8 @@ def agent_actions(message: str, context: str) -> tuple[dict, int]:
             "사용자의 한국어 일정·숙제 실행 명령만 구조화하세요. 현재 가족 데이터의 ID만 사용하세요. "
             "등록해줘·추가해줘·일정에 넣어줘처럼 명시한 새 일정은 반드시 schedule_creations에 넣습니다. "
             "바꿔줘·변경해줘·수정해줘처럼 명시하고 기존 일정을 하나로 특정할 수 있을 때만 schedule_changes에 넣습니다. "
+            "삭제해줘·지워줘·없애줘처럼 명시하고 기존 일정을 하나로 특정할 수 있을 때만 schedule_deletions에 넣습니다. "
+            "반복 일정은 이후·앞으로·전부 삭제가 명시된 경우에만 FUTURE, 아니면 SINGLE입니다. "
             "내 일정·퇴근·운동은 PERSONAL이며 current_member의 일정입니다. 아이 이름이 명시된 일정은 CHILD입니다. "
             "숙제·과제·문제집·일기·독서록·보고서는 일정이 아닌 HOMEWORK이며 care_item_creations에 넣습니다. "
             "HOMEWORK는 정확한 child_id와 제목이 필요하고, 마감일이 없으면 due_date는 null입니다. "
@@ -352,6 +367,15 @@ def agent_actions(message: str, context: str) -> tuple[dict, int]:
                         "required": ["schedule_type", "child_id", "title", "starts_at", "ends_at", "kind", "category"],
                         "additionalProperties": False,
                     }},
+                    "schedule_deletions": {"type": "array", "maxItems": 3, "items": {
+                        "type": "object", "properties": {
+                            "schedule_type": {"type": "string", "enum": ["PERSONAL", "CHILD"]},
+                            "schedule_id": {"type": "string"},
+                            "delete_scope": {"type": "string", "enum": ["SINGLE", "FUTURE"]},
+                        },
+                        "required": ["schedule_type", "schedule_id", "delete_scope"],
+                        "additionalProperties": False,
+                    }},
                     "care_item_creations": {"type": "array", "maxItems": 3, "items": {
                         "type": "object", "properties": {
                             "item_type": {"type": "string", "enum": ["HOMEWORK"]},
@@ -363,7 +387,7 @@ def agent_actions(message: str, context: str) -> tuple[dict, int]:
                         "additionalProperties": False,
                     }},
                 },
-                "required": ["schedule_changes", "schedule_creations", "care_item_creations"],
+                "required": ["schedule_changes", "schedule_creations", "schedule_deletions", "care_item_creations"],
                 "additionalProperties": False,
             },
         }},

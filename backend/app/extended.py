@@ -62,6 +62,7 @@ CHAT_TOPIC_TERMS = {
         "일정", "스케줄", "캘린더", "달력", "오늘", "내일", "모레", "이번주", "다음주",
         "등원", "하원", "학원", "학교", "출근", "퇴근", "운동", "약속", "몇시",
         "등록해", "추가해", "넣어줘", "바꿔", "변경해", "옮겨", "수정해", "미뤄", "당겨",
+        "삭제해", "지워", "없애",
     ),
     "care": (
         "돌봄", "케어", "담당", "배정", "맡", "누가", "요청", "수락", "거절", "완료",
@@ -587,6 +588,37 @@ def _apply_schedule_creations(creations: list[dict], original_message: str) -> l
     return applied
 
 
+def _apply_schedule_deletions(deletions: list[dict], original_message: str) -> list[dict]:
+    explicit = any(term in original_message.replace(" ", "") for term in ("삭제해", "지워", "없애"))
+    if not explicit or not deletions:
+        return []
+    applied: list[dict] = []
+    for deletion in deletions[:3]:
+        schedule_type = deletion.get("schedule_type")
+        schedule_id = str(deletion.get("schedule_id") or "")
+        delete_scope = deletion.get("delete_scope") if deletion.get("delete_scope") in {"SINGLE", "FUTURE"} else "SINGLE"
+        table = "personal_schedule" if schedule_type == "PERSONAL" else "child_schedule" if schedule_type == "CHILD" else ""
+        if not table or not schedule_id:
+            continue
+        with database() as db:
+            found = db.execute(f"SELECT * FROM {table} WHERE id = ? AND family_id = ?", (schedule_id, family_id())).fetchone()
+            if found is None:
+                continue
+            row = dict(found)
+        if table == "personal_schedule" and (row["member_id"] != member_id() or row["external_source"]):
+            continue
+        try:
+            from .main import delete_child_schedule, delete_schedule
+            result = (delete_schedule(schedule_id, delete_scope)
+                      if table == "personal_schedule" else delete_child_schedule(schedule_id, delete_scope))
+        except HTTPException:
+            continue
+        applied.append({"schedule_type": schedule_type, "schedule_id": schedule_id,
+                        "title": row["title"], "starts_at": row["starts_at"],
+                        "delete_scope": delete_scope, "deleted_count": result["deleted_count"]})
+    return applied
+
+
 def _apply_care_item_creations(creations: list[dict], original_message: str) -> list[dict]:
     explicit = any(term in original_message.replace(" ", "") for term in (
         "등록해", "추가해", "넣어줘", "기록해",
@@ -625,12 +657,13 @@ def _chat(message: str, input_type: str = "TEXT") -> dict:
     ))
     wants_schedule_creation = wants_creation and not wants_homework_creation
     wants_change = any(term in compact_message for term in ("변경해", "바꿔", "옮겨", "수정해", "미뤄", "당겨"))
+    wants_delete = any(term in compact_message for term in ("삭제해", "지워", "없애"))
     wants_emergency_help = (
         "긴급" in compact_message and any(term in compact_message for term in ("도움", "요청", "연락", "돌봄"))
     ) or any(term in compact_message for term in ("대안연락", "대체연락", "대체돌봄요청"))
-    action_request = wants_creation or wants_change
-    personal_schedule_limit = 4 if wants_creation else 8 if wants_change else 10
-    child_schedule_limit = 4 if wants_creation else 8 if wants_change else 12
+    action_request = wants_creation or wants_change or wants_delete
+    personal_schedule_limit = 4 if wants_creation else 8 if wants_change or wants_delete else 10
+    child_schedule_limit = 4 if wants_creation else 8 if wants_change or wants_delete else 12
     with database() as db:
         plan = _plan(db)
         used = _chat_used(db)
@@ -738,10 +771,11 @@ def _chat(message: str, input_type: str = "TEXT") -> dict:
         raise HTTPException(502, detail={"code": "AI_USAGE_MISSING", "message": "AI 서비스 사용량을 확인하지 못했습니다"})
     if isinstance(structured, str):
         structured = {"answer": structured, "cards": [], "schedule_changes": [],
-                      "schedule_creations": [], "care_item_creations": []}
+                      "schedule_creations": [], "schedule_deletions": [], "care_item_creations": []}
     if ((wants_schedule_creation and not structured.get("schedule_creations"))
             or (wants_homework_creation and not structured.get("care_item_creations"))
-            or (wants_change and not structured.get("schedule_changes"))):
+            or (wants_change and not structured.get("schedule_changes"))
+            or (wants_delete and not structured.get("schedule_deletions"))):
         action_context = json.dumps({
             key: context_data[key] for key in (
                 "current_time", "current_member", "members", "children",
@@ -755,11 +789,14 @@ def _chat(message: str, input_type: str = "TEXT") -> dict:
             structured["care_item_creations"] = focused.get("care_item_creations", [])
         if wants_change and not structured.get("schedule_changes"):
             structured["schedule_changes"] = focused.get("schedule_changes", [])
+        if wants_delete and not structured.get("schedule_deletions"):
+            structured["schedule_deletions"] = focused.get("schedule_deletions", [])
         tokens += focused_tokens
     answer = str(structured.get("answer") or "요청하신 내용을 확인하지 못했어요.").strip()
     cards = [card for card in structured.get("cards", []) if isinstance(card, dict)][:5]
     applied = _apply_schedule_changes(structured.get("schedule_changes", []), message)
     created = _apply_schedule_creations(structured.get("schedule_creations", []), message)
+    deleted = _apply_schedule_deletions(structured.get("schedule_deletions", []), message)
     care_items_created = _apply_care_item_creations(structured.get("care_item_creations", []), message)
     collisions = [collision for item in [*applied, *created] for collision in item.get("collisions", [])]
     if applied:
@@ -777,6 +814,17 @@ def _chat(message: str, input_type: str = "TEXT") -> dict:
         if not any(card.get("screen") == "schedule" for card in cards):
             cards.append({"eyebrow": "일정 등록 완료", "title": created[0]["title"],
                           "description": "등록된 일정을 캘린더에서 확인해보세요.", "screen": "schedule"})
+    if deleted:
+        if any(term in answer for term in ("삭제 기능", "삭제할 수 없", "제공하지 않")):
+            answer = "요청하신 일정을 삭제했어요."
+        answer += "\n\n삭제한 일정\n" + "\n".join(
+            f"- {item['title']} · {item['starts_at']}" +
+            (f" 외 {item['deleted_count'] - 1}건" if item["deleted_count"] > 1 else "")
+            for item in deleted
+        )
+        if not any(card.get("screen") == "schedule" for card in cards):
+            cards.append({"eyebrow": "일정 삭제 완료", "title": deleted[0]["title"],
+                          "description": "남은 일정을 캘린더에서 확인해보세요.", "screen": "schedule"})
     if care_items_created:
         answer += "\n\n등록한 숙제\n" + "\n".join(
             f"- {item['title']}" + (f" · {item['due_date']}" if item.get("due_date") else "")
@@ -817,12 +865,14 @@ def _chat(message: str, input_type: str = "TEXT") -> dict:
             target_member_id=member_id(), correlation_id=query_id,
             properties={"tokens": tokens, "card_count": len(cards),
                         "schedule_changes": len(applied), "schedule_creations": len(created),
+                        "schedule_deletions": len(deleted),
                         "care_item_creations": len(care_items_created)},
         )
     links = [{"label": f"{card.get('title') or '관련 내용'} 보기", "screen": card.get("screen")}
              for card in cards if card.get("screen")]
     return {"message": message, "answer": answer, "cards": cards, "links": links,
             "schedule_changes": applied, "schedule_creations": created,
+            "schedule_deletions": deleted,
             "care_item_creations": care_items_created,
             "usage": {"total_tokens": tokens, "used_today": usage["chat_tokens_today"],
                       "limit": usage["chat_tokens_limit"], "remaining": usage["chat_tokens_remaining"]},

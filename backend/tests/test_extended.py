@@ -1273,6 +1273,40 @@ class ExtendedFlowTest(unittest.TestCase):
         saved = next(item for item in self.client.get("/api/bootstrap", headers=headers).json()["schedules"] if item["id"] == created["id"])
         self.assertEqual(saved["starts_at"], "2026-09-20T11:00:00+09:00")
 
+    def test_chat_can_delete_personal_and_child_schedules_and_restore_its_card(self):
+        room = self.client.post("/api/families", json={"name": "삭제 가족", "owner_name": "엄마"}).json()
+        headers = {"Authorization": "Bearer " + room["access_token"]}
+        child = self.client.post("/api/children", headers=headers,
+                                 json={"name": "아이", "age_label": "5세"}).json()
+        personal = self.client.post("/api/schedules", headers=headers, json={
+            "member_id": room["member_id"], "title": "운동",
+            "starts_at": "2026-09-21T09:00:00+09:00", "ends_at": "2026-09-21T10:00:00+09:00",
+        }).json()["schedule"]
+        child_schedule = self.client.post("/api/child-schedules", headers=headers, json={
+            "child_id": child["id"], "title": "미술학원", "category": "ACADEMY",
+            "starts_at": "2026-09-21T16:00:00+09:00", "ends_at": "2026-09-21T17:00:00+09:00",
+        }).json()
+        structured = {
+            "answer": "저는 일정 삭제 기능을 제공하지 않습니다.", "cards": [],
+            "schedule_deletions": [
+                {"schedule_type": "PERSONAL", "schedule_id": personal["id"], "delete_scope": "SINGLE"},
+                {"schedule_type": "CHILD", "schedule_id": child_schedule["id"], "delete_scope": "SINGLE"},
+            ],
+        }
+        with patch("app.extended.ai.answer", return_value=(structured, 40)):
+            response = self.client.post("/api/assistant/chat", headers=headers, json={
+                "message": "9월 21일 운동이랑 미술학원 일정 삭제해줘",
+            })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()["schedule_deletions"]), 2)
+        self.assertNotIn("제공하지 않습니다", response.json()["answer"])
+        snapshot = self.client.get("/api/bootstrap", headers=headers).json()
+        self.assertFalse(any(item["id"] == personal["id"] for item in snapshot["schedules"]))
+        self.assertFalse(any(item["id"] == child_schedule["id"] for item in snapshot["child_schedules"]))
+        card = next(card for card in response.json()["cards"] if card["screen"] == "schedule")
+        history = self.client.get("/api/assistant/history", headers=headers).json()["messages"]
+        self.assertIn(card, history[-1]["cards"])
+
     def test_chat_schedule_collision_returns_a_direct_alternative_action(self):
         room = self.client.post("/api/families", json={"name": "충돌 가족", "owner_name": "엄마"}).json()
         helper = self.client.post("/api/families/join", json={

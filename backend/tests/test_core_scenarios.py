@@ -6,7 +6,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -146,13 +146,14 @@ class CoreScenarioTest(unittest.TestCase):
         self.assertTrue(grandma["can_bundle_children"])
 
     def test_unanswered_pro_request_gets_app_reminder_and_device_outbox_record(self):
-        child_schedule = self.client.post("/api/child-schedules", json={
-            "child_id": "jiu", "title": "피아노", "category": "ACADEMY",
-            "starts_at": "2026-09-24T16:00:00+09:00", "ends_at": None,
-        }).json()
-        assignment = self.client.post("/api/assignments", json={
-            "item_id": child_schedule["care_item_id"], "assignee_id": "grandma",
-        }).json()
+        with patch("app.main.notify"):
+            child_schedule = self.client.post("/api/child-schedules", json={
+                "child_id": "jiu", "title": "피아노", "category": "ACADEMY",
+                "starts_at": "2026-09-24T16:00:00+09:00", "ends_at": None,
+            }).json()
+            assignment = self.client.post("/api/assignments", json={
+                "item_id": child_schedule["care_item_id"], "assignee_id": "grandma",
+            }).json()
         with database() as db:
             db.execute("UPDATE family_group SET plan = 'PRO' WHERE id = 'demo-family'")
             db.execute("UPDATE care_assignment SET created_at = ? WHERE id = ?",
@@ -165,6 +166,66 @@ class CoreScenarioTest(unittest.TestCase):
             outbox = db.execute("SELECT status FROM device_alert_outbox WHERE assignment_id = ?", (assignment["id"],)).fetchone()
         self.assertEqual(notice["title"], "돌봄 요청을 확인해주세요")
         self.assertEqual(outbox["status"], "NOT_CONNECTED")
+
+    def test_unassigned_schedule_gets_one_hour_push_and_care_suggestion_link(self):
+        with patch("app.main.notify"):
+            child_schedule = self.client.post("/api/child-schedules", json={
+                "child_id": "jiu", "title": "피아노", "category": "ACADEMY",
+                "starts_at": "2026-09-24T16:00:00+09:00", "ends_at": None,
+            }).json()
+        self.client.post("/api/push-tokens", json={
+            "token": "unassigned-owner-device-token", "platform": "ANDROID",
+        })
+        with patch("app.reminders._send_push", return_value=[]) as deliver:
+            processed = process_assignment_reminders(datetime(2026, 9, 24, 15, 0, tzinfo=ZoneInfo("Asia/Seoul")))
+        self.assertEqual(processed, 1)
+        with database() as db:
+            notice = db.execute(
+                "SELECT * FROM notification WHERE title = ? AND action_id = ?",
+                ("담당자 배정이 필요해요", child_schedule["care_item_id"]),
+            ).fetchone()
+        self.assertEqual(notice["action_type"], "CARE_SUGGESTION")
+        self.assertEqual(notice["member_id"], "mom")
+        self.assertEqual(deliver.call_args.args[3:], ("CARE_SUGGESTION", child_schedule["care_item_id"]))
+        self.assertEqual(process_assignment_reminders(datetime(2026, 9, 24, 15, 1, tzinfo=ZoneInfo("Asia/Seoul"))), 0)
+
+    def test_overdue_assignment_notifies_caregiver_and_owner_once(self):
+        with database() as db:
+            db.execute(
+                """INSERT INTO care_item(id, family_id, child_id, item_type, title, detail,
+                   starts_at, confidence, status, created_at)
+                   VALUES ('overdue-item', 'demo-family', 'jiu', 'TODO', '피아노 하원', '',
+                           '2026-09-24T16:00:00+09:00', 'HIGH', 'ASSIGNED', '2026-09-24T12:00:00+09:00')"""
+            )
+            db.execute(
+                """INSERT INTO care_assignment(id, family_id, item_id, assignee_id, status, source,
+                   created_at, responded_at, requested_by_member_id)
+                   VALUES ('overdue-assignment', 'demo-family', 'overdue-item', 'grandma', 'ACCEPTED',
+                           'ROLE_MATCH', '2026-09-24T12:00:00+09:00', '2026-09-24T12:01:00+09:00', 'mom')"""
+            )
+            for token, member_id in (("overdue-caregiver-token", "grandma"), ("overdue-owner-token", "mom")):
+                db.execute(
+                    """INSERT INTO push_device_token(token, family_id, member_id, platform, created_at, updated_at)
+                       VALUES (?, 'demo-family', ?, 'ANDROID', '2026-09-24T12:00:00+09:00', '2026-09-24T12:00:00+09:00')""",
+                    (token, member_id),
+                )
+        before = datetime(2026, 9, 24, 15, 59, tzinfo=ZoneInfo("Asia/Seoul"))
+        after = datetime(2026, 9, 24, 16, 1, tzinfo=ZoneInfo("Asia/Seoul"))
+        with patch("app.reminders._send_push", return_value=[]) as deliver:
+            self.assertEqual(process_assignment_reminders(before), 0)
+            self.assertEqual(process_assignment_reminders(after), 1)
+            self.assertEqual(process_assignment_reminders(after + timedelta(minutes=1)), 0)
+        with database() as db:
+            notices = db.execute(
+                """SELECT member_id, action_type FROM notification
+                   WHERE title = '완료 체크가 필요해요' AND action_id = 'overdue-assignment'
+                   ORDER BY member_id"""
+            ).fetchall()
+        self.assertEqual(
+            [(notice["member_id"], notice["action_type"]) for notice in notices],
+            [("grandma", "ASSIGNMENT_REQUEST"), ("mom", "ASSIGNMENT_RESULT")],
+        )
+        self.assertEqual(deliver.call_count, 2)
 
     def test_emergency_reason_accepts_microphone_transcription(self):
         with database() as db:

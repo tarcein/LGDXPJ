@@ -5,7 +5,7 @@ const config: CapacitorConfig = {
   appName: 'ZIPPY',
   webDir: 'dist',
   server: {
-    // Keep native origins secure on both platforms. API traffic uses the public HTTPS backend.
+    url: 'https://zippy.dx6project.site',
     androidScheme: 'https',
     iosScheme: 'capacitor',
   },

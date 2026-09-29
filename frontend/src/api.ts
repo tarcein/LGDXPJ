@@ -48,6 +48,7 @@ export interface ChatAnswer {
   message: string; answer: string; cards: ChatCard[]; links: { label: string; screen: Screen }[];
   schedule_changes: { schedule_type: 'PERSONAL' | 'CHILD'; schedule_id: string; title: string; starts_at: string; ends_at: string | null; collisions?: { item_id: string; title: string }[] }[];
   schedule_creations: { schedule_type: 'PERSONAL' | 'CHILD'; schedule_id: string; title: string; starts_at: string; ends_at: string | null; care_item_id?: string; collisions?: { item_id: string; title: string }[] }[];
+  schedule_deletions: { schedule_type: 'PERSONAL' | 'CHILD'; schedule_id: string; title: string; starts_at: string; delete_scope: 'SINGLE' | 'FUTURE'; deleted_count: number }[];
   care_item_creations: { item_type: 'HOMEWORK'; item_id: string; child_id: string; title: string; due_date: string | null }[];
   usage: { total_tokens: number; used_today: number; limit: number; remaining: number }; plan: string
 }
@@ -156,7 +157,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export const send = <T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', payload: unknown = {}) =>
   api<T>(path, { method, body: JSON.stringify(payload) })
 
-export const upload = <T>(path: string, form: FormData) => api<T>(path, { method: 'POST', body: form })
+export const upload = <T>(path: string, form: FormData, signal?: AbortSignal) => api<T>(path, { method: 'POST', body: form, signal })
 
 export const trackPerformanceEvent = (
   eventName: string,

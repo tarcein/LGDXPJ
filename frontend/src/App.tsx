@@ -513,6 +513,7 @@ function App() {
   const [deviceAlertTestForceOff, setDeviceAlertTestForceOff] = useState(false)
   const contentRef = useRef<HTMLElement>(null)
   const chatBodyRef = useRef<HTMLDivElement>(null)
+  const chatInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -1310,8 +1311,7 @@ function App() {
     if (!Number.isFinite(startsAt)) return false
     const careDate = new Date(careItem.starts_at).toLocaleDateString('sv-SE')
     if (careDate !== new Date(timelineNow).toLocaleDateString('sv-SE')) return false
-    const activeWindow = 30 * 60 * 1000
-    return timelineNow >= startsAt - activeWindow && timelineNow <= startsAt + activeWindow
+    return timelineNow >= startsAt
   }
   const caregiverForCareItem = (careItemId: string) => {
     const assignment = confirmedAssignmentForItem(careItemId)
@@ -1510,6 +1510,11 @@ function App() {
   const homeOpenEmergency = emergencyRequests.find(request => request.status === 'OPEN')
   const homeEmergencyAssignment = homeOpenEmergency ? assignments.find(assignment => assignment.id === homeOpenEmergency.assignment_id) : undefined
   const homeEmergencyItem = homeEmergencyAssignment ? itemFor(homeEmergencyAssignment) : undefined
+  const urgentUnassignedItem = visibleCareItems
+    .filter(item => item.child_schedule_id && item.starts_at && item.status !== 'DONE' && !item.external_assignee_name?.trim())
+    .filter(item => !assignments.some(assignment => assignment.item_id === item.id && ['ACCEPTED', 'COMPLETED'].includes(assignment.status)))
+    .filter(item => { const startsAt = new Date(item.starts_at!).getTime(); return dateKey(item.starts_at!) === todayKey && Number.isFinite(startsAt) && timelineNow >= startsAt - 60 * 60_000 })
+    .sort((left, right) => (left.starts_at ?? '').localeCompare(right.starts_at ?? ''))[0]
   const homeMovingAssignment = assignments.find(a => isLiveAssignment(a))
   const movingAssignment = assignments.find(a => isLiveAssignment(a) && (!careStatusChild || itemFor(a)?.child_id === careStatusChild))
   const movingItem = movingAssignment ? itemFor(movingAssignment) : undefined
@@ -1537,7 +1542,7 @@ function App() {
     const assignment = careRouteAssignment(careItem.id)
     if (careItem.status === 'DONE' || assignment?.status === 'COMPLETED') return 'done'
     const startsAt = careItem.starts_at ? new Date(careItem.starts_at).getTime() : Number.NaN
-    if (careItem.external_assignee_name?.trim() && Number.isFinite(startsAt) && Math.abs(timelineNow - startsAt) <= 30 * 60_000) return 'active'
+    if (careItem.external_assignee_name?.trim() && careItem.starts_at && dateKey(careItem.starts_at) === todayKey && Number.isFinite(startsAt) && timelineNow >= startsAt) return 'active'
     return isLiveAssignment(assignment) ? 'active' : 'future'
   }
   const careRouteSteps = [
@@ -1559,25 +1564,24 @@ function App() {
       const assignment = activeAssignmentForItem(item.id)
       const confirmed = confirmedAssignmentForItem(item.id)
       const assignedName = confirmed ? member(confirmed.assignee_id) : item.external_assignee_name?.trim()
-      return { id: `care-${item.id}`, time: item.starts_at!, title: item.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: item.status === 'DONE' || confirmed?.status === 'COMPLETED', unassigned: !assignment && !assignedName, careItem: item, childSchedule: undefined as Bootstrap['child_schedules'][number] | undefined, assignment }
+      return { id: `care-${item.id}`, time: item.starts_at!, title: item.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: item.status === 'DONE' || confirmed?.status === 'COMPLETED', hasConfirmedCaregiver: !!assignedName, unassigned: !assignment && !assignedName, careItem: item, childSchedule: undefined as Bootstrap['child_schedules'][number] | undefined, assignment }
     }),
     ...todayChildSchedules.flatMap(item => {
       const careItems = visibleCareItems.filter(candidate => candidate.child_schedule_id === item.id)
-      if (!careItems.length) return [{ id: `child-${item.id}`, time: item.starts_at, title: item.title, meta: child(item.child_id), completed: false, unassigned: false, careItem: undefined as CareItem | undefined, childSchedule: item, assignment: undefined as Assignment | undefined }]
+      if (!careItems.length) return [{ id: `child-${item.id}`, time: item.starts_at, title: item.title, meta: child(item.child_id), completed: false, hasConfirmedCaregiver: false, unassigned: false, careItem: undefined as CareItem | undefined, childSchedule: item, assignment: undefined as Assignment | undefined }]
       return careItems.map(careItem => {
         const assignment = activeAssignmentForItem(careItem.id)
         const confirmed = confirmedAssignmentForItem(careItem.id)
         const externalName = careItem.external_assignee_name?.trim()
         const assignedName = confirmed ? member(confirmed.assignee_id) : externalName
-        return { id: `child-${careItem.id}`, time: careItem.starts_at ?? item.starts_at, title: careItem.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: careItem.status === 'DONE' || confirmed?.status === 'COMPLETED', unassigned: !assignment && !externalName, careItem, childSchedule: item, assignment }
+        return { id: `child-${careItem.id}`, time: careItem.starts_at ?? item.starts_at, title: careItem.title, meta: assignedName ? `${child(item.child_id)} · 담당 ${assignedName}` : child(item.child_id), completed: careItem.status === 'DONE' || confirmed?.status === 'COMPLETED', hasConfirmedCaregiver: !!assignedName, unassigned: !assignment && !externalName, careItem, childSchedule: item, assignment }
       })
     }),
   ].sort((left, right) => left.time.localeCompare(right.time))
-  const homeActiveWindow = 30 * 60 * 1000
   const homeEvents = homeEventRows.map(event => {
     const startsAt = new Date(event.time).getTime()
-    const active = !event.completed && Number.isFinite(startsAt) && timelineNow >= startsAt - homeActiveWindow && timelineNow <= startsAt + homeActiveWindow
-    const elapsed = !event.completed && Number.isFinite(startsAt) && timelineNow > startsAt + homeActiveWindow
+    const active = !event.completed && event.hasConfirmedCaregiver && Number.isFinite(startsAt) && timelineNow >= startsAt
+    const elapsed = !event.completed && !active && Number.isFinite(startsAt) && timelineNow > startsAt
     return { ...event, active, elapsed }
   })
   const visibleNotices = boot?.notifications.filter(notice => noticeScope === 'family' || !me?.member.id || !notice.member_id || notice.member_id === me.member.id) ?? []
@@ -1633,29 +1637,34 @@ function App() {
       const sentAt = new Date().toISOString()
       setChatMessages(previous => [...previous, { from: 'me', text: compactChatTimes(result.message), sentAt }, { from: 'agent', text: compactChatTimes(result.answer), sentAt, cards: result.cards.map(card => ({ ...card, description: compactChatTimes(card.description) })) }])
       setChatUsedToday(result.usage.used_today); setChatTokenLimit(result.usage.limit); setChatDraft('')
-      if (result.schedule_changes.length || result.schedule_creations?.length || result.care_item_creations?.length) await load()
+      if (result.schedule_changes.length || result.schedule_creations?.length || result.schedule_deletions?.length || result.care_item_creations?.length) await load()
     } catch (e) { reportError(e) }
     finally { setChatBusy(false) }
   }
   const sendVoice = async (file: File) => {
     if (chatBusy) return
     if (file.size > 20 * 1024 * 1024) { setError('음성 인식 파일은 20MB 이하만 보낼 수 있어요'); return }
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => controller.abort(), 45_000)
     setChatBusy(true); setError('')
     try {
       const form = new FormData(); form.append('file', file)
       form.append('purpose', 'CHAT')
-      const result = await upload<{ text: string }>('/audio/transcribe', form)
+      const result = await upload<{ text: string }>('/audio/transcribe', form, controller.signal)
       setChatDraft(result.text); setVoiceConfirming(true)
       speak(`${result.text}. 이렇게 들었어요. 맞나요?`, { rate: .96, pitch: 1.05 })
-    } catch (e) { reportError(e) }
-    finally { setChatBusy(false) }
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') setError('음성 인식 시간이 길어져 중단했어요. 다시 말씀해주세요.')
+      else reportError(e)
+    } finally { window.clearTimeout(timeoutId); setChatBusy(false) }
   }
   const toggleRecording = async () => {
-    if (recording) { recorderRef.current?.stop(); return }
+    if (recorderRef.current?.state === 'recording') { recorderRef.current.stop(); return }
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
       setError('음성 인식은 HTTPS 주소 또는 이 PC의 localhost에서 사용할 수 있어요. 휴대폰은 start-secure-phone.ps1로 실행한 HTTPS 주소로 접속해주세요.'); return
     }
     try {
+      window.speechSynthesis?.cancel()
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
       const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find(type => MediaRecorder.isTypeSupported(type))
       const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
@@ -1663,8 +1672,9 @@ function App() {
       recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data) }
       recorder.onstop = () => {
         setRecording(false); stream.getTracks().forEach(track => track.stop())
+        if (recorderRef.current === recorder) recorderRef.current = null
         const type = recorder.mimeType.split(';')[0] || 'audio/webm'
-        if (chunks.length && !cancelRecordingRef.current) sendVoice(new File(chunks, `care-voice.${type.includes('mp4') ? 'm4a' : 'webm'}`, { type }))
+        if (chunks.length && !cancelRecordingRef.current) void sendVoice(new File(chunks, `care-voice.${type.includes('mp4') ? 'm4a' : 'webm'}`, { type }))
       }
       cancelRecordingRef.current = false; recorderRef.current = recorder; recorder.start(); setRecording(true)
     } catch (e) {
@@ -1672,6 +1682,15 @@ function App() {
       else if (e instanceof DOMException && e.name === 'NotFoundError') setError('사용할 수 있는 마이크를 찾지 못했어요.')
       else reportError(e)
     }
+  }
+  const editVoiceText = () => {
+    window.speechSynthesis?.cancel()
+    setVoiceConfirming(false)
+    requestAnimationFrame(() => {
+      const input = chatInputRef.current
+      input?.focus()
+      input?.setSelectionRange(input.value.length, input.value.length)
+    })
   }
 
   const transcribeCompletionNote = async (file: File) => {
@@ -2372,6 +2391,7 @@ function App() {
   if (boot && screen === 'home') page = <div className="figma-home">
     {homeEmergencyAssignment && homeEmergencyItem ? <button className="home-travel emergency" onClick={() => go('emergency')}><span className="travel-avatar">!</span><span><strong>긴급 도움 요청으로 조율 중</strong><small>{child(homeEmergencyItem.child_id)} · {homeEmergencyItem.title} · 대체 담당자를 찾고 있어요</small></span><b>›</b></button> : homeCareAssignment && homeCareItem ? <button className="home-travel" onClick={() => go('assignments')}><span className="travel-avatar">{member(homeCareAssignment.assignee_id).slice(0, 1)}</span><span><strong>{member(homeCareAssignment.assignee_id)}님과 {homeCareItem.title} {homeCareIsMoving ? '중' : '예정'}</strong><small>{child(homeCareItem.child_id)} · {formatTime(homeCareItem.starts_at)} {homeCareIsMoving ? '진행 중' : '예정'}</small></span><b>›</b></button> : null}
     {activeExceptions.length > 0 && <button className="family-alert home-alert" onClick={() => go('exception')}><span className="small-badge danger">확인 {activeExceptions.length}</span><strong>{activeExceptions[0].reason}</strong><span>›</span></button>}
+    {urgentUnassignedItem && <button className="family-alert home-alert" onClick={() => void openSuggestion(urgentUnassignedItem)}><span className="small-badge danger">확인 필요</span><strong>{urgentUnassignedItem.title} · 담당자 배정이 필요해요</strong><span>›</span></button>}
     <Section>오늘 일정</Section>
     <Card className="home-timeline exact-timeline">
       {homeEvents.map(event => <div key={event.id} className="home-schedule-row-wrap">
@@ -2383,10 +2403,11 @@ function App() {
     <Section>지금 해야 할 것</Section>
     <div className="home-now-list">
       {activeExceptions.slice(0, 1).map(exception => <button key={exception.id} className="attention" onClick={() => go('exception')}><i><img src={homeAttentionIcon} alt="" /></i><span><strong>지금 확인이 필요해요</strong><small>{exception.reason}</small></span><b>›</b></button>)}
+      {urgentUnassignedItem && <button className="attention" onClick={() => void openSuggestion(urgentUnassignedItem)}><i>!</i><span><strong>담당자 배정이 필요해요</strong><small>{urgentUnassignedItem.title} · 담당자가 아직 없어요</small></span><b>›</b></button>}
       {pendingHandoffs.slice(0, 1).map(handoff => { const summary = handoffSummary(handoff); return <button key={handoff.id} onClick={() => go('tasks')}><i><img src={homeHandoffIcon} alt="" /></i><span><strong>인수인계 확인</strong><small>{member(handoff.from_member_id)} → {member(handoff.to_member_id)}{summary.time ? ` · ${summary.time}` : ''} · {summary.note}</small></span><b>›</b></button> })}
       {homeSupplyAlerts.slice(0, 3).map(item => <button key={item.id} className="attention" onClick={() => go('supplies')}><i><img src={homeSupplyIcon} alt="" /></i><span><strong>{dueDateOf(item) === todayKey ? '오늘 준비물 확인' : '내일 준비물 확인'}</strong><small>{item.title} · {child(item.child_id)}{item.detail ? ` · ${item.detail}` : ''}</small></span><b>›</b></button>)}
       {homeHomeworkAlerts.slice(0, 3).map(item => <button key={item.id} className="attention" onClick={() => go('homework')}><i style={{ fontSize: 22 }}>📝</i><span><strong>오늘 숙제 확인</strong><small>{item.title} · {child(item.child_id)}</small></span><b>›</b></button>)}
-      {!activeExceptions.length && !pendingHandoffs.length && !homeSupplyAlerts.length && !homeHomeworkAlerts.length && <div className="home-now-empty"><i>✓</i><span><strong>지금 확인할 일이 없어요</strong><small>새 요청이나 준비물이 생기면 여기에 표시돼요.</small></span></div>}
+      {!activeExceptions.length && !urgentUnassignedItem && !pendingHandoffs.length && !homeSupplyAlerts.length && !homeHomeworkAlerts.length && <div className="home-now-empty"><i>✓</i><span><strong>지금 확인할 일이 없어요</strong><small>새 요청이나 준비물이 생기면 여기에 표시돼요.</small></span></div>}
     </div>
     <p className="figma-home-note">평소와 같은 배정은 알리지 않습니다.</p>
   </div>
@@ -2811,11 +2832,11 @@ function App() {
         const showDate = !previousSentAt || dateKey(previousSentAt) !== messageDay
         return <Fragment key={sentAt + index}>{showDate && <div className="chat-date-divider" role="separator"><span>{new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(sentAt))}</span></div>}<div className={'chat-bubble ' + m.from}><div className="chat-copy">{m.text}</div>{m.from === 'agent' && m.cards?.map((card, cardIndex) => <article className="chat-summary-card" key={card.title + cardIndex}><small>{card.eyebrow}</small><strong>{card.title}</strong><p>{card.description}</p>{card.screen && <button onClick={() => void openChatCard(card).catch(reportError)}>{chatScreenLabel[card.screen as Screen] ?? '관련 화면 보기'}</button>}</article>)}</div></Fragment>
       })}</div>
-      <div className="chat-prompts">{['확인할 알림 알려줘', '오늘 담당 배정은?', '등록된 일정은?', '내일 준비물 확인'].map(text => <button key={text} disabled={chatBusy} onClick={() => sendChat(text)}>{text}</button>)}</div>
+      <div className="chat-prompts">{['확인할 알림 알려줘', '오늘 담당 배정은?', '등록된 일정은?', '일정 등록·수정·삭제'].map(text => <button key={text} disabled={chatBusy} onClick={() => sendChat(text)}>{text}</button>)}</div>
     </div>
     {chatBusy && <div className="assistant-chat-loading" role="status" aria-live="polite" aria-label="답변을 준비하고 있어요"><div>{[chatLoading1, chatLoading2, chatLoading3, chatLoading4].map((source, index) => <img key={source} src={source} alt="" style={{ animationDelay: `${index * .38}s` }} />)}</div><span>답변을 준비하고 있어요</span></div>}
-    {voiceConfirming && <section className="chat-voice-confirm" role="dialog" aria-label="음성 인식 결과 확인" aria-live="polite"><small>AI가 이렇게 들었어요</small><strong>“{chatDraft}”</strong><p>맞으면 실행하고, 아니면 다시 말씀해주세요.</p><div><button className="outline-button" onClick={() => { setVoiceConfirming(false); setChatDraft(''); void toggleRecording() }}>아니요</button><button className="primary-button" onClick={() => void sendChat(chatDraft, 'VOICE')}>예, 맞아요</button></div></section>}
-    <form className="chat-composer" onSubmit={e => { e.preventDefault(); if (!voiceConfirming) void sendChat() }}><button className={recording ? 'chat-mic recording' : 'chat-mic'} type="button" aria-label={recording ? '음성 인식 끝내기' : chatBusy ? '음성 인식 중…' : '음성 인식'} disabled={chatBusy || voiceConfirming} onClick={() => void toggleRecording()}><img src={chatMicIcon} alt="" /></button><label><input aria-label="케어 어시스턴트에게 질문" value={chatDraft} onChange={e => setChatDraft(e.target.value)} placeholder="일정이나 숙제를 말해보세요" /><button type="submit" aria-label="질문 보내기" disabled={chatBusy || voiceConfirming || !chatDraft.trim()}><img src={chatSendIcon} alt="" /></button></label></form>
+    {voiceConfirming && <section className="chat-voice-confirm" role="dialog" aria-label="음성 인식 결과 확인" aria-live="polite"><small>AI가 이렇게 들었어요</small><strong>“{chatDraft}”</strong><p>맞으면 실행하고, 다르면 다시 말하거나 직접 수정해주세요.</p><div><button className="outline-button" onClick={() => { setVoiceConfirming(false); setChatDraft(''); void toggleRecording() }}>다시 말하기</button><button className="outline-button" onClick={editVoiceText}>텍스트로 수정</button><button className="primary-button" onClick={() => void sendChat(chatDraft, 'VOICE')}>예, 맞아요</button></div></section>}
+    <form className="chat-composer" onSubmit={e => { e.preventDefault(); if (!voiceConfirming) void sendChat() }}><button className={recording ? 'chat-mic recording' : 'chat-mic'} type="button" aria-label={recording ? '음성 인식 끝내기' : chatBusy ? '음성 인식 중…' : '음성 인식'} disabled={chatBusy || voiceConfirming} onClick={() => void toggleRecording()}><img src={chatMicIcon} alt="" /></button><label><input ref={chatInputRef} aria-label="케어 어시스턴트에게 질문" value={chatDraft} onChange={e => setChatDraft(e.target.value)} placeholder="일정이나 숙제를 말해보세요" /><button type="submit" aria-label="질문 보내기" disabled={chatBusy || voiceConfirming || !chatDraft.trim()}><img src={chatSendIcon} alt="" /></button></label></form>
   </section>
   if (boot && screen === 'emergency') page = <section className="emergency-request-page">
     <div className="care-subscreen-title"><strong>긴급 도움 요청 <Pro /></strong></div>
