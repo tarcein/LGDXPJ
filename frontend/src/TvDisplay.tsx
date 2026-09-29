@@ -25,6 +25,9 @@ function TvDisplay() {
   const [voiceMuted, setVoiceMuted] = useState(false)
   const [connected, setConnected] = useState(true)
   const seenNoticeIds = useRef(new Set<string>())
+  const noticesInitialized = useRef(false)
+  const seenEmergencyIds = useRef(new Set<string>())
+  const emergenciesInitialized = useRef(false)
   const dismissedAlertKeys = useRef(new Set<string>())
   const activeAlertKey = useRef('')
   const alertRef = useRef<TvAlert | null>(null)
@@ -114,8 +117,18 @@ function TvDisplay() {
         setConnected(true)
         if (deviceAlertResult) emergencyTvSoundRef.current = deviceAlertResult.settings.emergency_tv_sound
         reportTvStatusNow()
+        const incomingNotice = noticesInitialized.current
+          ? nextSnapshot.notifications.find(notice => !seenNoticeIds.current.has(notice.id))
+          : undefined
+        nextSnapshot.notifications.forEach(notice => seenNoticeIds.current.add(notice.id))
+        noticesInitialized.current = true
+        const openEmergencies = emergencyResult.requests.filter(request => request.status === 'OPEN')
+        const incomingEmergency = emergenciesInitialized.current
+          ? openEmergencies.find(request => !seenEmergencyIds.current.has(request.id))
+          : undefined
+        openEmergencies.forEach(request => seenEmergencyIds.current.add(request.id))
+        emergenciesInitialized.current = true
         if (!nextSnapshot.notification_preferences.find(item => item.member_id === nextMe.member.id)?.device_enabled) {
-          nextSnapshot.notifications.forEach(notice => seenNoticeIds.current.add(notice.id))
           if (alertRef.current) {
             activeAlertKey.current = ''
             alertRef.current = null
@@ -124,44 +137,39 @@ function TvDisplay() {
           return
         }
 
-        const openEmergency = emergencyResult.requests.find(request => request.status === 'OPEN')
-        if (openEmergency) {
-          showAlert({
-            key: `emergency:${openEmergency.id}`,
-            tier: 4,
-            kind: 'emergency',
-            contentKey: 'emergency_request',
-            title: `🚨 ${openEmergency.item_title}`,
-            body: openEmergency.reason,
-            meta: '지금 대응 가능한 가족이 있나요?',
-          })
-        } else if (alertRef.current?.kind === 'emergency') {
+        const activeEmergencyId = alertRef.current?.kind === 'emergency' ? alertRef.current.key.replace('emergency:', '') : null
+        if (activeEmergencyId && !openEmergencies.some(request => request.id === activeEmergencyId)) {
           activeAlertKey.current = ''
           alertRef.current = null
           setAlert(null)
         }
+        if (startedRef.current && tvActiveRef.current && incomingEmergency) {
+          showAlert({
+            key: `emergency:${incomingEmergency.id}`,
+            tier: 4,
+            kind: 'emergency',
+            contentKey: 'emergency_request',
+            title: `🚨 ${incomingEmergency.item_title}`,
+            body: incomingEmergency.reason,
+            meta: '지금 대응 가능한 가족이 있나요?',
+          })
+        }
         emergencyResult.requests.filter(request => request.status !== 'OPEN').forEach(request => dismissedAlertKeys.current.delete(`emergency:${request.id}`))
 
-        if (!seenNoticeIds.current.size) {
-          nextSnapshot.notifications.forEach(notice => seenNoticeIds.current.add(notice.id))
-        } else {
-          const incoming = nextSnapshot.notifications.find(notice => !seenNoticeIds.current.has(notice.id))
-          nextSnapshot.notifications.forEach(notice => seenNoticeIds.current.add(notice.id))
-          const routedElsewhere = incoming?.action_type === 'DEVICE_ALERT_TEST' && incoming.action_id && incoming.action_id !== 'tv_living'
-          if (incoming && !openEmergency && !routedElsewhere) {
-            showAlert({
-              key: `notice:${incoming.id}`,
-              tier: tierForNotice(incoming),
-              kind: 'notice',
-              contentKey: contentKeyForNotice(incoming),
-              title: incoming.title,
-              body: incoming.body,
-              meta: incoming.level === 'IMPORTANT' ? '휴대폰에서 확인해주세요' : '가족 돌봄 현황에 반영됐어요',
-            })
-          }
+        const routedElsewhere = incomingNotice?.action_type === 'DEVICE_ALERT_TEST' && incomingNotice.action_id && incomingNotice.action_id !== 'tv_living'
+        if (startedRef.current && tvActiveRef.current && incomingNotice && !incomingEmergency && !routedElsewhere) {
+          showAlert({
+            key: `notice:${incomingNotice.id}`,
+            tier: tierForNotice(incomingNotice),
+            kind: 'notice',
+            contentKey: contentKeyForNotice(incomingNotice),
+            title: incomingNotice.title,
+            body: incomingNotice.body,
+            meta: incomingNotice.level === 'IMPORTANT' ? '휴대폰에서 확인해주세요' : '가족 돌봄 현황에 반영됐어요',
+          })
         }
 
-        if (!openEmergency && !alertRef.current) {
+        if (startedRef.current && tvActiveRef.current && !incomingEmergency && !alertRef.current) {
           const soon = nextSnapshot.assignments
             .filter(item => ['ACCEPTED', 'CANDIDATE_ACCEPTED'].includes(item.status))
             .map(item => ({ assignment: item, careItem: nextSnapshot.items.find(candidate => candidate.id === item.item_id) }))

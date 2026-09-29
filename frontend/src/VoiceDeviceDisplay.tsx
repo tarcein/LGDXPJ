@@ -26,9 +26,9 @@ function VoiceDeviceDisplay() {
   const [muted, setMuted] = useState(false)
   const seenNoticeIds = useRef(new Set<string>())
   const noticesInitialized = useRef(false)
+  const emergenciesInitialized = useRef(false)
   const seenKeys = useRef(new Set<string>())
   const startedRef = useRef(false)
-  const pendingAnnouncement = useRef<{ alert: DeviceAlert, settings: DeviceAlertSettings, deviceId: string } | null>(null)
 
   const playAnnouncement = useCallback((alert: DeviceAlert, settings: DeviceAlertSettings, deviceId: string) => {
     beep(alert.tier === 4)
@@ -44,15 +44,6 @@ function VoiceDeviceDisplay() {
 
   useEffect(() => {
     let cancelled = false
-    const announce = (alert: DeviceAlert, settings: DeviceAlertSettings, deviceId: string) => {
-      if (!startedRef.current || muted) {
-        pendingAnnouncement.current = { alert, settings, deviceId }
-        return
-      }
-      pendingAnnouncement.current = null
-      playAnnouncement(alert, settings, deviceId)
-    }
-
     const load = async () => {
       try {
         const fresh = `?voice_refresh=${Date.now()}`
@@ -66,66 +57,51 @@ function VoiceDeviceDisplay() {
         setConnected(true)
         const { settings, catalog, tv_online: tvOnline } = deviceAlerts
         const winner = resolveDeviceAlertChannel(settings.priority, settings.devices, catalog, tvOnline)
-        const latestTest = nextSnapshot.notifications.find(notice => notice.action_type === 'DEVICE_ALERT_TEST' && !seenNoticeIds.current.has(notice.id))
-        const testDevice = catalog.find(item => item.id === latestTest?.action_id && item.type === 'VOICE') ?? null
-        const pendingDevice = catalog.find(item => item.id === pendingAnnouncement.current?.deviceId && item.type === 'VOICE') ?? null
+        const incomingNotice = noticesInitialized.current
+          ? nextSnapshot.notifications.find(notice => !seenNoticeIds.current.has(notice.id))
+          : undefined
+        nextSnapshot.notifications.forEach(notice => seenNoticeIds.current.add(notice.id))
+        noticesInitialized.current = true
+        const openEmergencies = emergencyResult.requests.filter(request => request.status === 'OPEN')
+        const incomingEmergency = emergenciesInitialized.current
+          ? openEmergencies.find(request => !seenKeys.current.has(`emergency:${request.id}`))
+          : undefined
+        openEmergencies.forEach(request => seenKeys.current.add(`emergency:${request.id}`))
+        emergenciesInitialized.current = true
+        const testNotice = incomingNotice?.action_type === 'DEVICE_ALERT_TEST' ? incomingNotice : undefined
+        const testDevice = catalog.find(item => item.id === testNotice?.action_id && item.type === 'VOICE') ?? null
         // Only take over as the active voice device when the winning entry is
         // actually a voice appliance — if it resolved to an online screen, that
         // screen is already showing the alert and this page should stay silent.
         // Explicit test alerts keep their simulated route even if the live TV
         // status changes again before this polling cycle sees the notification.
-        const device = testDevice ?? pendingDevice ?? (winner?.type === 'VOICE' ? winner : null)
+        const device = testDevice ?? (winner?.type === 'VOICE' ? winner : null)
         setActiveDevice(device)
 
         const preferenceOn = nextSnapshot.notification_preferences.find(item => item.member_id === nextMe.member.id)?.device_enabled
-        if (!preferenceOn || !device) {
-          nextSnapshot.notifications.forEach(notice => seenNoticeIds.current.add(notice.id))
-          noticesInitialized.current = true
-          return
-        }
+        if (!startedRef.current || muted || !preferenceOn || !device) return
         if (!testDevice && isWithinQuietHours(settings.quiet_start, settings.quiet_end)) return
 
         const matrix = settings.content_matrix
 
-        const openEmergency = emergencyResult.requests.find(request => request.status === 'OPEN')
-        if (openEmergency) {
-          const key = `emergency:${openEmergency.id}`
-          if (!seenKeys.current.has(key) && matrix.emergency_request?.voice) {
-            seenKeys.current.add(key)
-            announce({
-              key, tier: 4, kind: 'emergency', contentKey: 'emergency_request',
-              title: `🚨 ${openEmergency.item_title}`, body: openEmergency.reason, meta: '',
+        if (incomingEmergency && matrix.emergency_request?.voice) {
+          playAnnouncement({
+            key: `emergency:${incomingEmergency.id}`, tier: 4, kind: 'emergency', contentKey: 'emergency_request',
+            title: `🚨 ${incomingEmergency.item_title}`, body: incomingEmergency.reason, meta: '',
+          }, settings, device.id)
+        }
+
+        if (incomingNotice && !incomingEmergency) {
+          const contentKey = contentKeyForNotice(incomingNotice)
+          if (matrix[contentKey]?.voice) {
+            playAnnouncement({
+              key: `notice:${incomingNotice.id}`, tier: tierForNotice(incomingNotice), kind: 'notice', contentKey,
+              title: incomingNotice.title, body: incomingNotice.body, meta: '',
             }, settings, device.id)
           }
         }
 
-        if (!noticesInitialized.current) {
-          noticesInitialized.current = true
-          nextSnapshot.notifications.forEach(notice => seenNoticeIds.current.add(notice.id))
-          if (latestTest) {
-            const contentKey = contentKeyForNotice(latestTest)
-            if (matrix[contentKey]?.voice) {
-              announce({
-                key: `notice:${latestTest.id}`, tier: tierForNotice(latestTest), kind: 'notice', contentKey,
-                title: latestTest.title, body: latestTest.body, meta: '',
-              }, settings, device.id)
-            }
-          }
-        } else {
-          const incoming = nextSnapshot.notifications.find(notice => !seenNoticeIds.current.has(notice.id))
-          nextSnapshot.notifications.forEach(notice => seenNoticeIds.current.add(notice.id))
-          if (incoming && !openEmergency) {
-            const contentKey = contentKeyForNotice(incoming)
-            if (matrix[contentKey]?.voice) {
-              announce({
-                key: `notice:${incoming.id}`, tier: tierForNotice(incoming), kind: 'notice', contentKey,
-                title: incoming.title, body: incoming.body, meta: '',
-              }, settings, device.id)
-            }
-          }
-        }
-
-        if (!openEmergency && matrix.departure_reminder?.voice) {
+        if (!incomingEmergency && matrix.departure_reminder?.voice) {
           const soon = nextSnapshot.assignments
             .filter(item => ['ACCEPTED', 'CANDIDATE_ACCEPTED'].includes(item.status))
             .map(item => ({ assignment: item, careItem: nextSnapshot.items.find(candidate => candidate.id === item.item_id) }))
@@ -140,7 +116,7 @@ function VoiceDeviceDisplay() {
             if (!seenKeys.current.has(key)) {
               seenKeys.current.add(key)
               const member = nextSnapshot.members.find(candidate => candidate.id === soon.assignment.assignee_id)?.name ?? '담당 가족'
-              announce({
+              playAnnouncement({
                 key, tier: 2, kind: 'schedule', contentKey: 'departure_reminder',
                 title: `${soon.careItem.title} 픽업 시간이에요`,
                 body: `${formatDate(soon.careItem.starts_at)} ${formatTime(soon.careItem.starts_at)} · 담당 ${member}`,
@@ -161,10 +137,7 @@ function VoiceDeviceDisplay() {
   const startDisplay = () => {
     startedRef.current = true
     setStarted(true)
-    const pending = pendingAnnouncement.current
-    pendingAnnouncement.current = null
-    if (pending) playAnnouncement(pending.alert, pending.settings, pending.deviceId)
-    else beep()
+    beep()
   }
 
   return <main className="tv-display voice-display">
