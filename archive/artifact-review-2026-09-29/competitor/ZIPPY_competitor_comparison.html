@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZIPPY 대표 대체 서비스 비교</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; }
+    body {
+      color: #1f2430;
+      background: #f5f7fb;
+      font-family: "Pretendard", "Noto Sans KR", "Malgun Gothic", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .canvas { width: 1920px; height: 1080px; padding: 56px 62px 48px; }
+    .titlebar { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 28px; }
+    .eyebrow { margin: 0 0 9px; color: #c4123f; font-size: 17px; font-weight: 800; letter-spacing: .08em; }
+    h1 { margin: 0; font-size: 42px; line-height: 1.1; letter-spacing: -.045em; }
+    .subtitle { margin: 12px 0 0; color: #6d7480; font-size: 19px; font-weight: 500; }
+    .scope {
+      margin-bottom: 3px; padding: 10px 15px; border: 1px solid #d9dee9; border-radius: 999px;
+      color: #69717f; background: #fff; font-size: 14px; font-weight: 700;
+    }
+    .comparison {
+      display: grid;
+      grid-template-columns: 166px repeat(6, 1fr);
+      grid-template-rows: 154px repeat(5, 122px);
+      overflow: hidden;
+      border-top: 3px solid #315dff;
+      border-bottom: 3px solid #315dff;
+      background: #fff;
+      box-shadow: 0 16px 45px rgba(27, 41, 71, .08);
+    }
+    .cell {
+      display: flex; align-items: center; justify-content: center;
+      min-width: 0; padding: 17px 19px;
+      border-right: 1px solid #e4e7ee; border-bottom: 1px solid #e4e7ee;
+      text-align: center; font-size: 16px; line-height: 1.52; word-break: keep-all;
+    }
+    .cell:nth-child(7n) { border-right: 0; }
+    .cell:nth-last-child(-n+7) { border-bottom: 0; }
+    .label { color: #4b5260; background: #fbfcfe; font-size: 16px; font-weight: 800; }
+    .header { position: relative; flex-direction: column; gap: 9px; padding: 14px 10px 13px; font-weight: 800; }
+    .logo-box {
+      position: relative; display: grid; place-items: center; width: 64px; height: 64px;
+      overflow: hidden; border: 1px solid #e5e8ef; border-radius: 17px; background: #fff;
+      box-shadow: 0 6px 15px rgba(29, 38, 57, .08);
+    }
+    .logo-box img { width: 50px; height: 50px; object-fit: contain; }
+    .logo-box.zippy img { width: 60px; height: 60px; }
+    .fallback { display: none; place-items: center; width: 100%; height: 100%; color: #fff; font-size: 19px; font-weight: 900; }
+    .motion { background: #121827; }
+    .timetree { background: linear-gradient(145deg, #32c779, #23a9d8); }
+    .google { background: #4285f4; }
+    .cozi { background: #3ca8df; }
+    .familywall { background: #5664d8; }
+    .brand { font-size: 16px; letter-spacing: -.02em; }
+    .zippy-col { color: #18213c; background: #f5f7ff; font-weight: 760; }
+    .header.zippy-col { background: linear-gradient(145deg, #fff0f5, #eef4ff); }
+    .our-pill {
+      position: absolute; top: 13px; right: 12px; padding: 4px 8px; border-radius: 999px;
+      color: #fff; background: #c4123f; font-size: 9px; font-weight: 900; letter-spacing: .08em;
+    }
+    .emphasis { color: #c4123f; font-weight: 900; }
+    .insight {
+      display: flex; align-items: center; gap: 16px; margin-top: 27px; padding: 18px 22px;
+      border-left: 5px solid #c4123f; border-radius: 0 15px 15px 0; background: #fff;
+      box-shadow: 0 8px 24px rgba(31, 42, 69, .06); font-size: 19px;
+    }
+    .insight strong { flex: none; color: #c4123f; font-size: 14px; letter-spacing: .08em; }
+    .insight span { font-weight: 750; letter-spacing: -.025em; }
+  </style>
+</head>
+<body>
+  <main class="canvas">
+    <header class="titlebar">
+      <div>
+        <p class="eyebrow">COMPETITIVE LANDSCAPE</p>
+        <h1>대표 대체 서비스 비교</h1>
+        <p class="subtitle">일정 최적화 · 공유 캘린더 · 가족 생활 관리 관점</p>
+      </div>
+      <div class="scope">공개 기능 기준 · 2026.09</div>
+    </header>
+
+    <section class="comparison" aria-label="대표 대체 서비스 비교표">
+      <div class="cell label">구분</div>
+
+      <div class="cell header">
+        <span class="logo-box"><img src="https://www.google.com/s2/favicons?domain_url=https://www.usemotion.com&amp;sz=128" alt="Motion 로고" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'"><span class="fallback motion">M</span></span>
+        <span class="brand">Motion</span>
+      </div>
+      <div class="cell header">
+        <span class="logo-box"><img src="https://www.google.com/s2/favicons?domain_url=https://timetreeapp.com&amp;sz=128" alt="TimeTree 로고" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'"><span class="fallback timetree">T</span></span>
+        <span class="brand">TimeTree</span>
+      </div>
+      <div class="cell header">
+        <span class="logo-box"><img src="https://www.google.com/s2/favicons?domain_url=https://calendar.google.com&amp;sz=128" alt="Google Calendar 로고" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'"><span class="fallback google">31</span></span>
+        <span class="brand">Google Calendar</span>
+      </div>
+      <div class="cell header">
+        <span class="logo-box"><img src="https://www.google.com/s2/favicons?domain_url=https://www.cozi.com&amp;sz=128" alt="Cozi 로고" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'"><span class="fallback cozi">C</span></span>
+        <span class="brand">Cozi</span>
+      </div>
+      <div class="cell header">
+        <span class="logo-box"><img src="https://www.google.com/s2/favicons?domain_url=https://www.familywall.com&amp;sz=128" alt="FamilyWall 로고" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'"><span class="fallback familywall">FW</span></span>
+        <span class="brand">FamilyWall</span>
+      </div>
+      <div class="cell header zippy-col">
+        <span class="our-pill">OUR SERVICE</span>
+        <span class="logo-box zippy"><img src="../asset/assistant-main-logo-centered.png" alt="ZIPPY 로고"></span>
+        <span class="brand">ZIPPY</span>
+      </div>
+
+      <div class="cell label">서비스 유형</div>
+      <div class="cell">AI 일정·업무 관리</div>
+      <div class="cell">공유 캘린더</div>
+      <div class="cell">범용 캘린더</div>
+      <div class="cell">가족 생활 관리</div>
+      <div class="cell">가족 통합 허브</div>
+      <div class="cell zippy-col">AI 가족 돌봄 운영</div>
+
+      <div class="cell label">핵심 기능</div>
+      <div class="cell">우선순위 기반<br>업무 배치·재조정</div>
+      <div class="cell">그룹 일정 공유<br>변경 알림·소통</div>
+      <div class="cell">일정 공유<br>권한·리마인드</div>
+      <div class="cell">가족 캘린더<br>할 일·쇼핑·식사</div>
+      <div class="cell">캘린더·할 일<br>메신저·위치</div>
+      <div class="cell zippy-col">정보 구조화·담당 추천<br>변경 대응·완료 확인</div>
+
+      <div class="cell label">역할·변경 대응</div>
+      <div class="cell">업무 일정 자동 재배치</div>
+      <div class="cell">변경 확인 후<br>사용자가 직접 조율</div>
+      <div class="cell">참석자·가족이<br>직접 조율</div>
+      <div class="cell">일정·목록을<br>사용자가 수정</div>
+      <div class="cell">구성원별 할 일 배정<br>재조정은 수동</div>
+      <div class="cell zippy-col"><div>충돌 감지 후<br><span class="emphasis">대체 담당자 추천·수락</span></div></div>
+
+      <div class="cell label">인수인계·완료</div>
+      <div class="cell">업무 완료 관리</div>
+      <div class="cell">이벤트 메모·댓글</div>
+      <div class="cell">일정 설명·첨부</div>
+      <div class="cell">목록 체크 중심</div>
+      <div class="cell">할 일 진행 확인<br>메신저 공유</div>
+      <div class="cell zippy-col"><div><span class="emphasis">다음 돌봄자에게 맥락 전달</span><br>확인·사진 완료 기록</div></div>
+
+      <div class="cell label">주요 포지션</div>
+      <div class="cell">개인·팀 생산성 향상</div>
+      <div class="cell">그룹 일정 공유와 소통</div>
+      <div class="cell">범용 일정 관리 인프라</div>
+      <div class="cell">가족 일정과 생활 정보 통합</div>
+      <div class="cell">가족 소통과 일상 관리</div>
+      <div class="cell zippy-col"><div>돌봄 주체 간<br><span class="emphasis">책임과 맥락을 이어주는 운영 자동화</span></div></div>
+    </section>
+
+    <aside class="insight">
+      <strong>ZIPPY DIFFERENCE</strong>
+      <span>해야 할 일을 보여주는 데서 끝나지 않고, 담당자 결정부터 다음 돌봄자의 인수인계와 완료까지 연결합니다.</span>
+    </aside>
+  </main>
+</body>
+</html>

@@ -10,10 +10,13 @@ frontend/README.md
 backend/.venv/
 backend/__pycache__/
 backend/.pytest_cache/
+backend/.tmp-test/
 backend/*.db
 backend/uploads/
 backend/firebase-service-account*.json
 .tools/
+tmp/
+**/~$*.docx
 *.pyc
 .env
 .DS_Store
