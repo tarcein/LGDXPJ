@@ -2310,7 +2310,9 @@ function App() {
   const weeklyPixelsPerMinute = .72
   const weeklyTimelineHeight = Math.max(84, (weeklyEndMinute - weeklyStartMinute) * weeklyPixelsPerMinute)
   const personalWeeklyEntries = [...new Map((boot?.schedules ?? [])
-    .filter(item => item.member_id === personalRoutineOwnerId && item.kind === 'ROUTINE' && !item.external_source && !!item.recurrence_id)
+    .filter(item => item.member_id === personalRoutineOwnerId && item.kind === 'ROUTINE' && !item.external_source && !!item.recurrence_id && dateKey(item.starts_at) >= todayKey)
+    // Map keeps the last duplicate, so descending order leaves the nearest upcoming occurrence for each weekly slot.
+    .sort((left, right) => right.starts_at.localeCompare(left.starts_at))
     .map(item => {
       const start = new Date(item.starts_at); const end = new Date(item.ends_at)
       const key = `${start.getDay()}-${start.getHours()}:${start.getMinutes()}-${end.getHours()}:${end.getMinutes()}-${item.title}`
