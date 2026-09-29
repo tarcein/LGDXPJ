@@ -89,6 +89,27 @@ export interface EligibilityCriteria {
   health_insurance: HealthInsuranceCriterion[]; disclaimer: string; source: string
 }
 
+export interface PerformanceMetric {
+  id: string
+  name: string
+  value: number | null
+  unit: string
+  numerator?: number
+  denominator?: number
+  target: string
+  source: string
+}
+
+export interface PerformanceSummary {
+  generated_at: string
+  period: { days: number; from: string; to: string }
+  scope: 'family' | 'service'
+  trackers: Record<'BX' | 'CX' | 'DX', PerformanceMetric[]>
+  segments: { family_size_pro_conversion: unknown[] }
+  event_counts: Record<string, number>
+  collection: { event_table: string; event_endpoint: string; summary_endpoint: string; privacy: string }
+}
+
 const tokenKey = 'family-care-access-token'
 const productionApiBase = 'https://zippy-api.dx6project.site'
 // ponytail: localStorage keeps the prototype signed in; replace with an HttpOnly cookie when real account auth lands.

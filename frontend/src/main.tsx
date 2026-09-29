@@ -5,12 +5,15 @@ import './index.css'
 import App from './App.tsx'
 import TvDisplay from './TvDisplay.tsx'
 import VoiceDeviceDisplay from './VoiceDeviceDisplay.tsx'
+import { PerformanceDashboard } from './components/PerformanceDashboard.tsx'
 
 const debugScreen = new URLSearchParams(window.location.search).get('screen')
+const pathname = window.location.pathname.replace(/\/+$/, '')
+const performanceDashboard = pathname === '/performance' || debugScreen === 'performance'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {debugScreen === 'tv' ? <TvDisplay /> : debugScreen === 'voice' ? <VoiceDeviceDisplay /> : <App />}
+    {performanceDashboard ? <PerformanceDashboard /> : debugScreen === 'tv' ? <TvDisplay /> : debugScreen === 'voice' ? <VoiceDeviceDisplay /> : <App />}
   </StrictMode>,
 )
 
