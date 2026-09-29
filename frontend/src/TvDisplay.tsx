@@ -156,8 +156,7 @@ function TvDisplay() {
         }
         emergencyResult.requests.filter(request => request.status !== 'OPEN').forEach(request => dismissedAlertKeys.current.delete(`emergency:${request.id}`))
 
-        const routedElsewhere = incomingNotice?.action_type === 'DEVICE_ALERT_TEST' && incomingNotice.action_id && incomingNotice.action_id !== 'tv_living'
-        if (startedRef.current && tvActiveRef.current && incomingNotice && !incomingEmergency && !routedElsewhere) {
+        if (startedRef.current && tvActiveRef.current && incomingNotice && !incomingEmergency) {
           showAlert({
             key: `notice:${incomingNotice.id}`,
             tier: tierForNotice(incomingNotice),

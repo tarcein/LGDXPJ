@@ -31,7 +31,7 @@ export const contentKeyForNotice = (notice: Notice): string => {
   return 'supply_missing'
 }
 
-export const beep = (strong = false) => {
+export const beep = (strong = false, loud = false) => {
   try {
     const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     if (!AudioContextClass) return
@@ -41,7 +41,8 @@ export const beep = (strong = false) => {
     oscillator.type = 'sine'
     oscillator.frequency.value = strong ? 720 : 520
     gain.gain.setValueAtTime(0.0001, context.currentTime)
-    gain.gain.exponentialRampToValueAtTime(strong ? 0.16 : 0.08, context.currentTime + 0.02)
+    const peak = (strong ? 0.16 : 0.08) * (loud ? 2 : 1)
+    gain.gain.exponentialRampToValueAtTime(peak, context.currentTime + 0.02)
     gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + (strong ? 0.42 : 0.22))
     oscillator.connect(gain).connect(context.destination)
     oscillator.start()

@@ -31,9 +31,9 @@ function VoiceDeviceDisplay() {
   const startedRef = useRef(false)
 
   const playAnnouncement = useCallback((alert: DeviceAlert, settings: DeviceAlertSettings, deviceId: string) => {
-    beep(alert.tier === 4)
+    beep(alert.tier === 4, true)
     const message = speechMessageFor(alert)
-    speak(message, { volume: settings.speech_volume / 100 })
+    speak(message, { volume: Math.min(1, settings.speech_volume / 60) })
     setLastSpoken({ message, at: Date.now() })
     trackPerformanceEvent('device_alert_presented', {
       channel: 'VOICE', device_id: deviceId, alert_kind: alert.kind, content_key: alert.contentKey,
@@ -68,19 +68,15 @@ function VoiceDeviceDisplay() {
           : undefined
         openEmergencies.forEach(request => seenKeys.current.add(`emergency:${request.id}`))
         emergenciesInitialized.current = true
-        const testNotice = incomingNotice?.action_type === 'DEVICE_ALERT_TEST' ? incomingNotice : undefined
-        const testDevice = catalog.find(item => item.id === testNotice?.action_id && item.type === 'VOICE') ?? null
         // Only take over as the active voice device when the winning entry is
         // actually a voice appliance — if it resolved to an online screen, that
         // screen is already showing the alert and this page should stay silent.
-        // Explicit test alerts keep their simulated route even if the live TV
-        // status changes again before this polling cycle sees the notification.
-        const device = testDevice ?? (winner?.type === 'VOICE' ? winner : null)
+        const device = winner?.type === 'VOICE' ? winner : null
         setActiveDevice(device)
 
         const preferenceOn = nextSnapshot.notification_preferences.find(item => item.member_id === nextMe.member.id)?.device_enabled
         if (!startedRef.current || muted || !preferenceOn || !device) return
-        if (!testDevice && isWithinQuietHours(settings.quiet_start, settings.quiet_end)) return
+        if (isWithinQuietHours(settings.quiet_start, settings.quiet_end)) return
 
         const matrix = settings.content_matrix
 

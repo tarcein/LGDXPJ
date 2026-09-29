@@ -9,11 +9,12 @@ let tvOnline = true
 try {
   await page.addInitScript(() => {
     window.__beepCount = 0
+    window.__maxGain = 0
     class TestAudioContext {
       currentTime = 0
       destination = {}
       createOscillator() { return { type: 'sine', frequency: { value: 0 }, connect() { return this }, start() { window.__beepCount++ }, stop() {}, addEventListener(_name, callback) { callback() } } }
-      createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() { return this } } }
+      createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime(value) { window.__maxGain = Math.max(window.__maxGain, value) } }, connect() { return this } } }
       close() {}
     }
     window.AudioContext = TestAudioContext
@@ -64,6 +65,7 @@ try {
   await page.goto((process.env.LGDX_TEST_URL ?? 'http://127.0.0.1:5173') + '?screen=voice', { waitUntil: 'domcontentloaded' })
   await page.getByRole('heading', { name: '정수기' }).waitFor()
   await page.waitForTimeout(2_500)
+  await page.evaluate(() => { window.__maxGain = 0 })
   const voiceBeepCount = await page.evaluate(() => window.__beepCount)
   notices.unshift({ id: 'queued-voice-alert', level: 'IMPORTANT', action_type: 'DEVICE_ALERT_TEST', action_id: 'water_purifier', title: '꺼져 있을 때 알림', body: '재생되면 안 돼요' })
   await page.waitForTimeout(2_500)
@@ -75,6 +77,13 @@ try {
   notices.unshift({ id: 'live-voice-alert', level: 'IMPORTANT', action_type: 'DEVICE_ALERT_TEST', action_id: 'water_purifier', title: '켜진 뒤 테스트 알림', body: '지금 재생되어야 해요' })
   await page.waitForFunction(count => window.__beepCount > count, startedBeepCount)
   await page.getByText('“켜진 뒤 테스트 알림”').waitFor()
+  if (await page.evaluate(() => window.__maxGain < 0.16)) throw new Error('정수기 알림음이 충분히 크지 않습니다')
+  const priorityBeepCount = await page.evaluate(() => window.__beepCount)
+  tvOnline = true
+  notices.unshift({ id: 'tv-priority-alert', level: 'IMPORTANT', action_type: 'DEVICE_ALERT_TEST', action_id: 'water_purifier', title: 'TV 우선 알림', body: '정수기에서 재생되면 안 돼요' })
+  await page.waitForTimeout(2_500)
+  if (await page.evaluate(count => window.__beepCount !== count, priorityBeepCount)) throw new Error('TV가 켜져 있는데 정수기 알림음이 재생됩니다')
+  if (await page.getByText('“TV 우선 알림”').count()) throw new Error('TV 우선 알림이 정수기에서 표시됩니다')
   console.log('TV and voice appliance alert checks passed')
 } finally {
   await browser.close()
