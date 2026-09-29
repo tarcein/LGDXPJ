@@ -57,6 +57,8 @@ import { BottomSheet, Card, Empty, Pro, Section } from './components/ui'
 import { setupNativeNotifications, showNativeNotice, syncPushToken, updateLiveCareStatus, clearLiveCareStatus } from './nativeNotifications'
 
 const nativeCalendarReturnUrl = 'com.lgdx.family://calendar'
+const lastScreenKey = 'family-care-last-screen'
+const transientScreens: Screen[] = ['thinq', 'serviceLoading', 'lockscreen', 'onboarding']
 
 const groups: { title: string; pages: [Screen, string][] }[] = [
   { title: 'ThinQ 진입 · 외부 화면', pages: [['thinq', 'ThinQ 홈'], ['lockscreen', '잠금화면 동선']] },
@@ -300,9 +302,11 @@ function App() {
   const billingResultFromUrl = initialQuery.get('payment') ?? initialQuery.get('billing') ?? ''
   const calendarResultFromUrl = initialQuery.get('calendar') ?? ''
   const invitedRole = ['PARENT', 'GRANDPARENT', 'CAREGIVER'].includes(roleFromUrl) ? roleFromUrl : 'CAREGIVER'
+  const savedScreen = localStorage.getItem(lastScreenKey) as Screen | null
+  const restoredScreen = hasFamilyToken() && savedScreen && groups.some(group => group.pages.some(([id]) => id === savedScreen)) && !transientScreens.includes(savedScreen) ? savedScreen : null
   const [boot, setBoot] = useState<Bootstrap | null>(null)
   const [me, setMe] = useState<FamilyMe | null>(null)
-  const [screen, setScreen] = useState<Screen>(() => invitationFromUrl ? 'onboarding' : debugScreen ?? (hasFamilyToken() && billingResultFromUrl ? 'plan' : hasFamilyToken() && initialQuery.has('calendar') ? 'calendar' : 'thinq'))
+  const [screen, setScreen] = useState<Screen>(() => invitationFromUrl ? 'onboarding' : debugScreen ?? (hasFamilyToken() && billingResultFromUrl ? 'plan' : hasFamilyToken() && initialQuery.has('calendar') ? 'calendar' : restoredScreen ?? 'thinq'))
   const [error, setError] = useState('')
   const [toast, setToast] = useState('')
   const [calendarResult, setCalendarResult] = useState(calendarResultFromUrl)
@@ -655,6 +659,10 @@ function App() {
     addEventListener('popstate', handleBack)
     return () => removeEventListener('popstate', handleBack)
   }, [])
+  useEffect(() => {
+    if (!familySessionReady) localStorage.removeItem(lastScreenKey)
+    else if (!transientScreens.includes(screen)) localStorage.setItem(lastScreenKey, screen)
+  }, [familySessionReady, screen])
   useEffect(() => {
     api<{ kakao_javascript_key: string }>('/public-config')
       .then(config => setKakaoJavaScriptKey(config.kakao_javascript_key.trim()))
@@ -1184,7 +1192,7 @@ function App() {
   const activeAssignmentForItem = (careItemId: string) => {
     const priority: Record<string, number> = { COMPLETED: 4, ACCEPTED: 3, CANDIDATE_ACCEPTED: 2, PROPOSED: 1 }
     return assignments.filter(a => a.item_id === careItemId && a.status in priority)
-      .toSorted((left, right) => priority[right.status] - priority[left.status])[0]
+      .sort((left, right) => priority[right.status] - priority[left.status])[0]
   }
   const confirmedAssignmentForItem = (careItemId: string) => assignments.find(a => a.item_id === careItemId && a.status === 'COMPLETED')
     ?? assignments.find(a => a.item_id === careItemId && a.status === 'ACCEPTED')
@@ -1285,12 +1293,21 @@ function App() {
   }, [me?.member.id, viewer])
   useEffect(() => {
     if (!activeFamilyId || !me?.authenticated) return
+    let cancelled = false
+    let running = false
+    let timer: number | undefined
+    const schedulePoll = () => {
+      if (!cancelled && document.visibilityState === 'visible' && navigator.onLine) timer = window.setTimeout(() => void poll(), 10_000)
+    }
     const poll = async () => {
+      if (cancelled || running || document.visibilityState !== 'visible' || !navigator.onLine) return
+      running = true
       try {
         const [next, emergencyResult] = await Promise.all([
           api<Bootstrap>('/bootstrap'),
           api<{ requests: EmergencyRequest[] }>('/emergency-requests'),
         ])
+        if (cancelled) return
         const incoming = next.notifications.filter(notice => !notice.is_read && !seenNoticeIdsRef.current.has(notice.id))
         next.notifications.forEach(notice => seenNoticeIdsRef.current.add(notice.id))
         setBoot(next)
@@ -1304,10 +1321,28 @@ function App() {
             }
           })
         }
-      } catch (e) { reportError(e) }
+      } catch (e) {
+        if (!cancelled && navigator.onLine) reportError(e)
+      } finally {
+        running = false
+        schedulePoll()
+      }
     }
-    const timer = setInterval(poll, 2_000)
-    return () => clearInterval(timer)
+    const handleConnectivity = () => {
+      if (timer !== undefined) window.clearTimeout(timer)
+      if (!cancelled && !running && document.visibilityState === 'visible' && navigator.onLine) void poll()
+    }
+    schedulePoll()
+    document.addEventListener('visibilitychange', handleConnectivity)
+    window.addEventListener('online', handleConnectivity)
+    window.addEventListener('offline', handleConnectivity)
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', handleConnectivity)
+      window.removeEventListener('online', handleConnectivity)
+      window.removeEventListener('offline', handleConnectivity)
+    }
   }, [activeFamilyId, me?.authenticated, me?.member.id, appNotices])
   const today = new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date())
   const dateKey = (value: string | Date) => new Date(value).toLocaleDateString('sv-SE')
@@ -1331,11 +1366,11 @@ function App() {
       return groups
     }, new Map()).values()]
     .map(group => {
-      const ordered = group.toSorted((left, right) => left.starts_at.localeCompare(right.starts_at))
-      const schedule = ordered.find(item => dateKey(item.starts_at) >= todayKey) ?? ordered.at(-1)!
+      const ordered = group.sort((left, right) => left.starts_at.localeCompare(right.starts_at))
+      const schedule = ordered.find(item => dateKey(item.starts_at) >= todayKey) ?? ordered[ordered.length - 1]!
       return { schedule, count: ordered.length }
     })
-    .toSorted((left, right) => left.schedule.starts_at.localeCompare(right.schedule.starts_at))
+    .sort((left, right) => left.schedule.starts_at.localeCompare(right.schedule.starts_at))
   const todayCare = visibleCareItems.filter(i => !i.child_schedule_id && i.starts_at && dateKey(i.starts_at) === todayKey && i.item_type !== 'SUPPLY' && i.item_type !== 'HOMEWORK')
   const todayChildSchedules = boot?.child_schedules.filter(s => dateKey(s.starts_at) === todayKey) ?? []
   const dueDateOf = (item: CareItem) => {
@@ -1404,7 +1439,7 @@ function App() {
       const item = itemFor(assignment)
       return !!item?.starts_at && item.status !== 'DONE' && new Date(item.starts_at).getTime() > timelineNow
     })
-    .toSorted((left, right) => (itemFor(left)?.starts_at ?? '').localeCompare(itemFor(right)?.starts_at ?? ''))[0]
+    .sort((left, right) => (itemFor(left)?.starts_at ?? '').localeCompare(itemFor(right)?.starts_at ?? ''))[0]
   const homeCareAssignment = homeMovingAssignment ?? upcomingHomeAssignment
   const homeCareItem = homeCareAssignment ? itemFor(homeCareAssignment) : undefined
   const homeCareIsMoving = homeCareAssignment?.id === homeMovingAssignment?.id
@@ -1436,7 +1471,7 @@ function App() {
       id: `care-${item.id}`, label: item.title, startsAt: item.starts_at!, status: routeStatus(item),
     })),
   ].sort((left, right) => left.startsAt.localeCompare(right.startsAt))
-  if (careRouteSteps.length && careRouteSteps.at(-1)?.label !== '집') {
+  if (careRouteSteps.length && careRouteSteps[careRouteSteps.length - 1]?.label !== '집') {
     careRouteSteps.push({ id: 'home', label: '집', startsAt: '9999', status: careRouteSteps.every(step => step.status === 'done') ? 'done' : 'future' })
   }
   const homeEventRows = [
@@ -2166,7 +2201,7 @@ function App() {
       const item = itemFor(assignment)
       return !!item?.starts_at && dateKey(item.starts_at) === exceptionScheduleDate
     })
-    .toSorted((left, right) => (itemFor(left)?.starts_at ?? '').localeCompare(itemFor(right)?.starts_at ?? ''))
+    .sort((left, right) => (itemFor(left)?.starts_at ?? '').localeCompare(itemFor(right)?.starts_at ?? ''))
   const selectedExceptionAssignment = exceptionAssignmentOptions.find(assignment => assignment.id === assignmentId)
   const scheduleLocationOptions = [...new Set((boot?.child_schedules ?? []).map(item => item.location_name?.trim()).filter((value): value is string => !!value))]
   const isHomeScheduleLocation = (value = childScheduleLocation) => ['집', '우리집', '우리 집', '자택', 'home'].includes(value.trim().toLocaleLowerCase())
@@ -2291,7 +2326,7 @@ function App() {
   if (boot && screen === 'assignments') {
     const finalCandidates = assignments.filter(a => a.status === 'CANDIDATE_ACCEPTED')
     const unassignedItems = items.filter(i => i.status === 'CONFIRMED' && !!i.starts_at && dateKey(i.starts_at) >= todayKey && !assignments.some(a => a.item_id === i.id && ['PROPOSED', 'CANDIDATE_ACCEPTED', 'ACCEPTED'].includes(a.status)))
-      .toSorted((left, right) => (left.starts_at ?? '').localeCompare(right.starts_at ?? ''))
+      .sort((left, right) => (left.starts_at ?? '').localeCompare(right.starts_at ?? ''))
     page = <section className="assignment-overview">
       <div className="care-subscreen-title"><strong>역할 배정</strong><button onClick={() => unassignedItems[0] ? openSuggestion(unassignedItems[0]) : go('tasks')}>전체 보기 ›</button></div>
       {finalCandidates.length > 0 && <><Section>최종 확인 필요</Section>{finalCandidates.map(a => <Card key={a.id} className="urgent-card"><span className="small-badge danger">수락 응답</span><strong>{itemFor(a)?.title ?? '돌봄'} · {member(a.assignee_id)}</strong><p>이 가족을 최종 담당자로 확정하면 다른 후보 요청은 자동으로 마감돼요.</p>{me?.member.is_owner && <button className="primary-button wide-button" onClick={() => run(() => send('/assignments/' + a.id + '/confirm', 'POST'), member(a.assignee_id) + '님을 최종 담당자로 확정했어요')}>최종 담당자로 확정</button>}</Card>)}</>}
@@ -2313,7 +2348,7 @@ function App() {
   }
   if (boot && screen === 'suggestion') {
     const preferredMemberId = activeItem?.child_id ? localStorage.getItem(`family-care-pattern:${boot.family.id}:${activeItem.child_id}`) : ''
-    const visibleSuggestions = suggestions.filter(s => s.member_id !== me?.member.id || s.available).toSorted((left, right) => left.member_id === preferredMemberId ? -1 : right.member_id === preferredMemberId ? 1 : left.priority - right.priority)
+    const visibleSuggestions = suggestions.filter(s => s.member_id !== me?.member.id || s.available).sort((left, right) => left.member_id === preferredMemberId ? -1 : right.member_id === preferredMemberId ? 1 : left.priority - right.priority)
     page = <><div className="eyebrow">CARE SCHEDULE AGENT · 배정 추천</div><h2 className="hero-title">{activeItem?.title || '아이 일정'}</h2><p className="hero-copy">여러 가족에게 동시에 요청할 수 있어요. 두 명 이상에게 요청하면 수락 응답 뒤 주돌봄자가 최종 담당자를 정해요.</p>{visibleSuggestions.map(s => { const isMe = s.member_id === me?.member.id; const isPreferred = s.member_id === preferredMemberId; const requested = assignments.some(a => a.item_id === activeItem?.id && a.assignee_id === s.member_id && ['PROPOSED', 'CANDIDATE_ACCEPTED', 'ACCEPTED'].includes(a.status)); return <Card key={s.member_id} className={'person-card ' + (isPreferred || s.priority === 1 ? 'recommended' : '')}><div className="person-avatar">{s.name.slice(0, 1)}</div><div className="person-info"><strong>{isMe ? `${s.name} (나)` : s.name}</strong><p>{s.reason}</p></div><span className={'small-badge ' + (s.available ? 'ok' : 'danger')}>{s.available ? (isPreferred ? '기본 담당' : isMe ? '내가 가능' : s.priority === 1 ? 'AI 추천 1순위' : s.priority + '순위') : '바쁨'}</span><button className={isPreferred || s.priority === 1 ? 'primary-button' : 'outline-button'} disabled={!s.available || !activeItem || requested} onClick={() => run(async () => { await send('/assignments', 'POST', { item_id: activeItem!.id, assignee_id: s.member_id }); if (isMe) go('assignments') }, isMe ? '내 담당으로 바로 확정했어요' : s.name + '님에게 요청했어요')}>{requested ? '요청 보냄' : isMe ? '내가 맡기' : `${s.name}에게 요청`}</button></Card>})}{!visibleSuggestions.length && <Empty title="맡을 수 있는 가족이 없어요" text="개인 일정 충돌을 확인하거나 가족 구성원을 초대해주세요" />}<button className="outline-button wide-button" onClick={() => go('assignments')}>요청 현황 보기</button><Section>판단 근거</Section><Card className="reason-card"><p>개인 캘린더 충돌, 같은 시간대 돌봄, 현재 맡은 돌봄 건수를 함께 비교합니다.</p><p>같은 시간대에 여러 아이를 함께 돌볼 수 있으면 묶음 돌봄 가능으로 표시해요.</p></Card></>
   }
   if (boot && screen === 'tasks') page = <>
