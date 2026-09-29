@@ -93,13 +93,13 @@ try {
   notices.unshift({ id: 'live-voice-alert', level: 'IMPORTANT', action_type: 'DEVICE_ALERT_TEST', action_id: 'water_purifier', title: '켜진 뒤 테스트 알림', body: '지금 재생되어야 해요' })
   await page.waitForFunction(count => window.__beepCount > count, startedBeepCount)
   await page.getByText('“켜진 뒤 테스트 알림”').waitFor()
-  if (await page.evaluate(() => window.__maxGain < 0.16)) throw new Error('정수기 알림음이 충분히 크지 않습니다')
+  if (await page.evaluate(() => window.__maxGain < 0.2)) throw new Error('정수기 알림음이 충분히 크지 않습니다')
   speechVolume = 25
   const spokenCount = await page.evaluate(() => window.__spoken.length)
   notices.unshift({ id: 'low-volume-alert', level: 'IMPORTANT', action_type: 'DEVICE_ALERT_TEST', action_id: 'water_purifier', title: '낮은 음량 테스트', body: '설정 음량이 적용되어야 해요' })
   await page.waitForFunction(count => window.__spoken.length > count, spokenCount)
   const appliedVolume = await page.evaluate(() => window.__spoken.at(-1)?.volume)
-  if (Math.abs(appliedVolume - 0.5) > 0.01) throw new Error('정수기 음량 설정이 적용되지 않습니다: ' + appliedVolume)
+  if (Math.abs(appliedVolume - Math.cbrt(0.25)) > 0.01) throw new Error('정수기 음량 설정이 적용되지 않습니다: ' + appliedVolume)
   const priorityBeepCount = await page.evaluate(() => window.__beepCount)
   tvOnline = true
   notices.unshift({ id: 'tv-priority-alert', level: 'IMPORTANT', action_type: 'DEVICE_ALERT_TEST', action_id: 'water_purifier', title: 'TV 우선 알림', body: '정수기에서 재생되면 안 돼요' })
@@ -115,7 +115,7 @@ try {
   await page.waitForFunction(() => document.querySelector('input[type="range"]')?.value === '36')
   await page.getByRole('button', { name: '테스트 음성 듣기' }).click()
   const preview = await page.evaluate(() => window.__spoken.at(-1))
-  if (!preview?.text.includes('민솔이 하원') || Math.abs(preview.volume - 0.6) > 0.01) throw new Error('미리듣기 음성 또는 음량이 올바르지 않습니다: ' + JSON.stringify(preview))
+  if (!preview?.text.includes('민솔이 하원') || Math.abs(preview.volume - Math.cbrt(0.36)) > 0.01) throw new Error('미리듣기 음성 또는 음량이 올바르지 않습니다: ' + JSON.stringify(preview))
   console.log('TV and voice appliance alert checks passed')
 } finally {
   await browser.close()

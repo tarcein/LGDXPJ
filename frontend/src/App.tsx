@@ -2542,7 +2542,7 @@ function App() {
           <p className="device-alert-preview-text">“{previewText}”</p>
           <label className="form-label">음량 {settings.speech_volume}%</label>
           <input type="range" min={0} max={100} value={settings.speech_volume} onChange={event => setDeviceAlertData(prev => prev ? { ...prev, settings: { ...prev.settings, speech_volume: Number(event.target.value) } } : prev)} onPointerUp={event => patchDeviceAlertSettings({ speech_volume: Number(event.currentTarget.value) }, '음량을 변경했어요')} onKeyUp={event => patchDeviceAlertSettings({ speech_volume: Number(event.currentTarget.value) }, '음량을 변경했어요')} />
-          <button className="outline-button wide-button" onClick={() => { const volume = speechVolumeFor(settings.speech_volume); beep(false, volume * 2); speak(previewText, { volume }) }}>테스트 음성 듣기</button>
+          <button className="outline-button wide-button" onClick={() => { const volume = speechVolumeFor(settings.speech_volume); beep(false, volume * 2.5); speak(previewText, { volume }) }}>테스트 음성 듣기</button>
         </Card>
         <Section>방해 금지</Section>
         <Card className="device-alert-rule-card">

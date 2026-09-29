@@ -32,7 +32,7 @@ function VoiceDeviceDisplay() {
 
   const playAnnouncement = useCallback((alert: DeviceAlert, settings: DeviceAlertSettings, deviceId: string) => {
     const volume = speechVolumeFor(settings.speech_volume)
-    beep(alert.tier === 4, volume * 2)
+    beep(alert.tier === 4, volume * 2.5)
     const message = speechMessageFor(alert)
     speak(message, { volume })
     setLastSpoken({ message, at: Date.now() })

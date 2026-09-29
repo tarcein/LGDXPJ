@@ -32,7 +32,7 @@ export const contentKeyForNotice = (notice: Notice): string => {
 }
 
 export const speechVolumeFor = (percent: number) =>
-  Math.sqrt(Math.max(0, Math.min(100, percent)) / 100)
+  Math.cbrt(Math.max(0, Math.min(100, percent)) / 100)
 
 export const beep = (strong = false, volume = 1) => {
   try {
