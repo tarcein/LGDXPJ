@@ -733,7 +733,8 @@ def delete_family_room():
         ).fetchall()]
 
         # Remove children of care assignments and members before their parents.
-        for table in ("performance_event", "emergency_request", "device_alert_outbox", "care_exception", "care_handoff"):
+        for table in ("performance_event", "emergency_request", "device_alert_outbox", "push_device_token",
+                      "device_alert_setting", "care_exception", "care_handoff"):
             db.execute(f"DELETE FROM {table} WHERE family_id = ?", (target_family_id,))
         db.execute("DELETE FROM media_asset WHERE family_id = ?", (target_family_id,))
         db.execute("DELETE FROM care_assignment WHERE family_id = ?", (target_family_id,))

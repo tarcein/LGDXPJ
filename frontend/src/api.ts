@@ -1,5 +1,5 @@
 export type Screen =
-  | 'thinq' | 'serviceLoading' | 'lockscreen' | 'home' | 'careHub' | 'familyHub' | 'more' | 'family' | 'capture' | 'review' | 'assignments' | 'suggestion'
+  | 'thinq' | 'serviceLoading' | 'lockscreen' | 'home' | 'careHub' | 'familyHub' | 'more' | 'family' | 'capture' | 'review' | 'assignments' | 'assignmentOverview' | 'suggestion'
   | 'schedule' | 'exception' | 'tasks' | 'notifications'
   | 'members' | 'permissions' | 'plan' | 'chat' | 'emergency'
   | 'assignmentDetail' | 'album' | 'programs' | 'settings' | 'onboarding' | 'calendar' | 'gap' | 'supplies' | 'homework' | 'deviceAlerts' | 'childProfile'

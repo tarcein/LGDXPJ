@@ -767,6 +767,10 @@ class ExtendedFlowTest(unittest.TestCase):
             "invite_code": room["invite_code"], "name": "아빠", "role": "PARENT",
         }).json()
         member_headers = {"Authorization": "Bearer " + joined["access_token"]}
+        self.client.post("/api/push-tokens", headers=member_headers, json={
+            "token": "family-delete-ios-device-token", "platform": "IOS",
+        })
+        self.client.get("/api/device-alerts", headers=owner_headers)
 
         self.assertEqual(self.client.patch("/api/families", headers=member_headers, json={"name": "변경 실패"}).status_code, 403)
         renamed = self.client.patch("/api/families", headers=owner_headers, json={"name": "민솔이네"})

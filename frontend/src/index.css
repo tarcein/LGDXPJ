@@ -1571,6 +1571,65 @@ input[type="datetime-local"]::-webkit-date-and-time-value { min-width: 0; margin
 .care-status-scope button { flex: none; padding: 4px 11px; border-radius: 999px; color: #6e727d; background: #f0f2f6; font-size: 11px; font-weight: 700; }
 .care-status-scope button.active { color: #fff; background: var(--fc-brand); }
 
+/* Care role overview — adapted from the team's Figma screen without Tailwind. */
+.care-role-overview { min-height: 100%; margin: -9px -18px 0; color: #12161f; background: #f4f6fc; }
+.care-role-toolbar { display: flex; align-items: center; gap: 10px; min-height: 61px; padding: 10px 17px; border-bottom: 1px solid #1014180f; background: #ffffffa8; }
+.care-role-toolbar > button:first-child { display: flex; align-items: center; min-width: 0; flex: 1; gap: 10px; padding: 0; background: transparent; text-align: left; }
+.care-role-toolbar > button:first-child > span:first-child { color: #606c80; font-size: 24px; line-height: 1; }
+.care-role-toolbar > button:first-child > span:last-child { display: grid; min-width: 0; gap: 1px; }
+.care-role-toolbar strong { font-size: 13px; }
+.care-role-toolbar small { overflow: hidden; color: #00000059; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.care-role-emergency { flex: none; padding: 7px 10px; border-radius: 10px; color: #c4123f; background: #fbe9ed; font-size: 10px; font-weight: 800; }
+.care-role-tabs { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #1014180f; background: #fff; }
+.care-role-tabs button { position: relative; padding: 13px 8px; color: #00000066; background: transparent; font-size: 13px; font-weight: 700; }
+.care-role-tabs button.active { color: #c4123f; }
+.care-role-tabs button.active::after { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; border-radius: 2px 2px 0 0; background: #c4123f; content: ''; }
+.care-role-tabs b { display: inline-grid; min-width: 20px; height: 18px; margin-left: 5px; place-items: center; border-radius: 9px; color: inherit; background: #f0f1f4; font-size: 9px; }
+.care-role-tabs .active b { color: #fff; background: #c4123f; }
+.care-role-body { padding: 14px 14px 4px; }
+.care-role-filters { display: flex; gap: 7px; margin-bottom: 13px; overflow-x: auto; scrollbar-width: none; }
+.care-role-filters::-webkit-scrollbar { display: none; }
+.care-role-filters button { display: flex; align-items: center; flex: none; gap: 5px; padding: 7px 11px; border-radius: 999px; color: #00000066; background: #fff; font-size: 10px; font-weight: 700; box-shadow: 0 1px 2px #0000000d; }
+.care-role-filters button.active { color: #fff; background: #c4123f; }
+.care-role-filters span { display: grid; min-width: 16px; height: 16px; place-items: center; border-radius: 8px; background: #ffffff2e; font-size: 8px; }
+.care-role-caption { margin: -3px 1px 11px; color: #00000059; font-size: 9px; line-height: 1.5; }
+.care-role-list { display: grid; gap: 10px; }
+.care-role-card { display: block; width: 100%; padding: 16px; border: 1px solid #0000000d; border-radius: 18px; background: #fff; text-align: left; box-shadow: 0 1px 3px #0000000d; }
+.care-role-card:active { transform: scale(.995); }
+.care-role-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; }
+.care-role-card-top em { padding: 4px 8px; border-radius: 999px; font-size: 8px; font-style: normal; font-weight: 800; }
+.care-role-card-top em.schedule { color: #2563eb; background: #eff6ff; }
+.care-role-card-top em.emergency { color: #f97316; background: #fff7ed; }
+.care-role-card-top em.conflict { color: #c4123f; background: #fff1f2; }
+.care-role-card-top em.preview { color: #7c3aed; background: #f5f3ff; }
+.care-role-card-top > small { color: #00000059; font-size: 9px; }
+.care-role-card-top > small.urgent { padding: 3px 7px; border-radius: 999px; color: #c4123f; background: #fbe9ed; font-weight: 800; }
+.care-role-card-title { display: flex; align-items: center; min-width: 0; gap: 7px; }
+.care-role-card-title > i { flex: none; padding: 3px 7px; border-radius: 6px; color: #c4123f; background: #f9c9d8; font-size: 9px; font-style: normal; font-weight: 800; }
+.care-role-card-title > strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.care-role-card > time { display: block; margin-top: 4px; color: #00000066; font-size: 10px; font-style: normal; }
+.care-role-reason, .care-role-need-reason { display: block; margin-top: 10px; color: #0000008f; font-size: 10px; line-height: 1.55; }
+.care-role-reason { padding: 9px 10px; border-radius: 10px; color: #d25b18; background: #fff7ed; }
+.care-role-responses { display: grid; gap: 8px; margin-top: 12px; padding: 10px; border-radius: 11px; background: #f4f6fc; }
+.care-role-response { display: flex; align-items: center; gap: 8px; }
+.care-role-response > i, .care-role-recommend > i { display: grid; width: 26px; height: 26px; flex: none; place-items: center; border-radius: 50%; color: #fff; font-size: 9px; font-style: normal; font-weight: 800; }
+.care-role-response > span { display: grid; flex: 1; gap: 1px; }
+.care-role-response strong { font-size: 10px; }
+.care-role-response small { color: #00000066; font-size: 8px; }
+.care-role-response > em { display: flex; align-items: center; gap: 4px; color: #00000059; font-size: 8px; font-style: normal; }
+.care-role-response > em > i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.care-role-response > em.accepted { color: #168556; }
+.care-role-response > em.danger { color: #c4123f; }
+.care-role-recommend { display: flex; align-items: center; gap: 8px; margin-top: 11px; padding: 9px 10px; border-radius: 11px; background: #f4f6fc; }
+.care-role-recommend strong { flex: 1; font-size: 10px; }
+.care-role-recommend small { color: #c4123f; font-size: 8px; }
+.care-role-action { display: block; margin-top: 11px; padding: 9px 10px; border-radius: 10px; font-size: 9px; }
+.care-role-action.preview { color: #7c3aed; background: #f5f3ff; }
+.care-role-empty { display: grid; justify-items: center; gap: 5px; padding: 36px 18px; border: 1px dashed #dfe2e8; border-radius: 18px; color: #747b86; background: #fff; text-align: center; }
+.care-role-empty strong { font-size: 12px; }
+.care-role-empty small { font-size: 9px; line-height: 1.6; }
+.care-role-hint { margin: 12px 14px 4px; padding: 10px 12px; border-radius: 11px; color: #0000008c; background: #efeee9; font-size: 9px; line-height: 1.6; }
+
 @media (max-width: 1000px) {
   .app-shell .family-main-copy { margin-bottom: 15px; font-size: clamp(8px, 2.45vw, 10px) !important; line-height: 1.3; letter-spacing: -.35px; white-space: nowrap; }
   .app-shell .schedule-form-sheet strong,

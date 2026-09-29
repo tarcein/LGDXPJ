@@ -441,6 +441,9 @@ function App() {
   const [emergencyVoiceBusy, setEmergencyVoiceBusy] = useState(false)
   const [emergencyRequests, setEmergencyRequests] = useState<EmergencyRequest[]>([])
   const [emergencyDeselected, setEmergencyDeselected] = useState<Set<string>>(new Set())
+  const [careOverviewTab, setCareOverviewTab] = useState<'coordinating' | 'needs'>('coordinating')
+  const [careCoordFilter, setCareCoordFilter] = useState<'all' | 'schedule' | 'emergency'>('all')
+  const [careNeedsFilter, setCareNeedsFilter] = useState<'all' | 'conflict' | 'preview'>('all')
   const [subscription, setSubscription] = useState<SubscriptionState | null>(null)
   const [planBusy, setPlanBusy] = useState(false)
   const [billingBusy, setBillingBusy] = useState(false)
@@ -696,7 +699,7 @@ function App() {
       api<SubscriptionState>('/subscription'),
       api<{ features: { id: string; available: boolean; backend_state: string }[] }>('/features'),
     ]).then(([current, available]) => { setSubscription(current); setFeatures(available.features) }).catch(reportError)
-    if ((screen === 'emergency' || screen === 'home' || screen === 'careHub') && activeFamilyId) api<{ requests: EmergencyRequest[] }>('/emergency-requests')
+    if ((screen === 'emergency' || screen === 'home' || screen === 'careHub' || screen === 'assignmentOverview') && activeFamilyId) api<{ requests: EmergencyRequest[] }>('/emergency-requests')
       .then(result => setEmergencyRequests(result.requests)).catch(reportError)
     if ((screen === 'calendar' || screen === 'schedule') && activeFamilyId) api<{ connections: CalendarConnection[] }>('/calendar-connections')
       .then(result => setCalendarConnections(result.connections)).catch(reportError)
@@ -2336,7 +2339,7 @@ function App() {
     const unassignedItems = items.filter(i => i.status === 'CONFIRMED' && !!i.starts_at && dateKey(i.starts_at) >= todayKey && !assignments.some(a => a.item_id === i.id && ['PROPOSED', 'CANDIDATE_ACCEPTED', 'ACCEPTED'].includes(a.status)))
       .sort((left, right) => (left.starts_at ?? '').localeCompare(right.starts_at ?? ''))
     page = <section className="assignment-overview">
-      <div className="care-subscreen-title"><strong>역할 배정</strong><button onClick={() => unassignedItems[0] ? openSuggestion(unassignedItems[0]) : go('tasks')}>전체 보기 ›</button></div>
+      <div className="care-subscreen-title"><strong>역할 배정</strong><button onClick={() => go('assignmentOverview')}>전체 보기 ›</button></div>
       {finalCandidates.length > 0 && <><Section>최종 확인 필요</Section>{finalCandidates.map(a => <Card key={a.id} className="urgent-card"><span className="small-badge danger">수락 응답</span><strong>{itemFor(a)?.title ?? '돌봄'} · {member(a.assignee_id)}</strong><p>이 가족을 최종 담당자로 확정하면 다른 후보 요청은 자동으로 마감돼요.</p>{me?.member.is_owner && <button className="primary-button wide-button" onClick={() => run(() => send('/assignments/' + a.id + '/confirm', 'POST'), member(a.assignee_id) + '님을 최종 담당자로 확정했어요')}>최종 담당자로 확정</button>}</Card>)}</>}
       <Section>오늘의 배정</Section>
       {todayAssignments.length ? timeline(todayAssignments) : <Empty title="오늘 확정된 배정이 없어요" text="새로운 돌봄 일정을 등록하면 담당자를 추천해요" />}
@@ -2441,6 +2444,86 @@ function App() {
       {myNext && myNextItem ? <Card className="care-duty-card exact-duty"><div><time>{formatTime(myNextItem.starts_at) || '시간 미정'}</time><span className={'small-badge ' + (['PROPOSED', 'CANDIDATE_ACCEPTED'].includes(myNext.status) ? 'pending' : myNext.status === 'RECONFIRMATION_REQUIRED' ? 'danger' : 'ok')}>{myNext.status === 'PROPOSED' ? '응답 필요' : caregiverStatusLabel(myNext.status)}</span></div><strong>{myNextItem.title} — {child(myNextItem.child_id)}</strong><button aria-label="내 돌봄 상세 보기" onClick={() => { setAssignmentId(myNext.id); setViewer(myNext.assignee_id); go('assignmentDetail') }}>{myNext.status === 'PROPOSED' ? '요청에 응답' : myNext.status === 'COMPLETED' ? '완료 기록 보기' : '자세히'}</button><div className="care-duty-stats"><span><strong>{confirmedToday.length}</strong><small>확정된 일</small></span><span><strong>{confirmedToday.filter(a => a.status === 'COMPLETED').length}</strong><small>완료</small></span><span><strong>{todayViewerAssignments.filter(a => a.status === 'PROPOSED').length}</strong><small>응답 필요</small></span></div></Card> : <Empty title="오늘 돌봄 일정이 없어요" text="새로운 돌봄 요청이 오면 여기에 표시돼요" />}
       <Section>빠른 실행</Section><div className="care-quick-grid"><button className="urgent" onClick={() => go('emergency')}><i><img src={careEmergencyIcon} alt="" /></i><span><strong>긴급 도움 요청</strong><small>가족 전체에 도움 요청</small></span></button><button onClick={() => go('assignments')}><i><img src={careAssignmentIcon} alt="" /></i><span><strong>역할 배정</strong><small>오늘의 담당 확인</small></span></button></div>
     </>
+  }
+  if (boot && screen === 'assignmentOverview') {
+    const openEmergencies = emergencyRequests.filter(request => request.status === 'OPEN')
+    const emergencyAssignmentIds = new Set(openEmergencies.map(request => request.assignment_id))
+    const coordinatingByItem = assignments
+      .filter(assignment => ['PROPOSED', 'CANDIDATE_ACCEPTED', 'RECONFIRMATION_REQUIRED'].includes(assignment.status) || emergencyAssignmentIds.has(assignment.id))
+      .reduce((groups, assignment) => {
+        const current = groups.get(assignment.item_id) ?? []
+        current.push(assignment)
+        groups.set(assignment.item_id, current)
+        return groups
+      }, new Map<string, Assignment[]>())
+    const coordinatingRows = [...coordinatingByItem.entries()].flatMap(([itemId, responses]) => {
+      const item = visibleCareItems.find(candidate => candidate.id === itemId)
+      if (!item) return []
+      const emergency = openEmergencies.find(request => responses.some(response => response.id === request.assignment_id))
+      return [{ item, responses, emergency }]
+    }).sort((left, right) => (left.item.starts_at ?? '').localeCompare(right.item.starts_at ?? ''))
+    const visibleCoordinatingRows = coordinatingRows.filter(row => careCoordFilter === 'all' || (careCoordFilter === 'emergency' ? !!row.emergency : !row.emergency))
+    const assignedItemIds = new Set(assignments.map(assignment => assignment.item_id))
+    const dayDistance = (value: string | null) => value ? Math.max(0, Math.ceil((new Date(dateKey(value) + 'T12:00:00').getTime() - new Date(todayKey + 'T12:00:00').getTime()) / 86_400_000)) : null
+    const needsRows: Array<{ id: string; kind: 'conflict' | 'preview'; title: string; childName: string; date: string; due: number | null; reason: string; recommendation?: string; onOpen: () => void }> = [
+      ...activeExceptions.flatMap(exception => {
+        const assignment = boot.assignments.find(candidate => candidate.id === exception.assignment_id)
+        const item = itemFor(assignment)
+        if (!assignment || !item) return []
+        return [{ id: 'conflict-' + exception.id, kind: 'conflict' as const, title: item.title, childName: child(item.child_id), date: `${formatDate(item.starts_at)} ${formatTime(item.starts_at)}`.trim(), due: dayDistance(item.starts_at), reason: exception.reason, recommendation: member(exception.alternative_member_id), onOpen: () => { setAssignmentId(assignment.id); go('exception') } }]
+      }),
+      ...visibleCareItems
+        .filter(item => item.starts_at && dateKey(item.starts_at) >= todayKey && item.status !== 'NEEDS_REVIEW' && !assignedItemIds.has(item.id))
+        .sort((left, right) => (left.starts_at ?? '').localeCompare(right.starts_at ?? ''))
+        .slice(0, 12)
+        .map(item => ({ id: 'preview-' + item.id, kind: 'preview' as const, title: item.title, childName: child(item.child_id), date: `${formatDate(item.starts_at)} ${formatTime(item.starts_at)}`.trim(), due: dayDistance(item.starts_at), reason: '담당자가 아직 정해지지 않았어요', onOpen: () => go('assignments') })),
+    ]
+    const visibleNeedsRows = needsRows.filter(row => careNeedsFilter === 'all' || row.kind === careNeedsFilter)
+    const careKindLabel = (kind: 'conflict' | 'preview') => kind === 'conflict' ? '일정 충돌' : '미리 확인'
+    page = <section className="care-role-overview">
+      <header className="care-role-toolbar">
+        <button onClick={() => navigateBack('assignments')}><span>‹</span><span><strong>전체 보기</strong><small>돌봄 요청과 조율 상태를 한눈에 확인해요</small></span></button>
+        <button className="care-role-emergency" onClick={() => go('emergency')}>긴급 요청</button>
+      </header>
+      <div className="care-role-tabs" role="tablist" aria-label="돌봄 조율 상태">
+        <button role="tab" aria-selected={careOverviewTab === 'coordinating'} className={careOverviewTab === 'coordinating' ? 'active' : ''} onClick={() => setCareOverviewTab('coordinating')}>조율 중 <b>{coordinatingRows.length}</b></button>
+        <button role="tab" aria-selected={careOverviewTab === 'needs'} className={careOverviewTab === 'needs' ? 'active' : ''} onClick={() => setCareOverviewTab('needs')}>조율 필요 <b>{needsRows.length}</b></button>
+      </div>
+      {careOverviewTab === 'coordinating' ? <div className="care-role-body">
+        <div className="care-role-filters" role="group" aria-label="조율 중 필터">
+          {([['all', '전체'], ['schedule', '일정 조율'], ['emergency', '긴급 도움']] as const).map(([value, label]) => <button key={value} className={careCoordFilter === value ? 'active' : ''} onClick={() => setCareCoordFilter(value)}>{label}{value === 'all' && <span>{coordinatingRows.length}</span>}</button>)}
+        </div>
+        <div className="care-role-list">
+          {visibleCoordinatingRows.map(row => {
+            const primary = row.responses[0]
+            return <button className="care-role-card" key={row.item.id} onClick={() => { if (row.emergency) go('emergency'); else if (primary) { setAssignmentId(primary.id); setViewer(primary.assignee_id); go('assignmentDetail') } }}>
+              <span className="care-role-card-top"><em className={row.emergency ? 'emergency' : 'schedule'}>{row.emergency ? '긴급 도움' : '일정 조율'}</em><small>{row.emergency ? '응답 대기 중' : `${row.responses.length}명에게 요청`}</small></span>
+              <span className="care-role-card-title"><i style={{ background: childColor(row.item.child_id) + '26', color: childColor(row.item.child_id) }}>{child(row.item.child_id)}</i><strong>{row.item.title}</strong></span>
+              <time>{formatDate(row.item.starts_at)} {formatTime(row.item.starts_at)}</time>
+              {row.emergency && <span className="care-role-reason">{row.emergency.reason}</span>}
+              <span className="care-role-responses">{row.responses.map(response => <span className="care-role-response" key={response.id}><i style={{ background: profileColorForMember(response.assignee_id) }}>{member(response.assignee_id).trim().slice(0, 1)}</i><span><strong>{member(response.assignee_id)}</strong><small>{caregiverStatusLabel(response.status)}</small></span><em className={response.status === 'CANDIDATE_ACCEPTED' || response.status === 'ACCEPTED' ? 'accepted' : response.status === 'RECONFIRMATION_REQUIRED' ? 'danger' : 'waiting'}><i />{response.status === 'CANDIDATE_ACCEPTED' || response.status === 'ACCEPTED' ? '수락' : response.status === 'RECONFIRMATION_REQUIRED' ? '재조율' : '대기 중'}</em></span>)}</span>
+            </button>
+          })}
+          {!visibleCoordinatingRows.length && <div className="care-role-empty"><strong>진행 중인 조율이 없어요</strong><small>새로운 요청이 생기면 이곳에서 상태를 확인할 수 있어요.</small></div>}
+        </div>
+      </div> : <div className="care-role-body">
+        <div className="care-role-filters needs" role="group" aria-label="조율 필요 필터">
+          {([['all', '전체'], ['conflict', '일정 충돌'], ['preview', '미리 확인']] as const).map(([value, label]) => <button key={value} className={careNeedsFilter === value ? 'active' : ''} onClick={() => setCareNeedsFilter(value)}>{label}{value === 'all' && <span>{needsRows.length}</span>}</button>)}
+        </div>
+        <p className="care-role-caption">일정이 가까운 순서예요. 먼저 확인하고 조율을 시작해보세요.</p>
+        <div className="care-role-list">
+          {visibleNeedsRows.map(row => <button className="care-role-card needs" key={row.id} onClick={row.onOpen}>
+            <span className="care-role-card-top"><em className={row.kind}>{careKindLabel(row.kind)}</em>{row.due !== null && <small className={row.due <= 2 ? 'urgent' : ''}>{row.due === 0 ? '오늘' : `D-${row.due}`}</small>}</span>
+            <span className="care-role-card-title"><i>{row.childName}</i><strong>{row.title}</strong></span>
+            <time>{row.date}</time><span className="care-role-need-reason">{row.reason}</span>
+            {row.recommendation && <span className="care-role-recommend"><i style={{ background: profileColorForMember(boot.members.find(candidate => candidate.name === row.recommendation)?.id ?? '') }}>{row.recommendation.slice(0, 1)}</i><strong>{row.recommendation}</strong><small>대안 확인 →</small></span>}
+            {row.kind === 'preview' && <span className="care-role-action preview">담당자 추천 확인 →</span>}
+          </button>)}
+          {!visibleNeedsRows.length && <div className="care-role-empty"><strong>추가 조율이 필요한 일정이 없어요</strong><small>가족 일정이 바뀌거나 담당자가 필요해지면 알려드릴게요.</small></div>}
+        </div>
+      </div>}
+      <p className="care-role-hint">{careOverviewTab === 'coordinating' ? '가족이 응답하면 담당이 자동으로 갱신돼요. 카드를 눌러 상세 상태를 확인하세요.' : '일정이 가까운 항목부터 확인하고 필요한 가족에게 요청해보세요.'}</p>
+    </section>
   }
   if (boot && screen === 'familyHub') page = <><div className="eyebrow">FAMILY</div><p className="hero-copy family-main-copy">구성원과 아이를 관리하고 누구에게 어떤 정보를 보여줄지 정해요.</p><Section>구성원</Section><div className="family-people exact-family-people">{members.map(person => <button key={person.id} onClick={() => go('members')}><i className="member-profile-initial" style={{ background: profileColorForMember(person.id) }}>{person.name.trim().slice(0, 1)}</i><span>{person.name}</span><small>{person.id === me?.member.id ? `${roleLabel[person.role] ?? '가족'} (나)` : roleLabel[person.role] ?? '가족'}</small><b className="member-presence"><img src={memberIsOnline(person.id) ? memberActiveIcon : memberInactiveIcon} alt={memberIsOnline(person.id) ? '활동 중' : '비활동 중'} /></b></button>)}<button className="invite-person" onClick={() => void openInviteShare()}><i>＋</i><span>초대</span><small>가족 추가</small></button></div><Section>아이</Section><div className="family-children exact-family-children">{boot.children.map(kid => <button key={kid.id} onClick={() => openChildProfile(kid)}><i className={kid.photo_url ? 'child-profile-asset' : ''}><img src={kid.photo_url || scheduleChildIcon} alt="" /></i><strong>{kid.name}</strong><small>{kid.age_label}</small></button>)}{!boot.children.length && <button className="family-child-empty" onClick={() => go('members')}><i>＋</i><strong>등록된 아이가 없어요</strong><small>가족 설정에서 아이를 추가해 주세요</small></button>}</div><div className="hub-list family-actions"><button onClick={() => go('members')}><i><img src={familySettingsUiIcon} alt="" /></i><span><strong>가족 설정</strong><small>가족 구성원 · 아이 · 초대코드</small></span><b>›</b></button><button aria-label="모음ZIP · 모음ZIP" onClick={() => go('album')}><i><img src={familyAlbumUiIcon} alt="" /></i><span><strong>모음ZIP {plan === 'PRO' ? <em className="small-badge ok">이용 가능</em> : <Pro />}</strong><small>돌봄 완료 사진 자동 모음</small></span><b>›</b></button><button onClick={() => go('permissions')}><i><img src={informationUiIcon} alt="" /></i><span><strong>정보 공개</strong><small>일정 관련 내용 · 돌봄 이동 현황 권한</small></span><b>›</b></button></div><Card className="privacy-note">구성원마다 볼 수 있는 정보 범위를 따로 설정할 수 있어요. 기본값은 최소 공개입니다.</Card></>
   if (boot && screen === 'more') page = <div className={'figma-more ' + (plan === 'PRO' ? 'pro-enabled' : '')}>
@@ -2691,7 +2774,7 @@ function App() {
   const showInviteNav = !!boot && screen === 'onboarding' && !invitationFromUrl && onboardStep === 'INVITE'
   const showTabHeader = showChrome && isRoot
   const showStatus = !['thinq', 'serviceLoading', 'lockscreen', 'plan'].includes(screen)
-  const showBack = showChrome && !isRoot && screen !== 'chat' && screen !== 'plan'
+  const showBack = showChrome && !isRoot && screen !== 'chat' && screen !== 'plan' && screen !== 'assignmentOverview'
   const backTarget: Screen = ['capture', 'review', 'family', 'calendar', 'supplies'].includes(screen) ? 'schedule'
     : ['assignments', 'assignmentDetail', 'suggestion', 'tasks', 'exception', 'emergency'].includes(screen) ? 'careHub'
       : ['members', 'permissions', 'album'].includes(screen) ? 'familyHub'
