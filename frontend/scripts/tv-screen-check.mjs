@@ -5,11 +5,13 @@ const page = await browser.newPage()
 const notices = [{ id: 'old-alert', level: 'NORMAL', action_type: 'INFO', title: '기존 알림', body: '기준 알림' }]
 let emergencies = [{ id: 'old-emergency', status: 'OPEN', item_title: '지난 긴급 요청', reason: '화면을 켜기 전 요청' }]
 let tvOnline = true
+let speechVolume = 100
 
 try {
   await page.addInitScript(() => {
     window.__beepCount = 0
     window.__maxGain = 0
+    window.__spoken = []
     class TestAudioContext {
       currentTime = 0
       destination = {}
@@ -18,17 +20,31 @@ try {
       close() {}
     }
     window.AudioContext = TestAudioContext
+    const TestSpeechSynthesisUtterance = class {
+      constructor(text) { this.text = text; this.volume = 1 }
+    }
+    const testSpeechSynthesis = {
+      cancel() {},
+      getVoices() { return [] },
+      speak(utterance) { window.__spoken.push({ text: utterance.text, volume: utterance.volume }) },
+    }
+    Object.defineProperty(window, 'SpeechSynthesisUtterance', { configurable: true, value: TestSpeechSynthesisUtterance })
+    Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: testSpeechSynthesis })
   })
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname
+    if (path === '/api/device-alerts' && route.request().method() === 'PATCH') {
+      const payload = route.request().postDataJSON()
+      if (typeof payload.speech_volume === 'number') speechVolume = payload.speech_volume
+    }
     const body = path === '/api/families/me'
       ? { family: { id: 'qa-family', name: 'QA 가족', plan: 'PRO' }, member: { id: 'qa-member', name: 'QA', role: 'PARENT', status: 'ACTIVE', is_owner: 1 }, authenticated: true }
       : path === '/api/bootstrap'
-        ? { family: {}, members: [], children: [], items: [], schedules: [], child_schedules: [], assignments: [], exceptions: [], handoffs: [], notifications: notices, permissions: [], notification_preferences: [{ member_id: 'qa-member', device_enabled: true }] }
+        ? { family: { id: 'qa-family', name: 'QA 가족', plan: 'PRO' }, members: [{ id: 'qa-member', name: 'QA', role: 'PARENT', status: 'ACTIVE', is_owner: 1 }], children: [], items: [], schedules: [], child_schedules: [], assignments: [], exceptions: [], handoffs: [], notifications: notices, permissions: [], notification_preferences: [{ member_id: 'qa-member', device_enabled: true }] }
         : path === '/api/emergency-requests'
           ? { requests: emergencies }
           : path === '/api/device-alerts'
-            ? { settings: { emergency_tv_sound: true, speech_volume: 100, quiet_start: '00:00', quiet_end: '00:00', devices: ['tv_living', 'water_purifier'], priority: ['tv_living', 'water_purifier'], content_matrix: { emergency_request: { tv: true, voice: true }, departure_reminder: { tv: true, voice: true }, supply_missing: { tv: true, voice: true } } }, catalog: [{ id: 'tv_living', name: '거실 TV', type: 'SCREEN', location: '거실' }, { id: 'water_purifier', name: '정수기', type: 'VOICE', location: '주방' }], tv_online: tvOnline }
+            ? { settings: { emergency_tv_sound: true, speech_volume: speechVolume, quiet_start: '00:00', quiet_end: '00:00', mute_during_naptime: true, devices: ['tv_living', 'water_purifier'], priority: ['tv_living', 'water_purifier'], content_matrix: { emergency_request: { tv: true, voice: true }, departure_reminder: { tv: true, voice: true }, supply_missing: { tv: true, voice: true } } }, catalog: [{ id: 'tv_living', name: '거실 TV', type: 'SCREEN', location: '거실' }, { id: 'water_purifier', name: '정수기', type: 'VOICE', location: '주방' }], content_keys: [{ id: 'emergency_request', label: '긴급 요청', locked: true }, { id: 'departure_reminder', label: '출발 알림', locked: false }, { id: 'supply_missing', label: '준비물', locked: false }], tv_online: tvOnline }
             : { status: 'ok' }
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
   })
@@ -78,12 +94,28 @@ try {
   await page.waitForFunction(count => window.__beepCount > count, startedBeepCount)
   await page.getByText('“켜진 뒤 테스트 알림”').waitFor()
   if (await page.evaluate(() => window.__maxGain < 0.16)) throw new Error('정수기 알림음이 충분히 크지 않습니다')
+  speechVolume = 25
+  const spokenCount = await page.evaluate(() => window.__spoken.length)
+  notices.unshift({ id: 'low-volume-alert', level: 'IMPORTANT', action_type: 'DEVICE_ALERT_TEST', action_id: 'water_purifier', title: '낮은 음량 테스트', body: '설정 음량이 적용되어야 해요' })
+  await page.waitForFunction(count => window.__spoken.length > count, spokenCount)
+  const appliedVolume = await page.evaluate(() => window.__spoken.at(-1)?.volume)
+  if (Math.abs(appliedVolume - 0.5) > 0.01) throw new Error('정수기 음량 설정이 적용되지 않습니다: ' + appliedVolume)
   const priorityBeepCount = await page.evaluate(() => window.__beepCount)
   tvOnline = true
   notices.unshift({ id: 'tv-priority-alert', level: 'IMPORTANT', action_type: 'DEVICE_ALERT_TEST', action_id: 'water_purifier', title: 'TV 우선 알림', body: '정수기에서 재생되면 안 돼요' })
   await page.waitForTimeout(2_500)
   if (await page.evaluate(count => window.__beepCount !== count, priorityBeepCount)) throw new Error('TV가 켜져 있는데 정수기 알림음이 재생됩니다')
   if (await page.getByText('“TV 우선 알림”').count()) throw new Error('TV 우선 알림이 정수기에서 표시됩니다')
+  await page.evaluate(() => localStorage.setItem('family-care-access-token', 'qa-token'))
+  await page.goto((process.env.LGDX_TEST_URL ?? 'http://127.0.0.1:5173') + '?screen=deviceAlerts', { waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: '음성 · 방해 금지' }).click()
+  const volumeSlider = page.locator('input[type="range"]')
+  await volumeSlider.fill('36')
+  await volumeSlider.dispatchEvent('pointerup')
+  await page.waitForFunction(() => document.querySelector('input[type="range"]')?.value === '36')
+  await page.getByRole('button', { name: '테스트 음성 듣기' }).click()
+  const preview = await page.evaluate(() => window.__spoken.at(-1))
+  if (!preview?.text.includes('민솔이 하원') || Math.abs(preview.volume - 0.6) > 0.01) throw new Error('미리듣기 음성 또는 음량이 올바르지 않습니다: ' + JSON.stringify(preview))
   console.log('TV and voice appliance alert checks passed')
 } finally {
   await browser.close()

@@ -4,7 +4,7 @@ import { App as CapacitorApp } from '@capacitor/app'
 import { Browser } from '@capacitor/browser'
 import { Capacitor } from '@capacitor/core'
 import { api, send, upload, setFamilyToken, hasFamilyToken, trackPerformanceEvent, ApiError, formatDate, formatTime, type Assignment, type Bootstrap, type CareItem, type Child, type Screen, type Suggestion, type FamilyMe, type FamilySession, type ChatAnswer, type EmergencyRequest, type CalendarConnection, type Notice, type Handoff, type AlbumPhoto, type Benefit, type BenefitLocation, type CareInstitution, type EligibilityCriteria, type BillingConfig, type BillingOrder, type ChatCard, type DeviceAlertsResponse, type DeviceAlertTestResult } from './api'
-import { speechMessageFor } from './deviceAlertShared'
+import { beep, speak, speechMessageFor, speechVolumeFor } from './deviceAlertShared'
 import voiceIcon from '../../asset/assistant-main-logo-centered.png'
 import googleIcon from '../../asset/google.png'
 import outlookIcon from '../../asset/outlook.png'
@@ -2541,7 +2541,8 @@ function App() {
           <strong>말하는 내용 미리듣기</strong>
           <p className="device-alert-preview-text">“{previewText}”</p>
           <label className="form-label">음량 {settings.speech_volume}%</label>
-          <input type="range" min={0} max={100} value={settings.speech_volume} onChange={event => setDeviceAlertData(prev => prev ? { ...prev, settings: { ...prev.settings, speech_volume: Number(event.target.value) } } : prev)} onMouseUp={() => patchDeviceAlertSettings({ speech_volume: settings.speech_volume }, '음량을 변경했어요')} onTouchEnd={() => patchDeviceAlertSettings({ speech_volume: settings.speech_volume }, '음량을 변경했어요')} />
+          <input type="range" min={0} max={100} value={settings.speech_volume} onChange={event => setDeviceAlertData(prev => prev ? { ...prev, settings: { ...prev.settings, speech_volume: Number(event.target.value) } } : prev)} onPointerUp={event => patchDeviceAlertSettings({ speech_volume: Number(event.currentTarget.value) }, '음량을 변경했어요')} onKeyUp={event => patchDeviceAlertSettings({ speech_volume: Number(event.currentTarget.value) }, '음량을 변경했어요')} />
+          <button className="outline-button wide-button" onClick={() => { const volume = speechVolumeFor(settings.speech_volume); beep(false, volume * 2); speak(previewText, { volume }) }}>테스트 음성 듣기</button>
         </Card>
         <Section>방해 금지</Section>
         <Card className="device-alert-rule-card">

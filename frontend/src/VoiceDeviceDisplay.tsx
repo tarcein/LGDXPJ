@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, trackPerformanceEvent, formatDate, formatTime, type Assignment, type Bootstrap, type DeviceAlertSettings, type DeviceAlertsResponse, type DeviceCatalogItem, type EmergencyRequest, type FamilyMe } from './api'
-import { beep, contentKeyForNotice, resolveDeviceAlertChannel, speak, speechMessageFor, tierForNotice, type DeviceAlert } from './deviceAlertShared'
+import { beep, contentKeyForNotice, resolveDeviceAlertChannel, speak, speechMessageFor, speechVolumeFor, tierForNotice, type DeviceAlert } from './deviceAlertShared'
 import './tv.css'
 
 const asAssignmentKey = (assignment: Assignment) => `schedule:${assignment.id}`
@@ -31,9 +31,10 @@ function VoiceDeviceDisplay() {
   const startedRef = useRef(false)
 
   const playAnnouncement = useCallback((alert: DeviceAlert, settings: DeviceAlertSettings, deviceId: string) => {
-    beep(alert.tier === 4, true)
+    const volume = speechVolumeFor(settings.speech_volume)
+    beep(alert.tier === 4, volume * 2)
     const message = speechMessageFor(alert)
-    speak(message, { volume: Math.min(1, settings.speech_volume / 60) })
+    speak(message, { volume })
     setLastSpoken({ message, at: Date.now() })
     trackPerformanceEvent('device_alert_presented', {
       channel: 'VOICE', device_id: deviceId, alert_kind: alert.kind, content_key: alert.contentKey,

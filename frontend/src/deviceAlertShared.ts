@@ -31,8 +31,12 @@ export const contentKeyForNotice = (notice: Notice): string => {
   return 'supply_missing'
 }
 
-export const beep = (strong = false, loud = false) => {
+export const speechVolumeFor = (percent: number) =>
+  Math.sqrt(Math.max(0, Math.min(100, percent)) / 100)
+
+export const beep = (strong = false, volume = 1) => {
   try {
+    if (volume <= 0) return
     const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     if (!AudioContextClass) return
     const context = new AudioContextClass()
@@ -41,7 +45,7 @@ export const beep = (strong = false, loud = false) => {
     oscillator.type = 'sine'
     oscillator.frequency.value = strong ? 720 : 520
     gain.gain.setValueAtTime(0.0001, context.currentTime)
-    const peak = (strong ? 0.16 : 0.08) * (loud ? 2 : 1)
+    const peak = (strong ? 0.16 : 0.08) * Math.max(0, volume)
     gain.gain.exponentialRampToValueAtTime(peak, context.currentTime + 0.02)
     gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + (strong ? 0.42 : 0.22))
     oscillator.connect(gain).connect(context.destination)
@@ -79,14 +83,16 @@ export const speechMessageFor = (alert: DeviceAlert) =>
   alert.kind === 'emergency' ? '긴급 돌봄 요청이 발생했어요. 확인이 필요합니다.' : alert.title
 
 export const speak = (message: string, options: { volume?: number; rate?: number; pitch?: number } = {}) => {
-  if (!('speechSynthesis' in window)) return
-  window.speechSynthesis.cancel()
-  const utterance = new SpeechSynthesisUtterance(message)
-  utterance.lang = 'ko-KR'
-  const koreanVoice = window.speechSynthesis.getVoices().find(voice => voice.lang.toLowerCase().startsWith('ko'))
-  if (koreanVoice) utterance.voice = koreanVoice
-  utterance.rate = options.rate ?? 1.02
-  utterance.pitch = options.pitch ?? 1.32
-  utterance.volume = options.volume ?? 1
-  window.speechSynthesis.speak(utterance)
+  try {
+    if (!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') return
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(message)
+    utterance.lang = 'ko-KR'
+    const koreanVoice = window.speechSynthesis.getVoices().find(voice => voice.lang.toLowerCase().startsWith('ko'))
+    if (koreanVoice) utterance.voice = koreanVoice
+    utterance.rate = options.rate ?? 1.02
+    utterance.pitch = options.pitch ?? 1.32
+    utterance.volume = options.volume ?? 1
+    window.speechSynthesis.speak(utterance)
+  } catch { /* keep the alert flow alive when a device has no speech engine */ }
 }
