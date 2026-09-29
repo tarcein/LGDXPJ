@@ -1694,7 +1694,6 @@ input[type="datetime-local"]::-webkit-date-and-time-value { min-width: 0; margin
 .home-no-assignee { display: grid; gap: 5px; padding: 14px; background: #f7f8fb; }
 .home-no-assignee strong { font-size: 14px; color: #20242b; }
 .home-no-assignee small { color: #858b95; line-height: 1.45; }
-.child-setting-card .child-profile-open { min-width: 76px; min-height: 38px; padding: 0 11px; border: 1px solid #dfe2e8; border-radius: 10px; background: #fff; color: #c4123f; font-weight: 800; }
 .child-profile-page { display: grid; gap: 14px; }
 .child-profile-photo-card { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 22px; }
 .child-profile-photo-card label { display: grid; justify-items: center; gap: 9px; cursor: pointer; }
