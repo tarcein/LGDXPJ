@@ -1268,8 +1268,82 @@ class ExtendedFlowTest(unittest.TestCase):
             response = self.client.post("/api/assistant/chat", headers=headers, json={"message": "운동 일정을 11시로 변경해줘"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["schedule_changes"][0]["starts_at"], "2026-09-20T11:00:00+09:00")
+        history = self.client.get("/api/assistant/history", headers=headers).json()["messages"]
+        self.assertEqual(history[-1]["cards"], structured["cards"])
         saved = next(item for item in self.client.get("/api/bootstrap", headers=headers).json()["schedules"] if item["id"] == created["id"])
         self.assertEqual(saved["starts_at"], "2026-09-20T11:00:00+09:00")
+
+    def test_chat_schedule_collision_returns_a_direct_alternative_action(self):
+        room = self.client.post("/api/families", json={"name": "충돌 가족", "owner_name": "엄마"}).json()
+        helper = self.client.post("/api/families/join", json={
+            "invite_code": room["invite_code"], "name": "아빠", "role": "PARENT",
+        }).json()
+        headers = {"Authorization": "Bearer " + room["access_token"]}
+        child = self.client.post("/api/children", headers=headers,
+                                 json={"name": "아이", "age_label": "5세"}).json()
+        child_schedule = self.client.post("/api/child-schedules", headers=headers, json={
+            "child_id": child["id"], "title": "아이 하원", "category": "SCHOOL",
+            "starts_at": "2026-10-01T17:00:00+09:00", "ends_at": None,
+        }).json()
+        assignment = self.client.post("/api/assignments", headers=headers, json={
+            "item_id": child_schedule["care_item_id"], "assignee_id": room["member_id"],
+        }).json()
+        self.assertEqual(assignment["status"], "ACCEPTED")
+        structured = {
+            "answer": "회의 일정을 등록할게요.", "cards": [], "schedule_changes": [],
+            "schedule_creations": [{
+                "schedule_type": "PERSONAL", "child_id": None, "title": "회의",
+                "starts_at": "2026-10-01T16:30:00+09:00", "ends_at": "2026-10-01T18:00:00+09:00",
+                "kind": "WORK", "category": None,
+            }], "care_item_creations": [],
+        }
+        with patch("app.extended.ai.answer", return_value=(structured, 30)):
+            response = self.client.post("/api/assistant/chat", headers=headers, json={
+                "message": "10월 1일 16시 30분부터 18시까지 회의 일정 등록해줘",
+            })
+        self.assertEqual(response.status_code, 200)
+        collision = response.json()["schedule_creations"][0]["collisions"][0]
+        card = next(card for card in response.json()["cards"] if card.get("action_type") == "CARE_SUGGESTION")
+        self.assertEqual(card["action_id"], collision["item_id"])
+        self.assertEqual(card["screen"], "suggestion")
+        with database() as db:
+            exception = db.execute(
+                "SELECT alternative_member_id FROM care_exception WHERE assignment_id = ? AND status = 'PENDING'",
+                (assignment["id"],),
+            ).fetchone()
+        self.assertEqual(exception["alternative_member_id"], helper["member_id"])
+
+    def test_exception_acceptance_notifies_the_member_who_requested_the_alternative(self):
+        owner = self.client.post("/api/families", json={"name": "대안 가족", "owner_name": "엄마"}).json()
+        requester = self.client.post("/api/families/join", json={
+            "invite_code": owner["invite_code"], "name": "아빠", "role": "PARENT",
+        }).json()
+        alternative = self.client.post("/api/families/join", json={
+            "invite_code": owner["invite_code"], "name": "할머니", "role": "GRANDPARENT",
+        }).json()
+        headers = lambda room: {"Authorization": "Bearer " + room["access_token"]}
+        child = self.client.post("/api/children", headers=headers(owner),
+                                 json={"name": "아이", "age_label": "5세"}).json()
+        child_schedule = self.client.post("/api/child-schedules", headers=headers(owner), json={
+            "child_id": child["id"], "title": "아이 하원", "category": "SCHOOL",
+            "starts_at": "2026-10-02T17:00:00+09:00", "ends_at": None,
+        }).json()
+        original = self.client.post("/api/assignments", headers=headers(owner), json={
+            "item_id": child_schedule["care_item_id"], "assignee_id": owner["member_id"],
+        }).json()
+        exception = self.client.post("/api/exceptions", headers=headers(requester), json={
+            "assignment_id": original["id"], "alternative_member_id": alternative["member_id"],
+            "reason": "일정이 겹쳐요",
+        }).json()
+        reassignment = self.client.post(
+            f"/api/exceptions/{exception['id']}/approve", headers=headers(requester),
+        ).json()["assignment"]
+        self.client.post(f"/api/assignments/{reassignment['id']}/respond", headers=headers(alternative),
+                         json={"decision": "ACCEPTED"})
+        requester_notices = self.client.get("/api/bootstrap", headers=headers(requester)).json()["notifications"]
+        owner_notices = self.client.get("/api/bootstrap", headers=headers(owner)).json()["notifications"]
+        self.assertTrue(any(notice["title"] == "배정이 확정됐어요" for notice in requester_notices))
+        self.assertFalse(any(notice["title"] == "배정이 확정됐어요" for notice in owner_notices))
 
     def test_toss_billing_activation_enables_pro_without_exposing_billing_key(self):
         os.environ["TOSS_BILLING_CLIENT_KEY"] = "test_ck_demo"

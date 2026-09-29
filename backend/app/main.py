@@ -1804,8 +1804,10 @@ def approve_exception(exception_id: str):
         db.execute("UPDATE care_assignment SET status = 'CANCELED' WHERE id = ?", (assignment["id"],))
         new_id = str(uuid4())
         db.execute(
-            "INSERT INTO care_assignment(id, family_id, item_id, assignee_id, source, created_at) VALUES (?, ?, ?, ?, 'EXCEPTION', ?)",
-            (new_id, family_id(), assignment["item_id"], exception["alternative_member_id"], now()),
+            """INSERT INTO care_assignment(id, family_id, item_id, assignee_id, source, created_at,
+               requested_by_member_id) VALUES (?, ?, ?, ?, 'EXCEPTION', ?, ?)""",
+            (new_id, family_id(), assignment["item_id"], exception["alternative_member_id"], now(),
+             current_member_id()),
         )
         db.execute("UPDATE care_exception SET status = 'APPROVED' WHERE id = ?", (exception_id,))
         notify(db, exception["alternative_member_id"], "대체 돌봄 배정 요청", "가능 여부를 확인해주세요", "IMPORTANT",

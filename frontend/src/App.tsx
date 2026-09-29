@@ -58,7 +58,40 @@ import { setupNativeNotifications, showNativeNotice, syncPushToken } from './nat
 
 const nativeCalendarReturnUrl = 'com.lgdx.family://calendar'
 const lastScreenKey = 'family-care-last-screen'
+const sessionSnapshotKey = 'family-care-session-snapshot'
 const transientScreens: Screen[] = ['thinq', 'serviceLoading', 'lockscreen', 'onboarding']
+const kakaoSdkUrl = 'https://t1.kakaocdn.net/kakao_js_sdk/2.8.3/kakao.min.js'
+const tossPaymentsSdkUrl = 'https://js.tosspayments.com/v2/standard'
+type SessionSnapshot = { savedAt: number; boot: Bootstrap; me: FamilyMe }
+const readSessionSnapshot = (): SessionSnapshot | null => {
+  if (!hasFamilyToken()) return null
+  try {
+    const snapshot = JSON.parse(localStorage.getItem(sessionSnapshotKey) ?? 'null') as SessionSnapshot | null
+    if (!snapshot?.boot || !snapshot.me || Date.now() - snapshot.savedAt > 6 * 60 * 60_000) return null
+    return snapshot
+  } catch { return null }
+}
+const saveSessionSnapshot = (me: FamilyMe, boot: Bootstrap) => {
+  try { localStorage.setItem(sessionSnapshotKey, JSON.stringify({ savedAt: Date.now(), me, boot })) } catch { /* fresh API data still renders */ }
+}
+const clearSessionSnapshot = () => { try { localStorage.removeItem(sessionSnapshotKey) } catch { /* storage can be unavailable */ } }
+const initialSessionSnapshot = readSessionSnapshot()
+const loadExternalScript = (id: string, src: string, crossOrigin = false) => {
+  const existing = document.getElementById(id) as HTMLScriptElement | null
+  if (existing?.dataset.loaded === 'true') return Promise.resolve()
+  return new Promise<void>((resolve, reject) => {
+    const script = existing ?? document.createElement('script')
+    const loaded = () => { script.dataset.loaded = 'true'; resolve() }
+    const failed = () => { script.remove(); reject(new Error('외부 기능을 불러오지 못했어요. 네트워크 연결을 확인해주세요.')) }
+    script.addEventListener('load', loaded, { once: true })
+    script.addEventListener('error', failed, { once: true })
+    if (!existing) {
+      script.id = id; script.src = src; script.async = true
+      if (crossOrigin) script.crossOrigin = 'anonymous'
+      document.head.appendChild(script)
+    }
+  })
+}
 const webPushKeyBytes = (value: string) => {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
   const binary = atob(normalized + '='.repeat((4 - normalized.length % 4) % 4))
@@ -76,7 +109,7 @@ const groups: { title: string; pages: [Screen, string][] }[] = [
 const typeLabel: Record<string, string> = { SCHEDULE: '일정', SUPPLY: '준비물', TODO: '할 일', CHANGE: '변경사항', HOMEWORK: '숙제' }
 const childScheduleLabel: Record<string, string> = { ACADEMY: '학원', SCHOOL: '학교', AFTER_SCHOOL: '방과후', ACTIVITY: '활동', OTHER: '기타' }
 const roleLabel: Record<string, string> = { PARENT: '부모', GRANDPARENT: '조부모', CAREGIVER: '돌봄 참여자' }
-const chatScreenLabel: Partial<Record<Screen, string>> = { schedule: '캘린더 보기', calendar: '캘린더·루틴 관리 보기', supplies: '준비물 확인', homework: '숙제 확인', tasks: '내 할 일 보기', assignments: '담당 배정 보기', assignmentDetail: '배정 상세 보기', notifications: '알림함 보기', members: '가족 구성원 보기', album: '모음ZIP 보기', programs: '돌봄 제도 보기', plan: '플랜 보기', home: '홈으로 가기', careHub: '케어 보기', familyHub: '가족 설정 보기', settings: '설정 보기' }
+const chatScreenLabel: Partial<Record<Screen, string>> = { schedule: '캘린더 보기', calendar: '캘린더·루틴 관리 보기', supplies: '준비물 확인', homework: '숙제 확인하기', tasks: '내 할 일 보기', assignments: '담당 배정 보기', assignmentDetail: '배정 상세 보기', suggestion: '대안 확인하기', emergency: '긴급 도움 요청하기', notifications: '알림함 보기', members: '가족 구성원 보기', album: '모음ZIP 보기', programs: '돌봄 제도 보기', plan: '플랜 보기', home: '홈으로 가기', careHub: '케어 보기', familyHub: '가족 설정 보기', settings: '설정 보기' }
 type PolicyKind = 'TERMS' | 'PRIVACY'
 const policyContent: Record<PolicyKind, { title: string; notice: string; sections: { title: string; body: string }[] }> = {
   TERMS: {
@@ -311,8 +344,8 @@ function App() {
   const invitedRole = ['PARENT', 'GRANDPARENT', 'CAREGIVER'].includes(roleFromUrl) ? roleFromUrl : 'CAREGIVER'
   const savedScreen = localStorage.getItem(lastScreenKey) as Screen | null
   const restoredScreen = hasFamilyToken() && savedScreen && groups.some(group => group.pages.some(([id]) => id === savedScreen)) && !transientScreens.includes(savedScreen) ? savedScreen : null
-  const [boot, setBoot] = useState<Bootstrap | null>(null)
-  const [me, setMe] = useState<FamilyMe | null>(null)
+  const [boot, setBoot] = useState<Bootstrap | null>(initialSessionSnapshot?.boot ?? null)
+  const [me, setMe] = useState<FamilyMe | null>(initialSessionSnapshot?.me ?? null)
   const [screen, setScreen] = useState<Screen>(() => invitationFromUrl ? 'onboarding' : debugScreen ?? (hasFamilyToken() && billingResultFromUrl ? 'plan' : hasFamilyToken() && initialQuery.has('calendar') ? 'calendar' : restoredScreen ?? 'thinq'))
   const [error, setError] = useState('')
   const [toast, setToast] = useState('')
@@ -432,6 +465,7 @@ function App() {
   const [chatUsedToday, setChatUsedToday] = useState(0)
   const [chatTokenLimit, setChatTokenLimit] = useState(50_000)
   const [chatBusy, setChatBusy] = useState(false)
+  const [voiceConfirming, setVoiceConfirming] = useState(false)
   const [recording, setRecording] = useState(false)
   const [completionRecording, setCompletionRecording] = useState(false)
   const [completionVoiceBusy, setCompletionVoiceBusy] = useState(false)
@@ -502,7 +536,7 @@ function App() {
   const reportError = (failure: unknown) => {
     if (failure instanceof ApiError && failure.status === 401) {
       const hadToken = hasFamilyToken()
-      setFamilyToken(null); setFamilySessionReady(false); setBoot(null); setMe(null); setOnboardStep('ROOM'); setScreen('thinq')
+      setFamilyToken(null); clearSessionSnapshot(); setFamilySessionReady(false); setBoot(null); setMe(null); setOnboardStep('ROOM'); setScreen('thinq')
       history.replaceState({ ...history.state, lgdxScreen: 'thinq' }, '')
       setError(hadToken ? '가족방 세션이 만료됐어요. 다시 참가해주세요.' : '가족방을 만들거나 초대코드로 참가해주세요.')
     } else if (failure instanceof ApiError) {
@@ -529,6 +563,7 @@ function App() {
       if (failure instanceof ApiError && failure.status === 404 && !hasFamilyToken()) throw new ApiError('가족방을 만들거나 초대코드로 참가해주세요.', 401)
       if (!(failure instanceof ApiError) || failure.status !== 401 || !requestedWithToken) throw failure
       setFamilyToken(null)
+      clearSessionSnapshot()
       setFamilySessionReady(false)
       try {
         ;[nextMe, nextBoot] = await Promise.all([api<FamilyMe>('/families/me'), api<Bootstrap>('/bootstrap')])
@@ -539,6 +574,7 @@ function App() {
     }
     nextMe.member.is_owner = Boolean(nextMe.member.is_owner)
     nextBoot.members = nextBoot.members.map(item => ({ ...item, is_owner: Boolean(item.is_owner) }))
+    saveSessionSnapshot(nextMe, nextBoot)
     setMe(nextMe); setBoot(nextBoot); setFamilyNameInput(nextBoot.family.name)
     setDeviceNoticeDemo(Boolean(nextBoot.notification_preferences.find(item => item.member_id === nextMe.member.id)?.device_enabled))
     if (!seenNoticeIdsRef.current.size) nextBoot.notifications.forEach(notice => seenNoticeIdsRef.current.add(notice.id))
@@ -634,6 +670,7 @@ function App() {
       .then(async order => {
         if (cancelled) return
         setBillingOrder(order)
+        await loadExternalScript('toss-payments-sdk', tossPaymentsSdkUrl)
         const tossFactory = (window as unknown as { TossPayments?: TossFactory }).TossPayments
         if (!tossFactory) throw new Error('토스페이먼츠 결제창을 불러오지 못했어요. 네트워크 연결을 확인해주세요.')
         const widgets = tossFactory(order.client_key).widgets({ customerKey: order.customer_key })
@@ -691,10 +728,10 @@ function App() {
   }, [screen, invitationFromUrl])
   useEffect(() => {
     if (screen === 'chat' && activeFamilyId) Promise.all([
-      api<{ messages: { role: string; content: string; created_at: string }[] }>('/assistant/history'),
+      api<{ messages: { role: string; content: string; created_at: string; cards: ChatCard[] }[] }>('/assistant/history'),
       api<{ usage: { chat_tokens_today: number; chat_tokens_limit: number } }>('/features'),
     ]).then(([history, available]) => {
-      setChatMessages(history.messages.map(m => ({ from: m.role === 'user' ? 'me' : 'agent', text: m.content, sentAt: m.created_at })))
+      setChatMessages(history.messages.map(m => ({ from: m.role === 'user' ? 'me' : 'agent', text: m.content, sentAt: m.created_at, cards: m.cards })))
       setChatUsedToday(available.usage.chat_tokens_today)
       setChatTokenLimit(available.usage.chat_tokens_limit)
     }).catch(reportError)
@@ -919,6 +956,15 @@ function App() {
       } catch (e) { reportError(e) }
     }
   }
+  const openChatCard = async (card: ChatCard) => {
+    trackPerformanceEvent('chatbot_action_opened', { screen: card.screen })
+    if (card.action_type) {
+      await navigateFromNotice({ id: 'chat-card', title: card.title, body: card.description,
+        level: 'NORMAL', member_id: me?.member.id ?? null, is_read: 1,
+        created_at: new Date().toISOString(), action_type: card.action_type,
+        action_id: card.action_id ?? null })
+    } else if (card.screen) go(card.screen)
+  }
   useEffect(() => { openNoticeRef.current = openNotice })
   useEffect(() => {
     if (!boot || !pushActionType || pushActionHandledRef.current) return
@@ -982,11 +1028,12 @@ function App() {
       const result = onboardMode === 'create'
         ? await send<FamilySession>('/families', 'POST', { name: onboardFamilyName.trim(), owner_name: onboardName.trim() })
         : await send<FamilySession>('/families/join', 'POST', { invite_code: onboardInviteCode.trim(), name: onboardName.trim(), role: onboardRole })
+      clearSessionSnapshot()
       setFamilyToken(result.access_token)
       setFamilySessionReady(true)
       setInviteCode(result.invite_code ?? '')
       setInviteExpiresAt(result.invite_expires_at ?? '')
-      setChatMessages([]); setFilter('all'); setItemId(null); setAssignmentId(null); setSubscription(null); setFeatures([])
+      setChatMessages([]); setChatDraft(''); setVoiceConfirming(false); setFilter('all'); setItemId(null); setAssignmentId(null); setSubscription(null); setFeatures([])
       await load()
       if (invitationFromUrl) {
         const cleanUrl = new URL(location.href)
@@ -1045,7 +1092,7 @@ function App() {
     finally { setOnboardBusy(false) }
   }
   const resetFamilySession = (targetScreen: Screen = 'thinq') => {
-    setFamilyToken(null); setFamilySessionReady(false); setBoot(null); setMe(null); setChatMessages([]); setInviteCode(''); setSubscription(null); setFeatures([])
+    setFamilyToken(null); clearSessionSnapshot(); setFamilySessionReady(false); setBoot(null); setMe(null); setChatMessages([]); setChatDraft(''); setVoiceConfirming(false); setInviteCode(''); setSubscription(null); setFeatures([])
     setOnboardStep('ROOM'); setOnboardMode('create'); setOnboardFamilyName(''); setOnboardName(''); setOnboardInviteCode(''); setThinqSelector(false)
     history.replaceState({ ...history.state, lgdxScreen: targetScreen }, '')
     setScreen(targetScreen)
@@ -1056,6 +1103,7 @@ function App() {
     setOnboardBusy(true)
     try {
       const result = await send<FamilySession>('/families/dev-login', 'POST', { member_id: memberId })
+      clearSessionSnapshot()
       setFamilyToken(result.access_token)
       setFamilySessionReady(true)
       await load()
@@ -1118,6 +1166,9 @@ function App() {
           await navigator.share({ title: boot?.family.name ?? 'ZIPPY 가족방', text, url: inviteLink })
           setToast('공유할 앱에서 카카오톡을 선택해주세요.')
           return
+        }
+        if (kakaoJavaScriptKey) {
+          await loadExternalScript('kakao-sdk', kakaoSdkUrl, true)
         }
         if (kakaoJavaScriptKey && window.Kakao) {
           if (!window.Kakao.isInitialized()) window.Kakao.init(kakaoJavaScriptKey)
@@ -1350,9 +1401,9 @@ function App() {
             }
           })
         }
-      } catch (e) {
-        if (!cancelled && navigator.onLine) reportError(e)
-      } finally {
+        const assignmentResult = incoming.find(notice => notice.action_type === 'ASSIGNMENT_RESULT')
+        if (assignmentResult) setToast(assignmentResult.title)
+      } catch { /* keep the current screen; the next background poll retries */ } finally {
         running = false
         schedulePoll()
       }
@@ -1572,16 +1623,17 @@ function App() {
   const rootScreens: Screen[] = ['schedule', 'careHub', 'home', 'familyHub', 'more']
   const chatRemaining = Math.max(0, chatTokenLimit - chatUsedToday)
   const chatRemainingPercent = chatTokenLimit ? Math.max(0, Math.min(100, chatRemaining / chatTokenLimit * 100)) : 0
-  const sendChat = async (question = chatDraft) => {
+  const sendChat = async (question = chatDraft, inputType: 'TEXT' | 'VOICE' = 'TEXT') => {
     const text = question.trim()
     if (!text || chatBusy) return
+    setVoiceConfirming(false)
     setChatBusy(true); setError('')
     try {
-      const result = await send<ChatAnswer>('/assistant/chat', 'POST', { message: text })
+      const result = await send<ChatAnswer>('/assistant/chat', 'POST', { message: text, input_type: inputType })
       const sentAt = new Date().toISOString()
       setChatMessages(previous => [...previous, { from: 'me', text: compactChatTimes(result.message), sentAt }, { from: 'agent', text: compactChatTimes(result.answer), sentAt, cards: result.cards.map(card => ({ ...card, description: compactChatTimes(card.description) })) }])
       setChatUsedToday(result.usage.used_today); setChatTokenLimit(result.usage.limit); setChatDraft('')
-      if (result.schedule_changes.length || result.schedule_creations?.length) await load()
+      if (result.schedule_changes.length || result.schedule_creations?.length || result.care_item_creations?.length) await load()
     } catch (e) { reportError(e) }
     finally { setChatBusy(false) }
   }
@@ -1591,11 +1643,10 @@ function App() {
     setChatBusy(true); setError('')
     try {
       const form = new FormData(); form.append('file', file)
-      const result = await upload<ChatAnswer & { transcript: string }>('/assistant/voice', form)
-      const sentAt = new Date().toISOString()
-      setChatMessages(previous => [...previous, { from: 'me', text: compactChatTimes(result.transcript), sentAt }, { from: 'agent', text: compactChatTimes(result.answer), sentAt, cards: result.cards.map(card => ({ ...card, description: compactChatTimes(card.description) })) }])
-      setChatUsedToday(result.usage.used_today); setChatTokenLimit(result.usage.limit)
-      if (result.schedule_changes.length || result.schedule_creations?.length) await load()
+      form.append('purpose', 'CHAT')
+      const result = await upload<{ text: string }>('/audio/transcribe', form)
+      setChatDraft(result.text); setVoiceConfirming(true)
+      speak(`${result.text}. 이렇게 들었어요. 맞나요?`, { rate: .96, pitch: 1.05 })
     } catch (e) { reportError(e) }
     finally { setChatBusy(false) }
   }
@@ -2054,6 +2105,7 @@ function App() {
     try {
       const config = await api<BillingConfig>('/billing/config')
       if (!config.configured || !config.client_key) throw new Error('토스페이먼츠 결제 키가 아직 설정되지 않았어요. backend/.env 설정을 확인해주세요.')
+      await loadExternalScript('toss-payments-sdk', tossPaymentsSdkUrl)
       const tossFactory = (window as unknown as { TossPayments?: TossFactory }).TossPayments
       if (!tossFactory) throw new Error('토스페이먼츠 결제창을 불러오지 못했어요. 네트워크 연결을 확인해주세요.')
       if (config.integration_mode === 'WIDGET') {
@@ -2590,7 +2642,7 @@ function App() {
     <Section>아이</Section>{boot.children.map(c => <Card key={c.id} className="member-card child-setting-card">{c.photo_url ? <img className="child-avatar child-avatar-photo" src={c.photo_url} alt={`${c.name} 프로필 사진`} /> : <div className="child-avatar">{c.name.slice(0, 1)}</div>}<div><strong>{c.name}</strong><p>{c.age_label}</p></div><div className="member-actions"><button className="member-owner-transfer" onClick={() => openChildProfile(c)}>프로필 수정</button></div></Card>)}
     {(!me?.authenticated || me.member.is_owner) && <Card className="form-card"><strong>아이 등록</strong><label className="form-label">이름</label><input className="form-control" aria-label="아이 이름" value={childNameInput} onChange={e => setChildNameInput(e.target.value)} placeholder="아이 이름" /><label className="form-label">생년월일</label><input className="form-control" aria-label="아이 생년월일" type="date" max={new Date().toLocaleDateString('sv-SE')} value={childBirthDateInput} onChange={e => setChildBirthDateInput(e.target.value)} />{childBirthDateInput && <p className="child-age-preview">현재 {ageFromBirthDate(childBirthDateInput)}</p>}<label className="form-label">학교·기관</label><input className="form-control" aria-label="아이 학교 또는 기관" value={childInstitutionInput} onChange={e => setChildInstitutionInput(e.target.value)} placeholder="예: 한빛초등학교, 별빛유치원" /><button className="primary-button wide-button" onClick={() => run(async () => { if (!childNameInput.trim() || !childBirthDateInput) throw new Error('아이 이름과 생년월일을 입력해주세요'); await send('/children', 'POST', { name: childNameInput.trim(), birth_date: childBirthDateInput, institution: childInstitutionInput.trim() }); setChildNameInput(''); setChildBirthDateInput(''); setChildInstitutionInput('') }, '아이를 등록했어요')}>아이 등록</button></Card>}
     {!me?.authenticated && <><Section>데모 구성원 추가</Section><Card className="form-card"><label className="form-label">이름</label><input className="form-control" value={memberNameInput} onChange={e => setMemberNameInput(e.target.value)} placeholder="가족 이름" /><label className="form-label">역할</label><select className="form-control" value={memberRole} onChange={e => setMemberRole(e.target.value)}><option value="PARENT">부모</option><option value="GRANDPARENT">조부모</option><option value="CAREGIVER">돌봄 참여자</option></select><button className="primary-button wide-button" onClick={() => run(async () => { if (!memberNameInput.trim()) throw new Error('이름을 입력해주세요'); await send('/members', 'POST', { name: memberNameInput.trim(), role: memberRole }); setMemberNameInput('') }, '초대 대기 구성원을 추가했어요')}>구성원 추가</button></Card></>}
-    <button className="text-link centered" onClick={() => go('permissions')}>정보 공개 권한 관리</button>{me?.authenticated ? me.member.is_owner ? <button className="danger-link centered" onClick={() => void deleteFamily()}>가족방 삭제</button> : <button className="danger-link centered" onClick={() => void leaveFamily()}>가족방 나가기</button> : <button className="text-link centered" onClick={() => void leaveFamily()}>다른 가족방 만들기·참가</button>}
+    <button className="text-link centered" onClick={() => go('permissions')}>내 정보 공개 범위</button>{me?.authenticated ? me.member.is_owner ? <button className="danger-link centered" onClick={() => void deleteFamily()}>가족방 삭제</button> : <button className="danger-link centered" onClick={() => void leaveFamily()}>가족방 나가기</button> : <button className="text-link centered" onClick={() => void leaveFamily()}>다른 가족방 만들기·참가</button>}
   </>
   if (boot && screen === 'childProfile') page = <section className="child-profile-page"><div className="eyebrow">아이 프로필 수정</div><h2 className="hero-title one-line">아이 정보를 최신으로 관리해요</h2><p className="hero-copy">생년월일로 나이를 자동 계산하고, 전학이나 기관 변경도 따로 수정할 수 있어요.</p>{activeChildProfile ? <><Card className="child-profile-photo-card"><label>{activeChildProfile.photo_url ? <img src={activeChildProfile.photo_url} alt={`${activeChildProfile.name} 프로필`} /> : <span>{activeChildProfile.name.slice(0, 1)}</span>}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (file) updateChildPhoto(activeChildProfile.id, file) }} /><b>{activeChildProfile.photo_url ? '사진 변경' : '사진 추가'}</b></label>{activeChildProfile.photo_url && <button className="text-link" onClick={() => removeChildPhoto(activeChildProfile.id)}>사진 삭제</button>}</Card><Card className="form-card child-profile-form"><label className="form-label">아이 이름</label><input className="form-control" value={childProfileName} onChange={event => setChildProfileName(event.target.value)} placeholder="아이 이름" /><label className="form-label">생년월일</label><input className="form-control" type="date" max={new Date().toLocaleDateString('sv-SE')} value={childProfileBirthDate} onChange={event => setChildProfileBirthDate(event.target.value)} />{childProfileBirthDate && <p className="child-age-preview">현재 {ageFromBirthDate(childProfileBirthDate)}</p>}<label className="form-label">학교·기관</label><input className="form-control" value={childProfileInstitution} onChange={event => setChildProfileInstitution(event.target.value)} placeholder="예: 한빛초등학교, 별빛유치원" /><button className="primary-button wide-button" onClick={saveChildProfile}>프로필 저장</button></Card></> : <Empty title="아이 정보를 찾을 수 없어요" text="가족 설정에서 아이를 다시 선택해주세요" />}</section>
   if (screen === 'onboarding' && invitationFromUrl && inviteStep === 'preview') page = <div className="invite-landing"><div className="invite-brand"><i /><strong>초대장</strong></div><Card className="invite-welcome"><h2>{invitePreview?.owner_name ?? '가족'}님이<br />{invitePreview?.family_name ?? 'ZIPPY'}에<br />초대했어요</h2><div className="invite-role"><span>{roleLabel[onboardRole].slice(0, 1)}</span><div><strong>역할 — {roleLabel[onboardRole]}</strong><small>역할은 다음 화면에서 바꿀 수 있어요</small></div></div><ul><li>오늘 내게 부탁된 일만 보여요</li><li>가족 캘린더는 권한에 맞게 보여요</li><li>가전 제어 권한은 없어요</li></ul><button className="primary-button wide-button" onClick={() => setInviteStep('role')}>합류할게요</button><small className="invite-account-note">이미 계정이 있어 추가 가입 없이 바로 합류합니다.</small></Card><button className="text-link centered invite-later" onClick={() => { const clean = new URL(location.href); clean.search = ''; history.replaceState(null, '', clean.pathname); setOnboardMode('create'); setInviteStep('role') }}>나중에 결정하기</button></div>
@@ -2755,12 +2807,13 @@ function App() {
         const messageDay = dateKey(sentAt)
         const previousSentAt = chatMessages[index - 1]?.sentAt
         const showDate = !previousSentAt || dateKey(previousSentAt) !== messageDay
-        return <Fragment key={sentAt + index}>{showDate && <div className="chat-date-divider" role="separator"><span>{new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(sentAt))}</span></div>}<div className={'chat-bubble ' + m.from}><div className="chat-copy">{m.text}</div>{m.from === 'agent' && m.cards?.map((card, cardIndex) => <article className="chat-summary-card" key={card.title + cardIndex}><small>{card.eyebrow}</small><strong>{card.title}</strong><p>{card.description}</p>{card.screen && <button onClick={() => { trackPerformanceEvent('chatbot_action_opened', { screen: card.screen }); go(card.screen as Screen) }}>{chatScreenLabel[card.screen as Screen] ?? '관련 화면 보기'}</button>}</article>)}</div></Fragment>
+        return <Fragment key={sentAt + index}>{showDate && <div className="chat-date-divider" role="separator"><span>{new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(sentAt))}</span></div>}<div className={'chat-bubble ' + m.from}><div className="chat-copy">{m.text}</div>{m.from === 'agent' && m.cards?.map((card, cardIndex) => <article className="chat-summary-card" key={card.title + cardIndex}><small>{card.eyebrow}</small><strong>{card.title}</strong><p>{card.description}</p>{card.screen && <button onClick={() => void openChatCard(card).catch(reportError)}>{chatScreenLabel[card.screen as Screen] ?? '관련 화면 보기'}</button>}</article>)}</div></Fragment>
       })}</div>
       <div className="chat-prompts">{['확인할 알림 알려줘', '오늘 담당 배정은?', '등록된 일정은?', '내일 준비물 확인'].map(text => <button key={text} disabled={chatBusy} onClick={() => sendChat(text)}>{text}</button>)}</div>
     </div>
     {chatBusy && <div className="assistant-chat-loading" role="status" aria-live="polite" aria-label="답변을 준비하고 있어요"><div>{[chatLoading1, chatLoading2, chatLoading3, chatLoading4].map((source, index) => <img key={source} src={source} alt="" style={{ animationDelay: `${index * .38}s` }} />)}</div><span>답변을 준비하고 있어요</span></div>}
-    <form className="chat-composer" onSubmit={e => { e.preventDefault(); sendChat() }}><button className={recording ? 'chat-mic recording' : 'chat-mic'} type="button" aria-label={recording ? '음성 인식 끝내고 보내기' : chatBusy ? '음성 인식 중…' : '음성 인식'} disabled={chatBusy} onClick={toggleRecording}><img src={chatMicIcon} alt="" /></button><label><input aria-label="케어 어시스턴트에게 질문" value={chatDraft} onChange={e => setChatDraft(e.target.value)} placeholder="일정이나 배정을 물어보세요" /><button type="submit" aria-label="질문 보내기" disabled={chatBusy || !chatDraft.trim()}><img src={chatSendIcon} alt="" /></button></label></form>
+    {voiceConfirming && <section className="chat-voice-confirm" role="dialog" aria-label="음성 인식 결과 확인" aria-live="polite"><small>AI가 이렇게 들었어요</small><strong>“{chatDraft}”</strong><p>맞으면 실행하고, 아니면 다시 말씀해주세요.</p><div><button className="outline-button" onClick={() => { setVoiceConfirming(false); setChatDraft(''); void toggleRecording() }}>아니요</button><button className="primary-button" onClick={() => void sendChat(chatDraft, 'VOICE')}>예, 맞아요</button></div></section>}
+    <form className="chat-composer" onSubmit={e => { e.preventDefault(); if (!voiceConfirming) void sendChat() }}><button className={recording ? 'chat-mic recording' : 'chat-mic'} type="button" aria-label={recording ? '음성 인식 끝내기' : chatBusy ? '음성 인식 중…' : '음성 인식'} disabled={chatBusy || voiceConfirming} onClick={() => void toggleRecording()}><img src={chatMicIcon} alt="" /></button><label><input aria-label="케어 어시스턴트에게 질문" value={chatDraft} onChange={e => setChatDraft(e.target.value)} placeholder="일정이나 숙제를 말해보세요" /><button type="submit" aria-label="질문 보내기" disabled={chatBusy || voiceConfirming || !chatDraft.trim()}><img src={chatSendIcon} alt="" /></button></label></form>
   </section>
   if (boot && screen === 'emergency') page = <section className="emergency-request-page">
     <div className="care-subscreen-title"><strong>긴급 도움 요청 <Pro /></strong></div>

@@ -6,7 +6,7 @@ import json
 import secrets
 import base64
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -45,9 +45,11 @@ APP_CAPABILITIES = [
     {"screen": "schedule", "name": "일정", "description": "가족·아이별 달력, 수기 일정, 반복 루틴"},
     {"screen": "calendar", "name": "외부 캘린더", "description": "Google·Outlook 개인 일정 연결과 동기화"},
     {"screen": "careHub", "name": "케어", "description": "돌봄 요청, 역할 배정, 예외 상황, 긴급 도움"},
+    {"screen": "emergency", "name": "긴급 도움 요청", "description": "현재 맡은 돌봄을 다른 가족에게 긴급 요청"},
     {"screen": "tasks", "name": "내 할 일", "description": "받은 돌봄 요청 수락·거절, 완료와 인수인계"},
     {"screen": "assignments", "name": "담당 배정", "description": "아이 일정의 돌봄 담당자와 요청 상태"},
     {"screen": "notifications", "name": "알림함", "description": "배정 요청, 수락 결과, 인수인계 알림"},
+    {"screen": "homework", "name": "숙제", "description": "아이별 숙제 등록, 수정, 완료 확인"},
     {"screen": "familyHub", "name": "가족", "description": "가족 설정과 정보 공개"},
     {"screen": "members", "name": "가족 구성원", "description": "재사용 가능한 초대 링크, 구성원 관리"},
     {"screen": "album", "name": "모음ZIP", "description": "날짜별 사진과 돌봄 완료 사진"},
@@ -413,6 +415,7 @@ def transcribe(file: UploadFile, purpose: str = Form(default="CHAT")):
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+    input_type: str = Field(default="TEXT", pattern="^(TEXT|VOICE)$")
 
 
 def _chat_topics(message: str) -> tuple[set[str], bool]:
@@ -531,7 +534,8 @@ def _apply_schedule_changes(changes: list[dict], original_message: str) -> list[
         updated = result["schedule"]
         applied.append({"schedule_type": schedule_type, "schedule_id": schedule_id,
                         "title": updated["title"], "starts_at": updated["starts_at"],
-                        "ends_at": updated["ends_at"] if updated.get("has_end_time", 1) else None})
+                        "ends_at": updated["ends_at"] if updated.get("has_end_time", 1) else None,
+                        "collisions": result.get("collisions", [])})
     return applied
 
 
@@ -561,7 +565,8 @@ def _apply_schedule_creations(creations: list[dict], original_message: str) -> l
                 schedule = result["schedule"]
                 applied.append({"schedule_type": schedule_type, "schedule_id": schedule["id"],
                                 "title": schedule["title"], "starts_at": schedule["starts_at"],
-                                "ends_at": schedule["ends_at"] if schedule.get("has_end_time", 1) else None})
+                                "ends_at": schedule["ends_at"] if schedule.get("has_end_time", 1) else None,
+                                "collisions": result.get("collisions", [])})
             else:
                 child_id = str(creation.get("child_id") or "")
                 if not child_id:
@@ -582,11 +587,47 @@ def _apply_schedule_creations(creations: list[dict], original_message: str) -> l
     return applied
 
 
+def _apply_care_item_creations(creations: list[dict], original_message: str) -> list[dict]:
+    explicit = any(term in original_message.replace(" ", "") for term in (
+        "등록해", "추가해", "넣어줘", "기록해",
+    ))
+    if not explicit or not creations:
+        return []
+    applied: list[dict] = []
+    for creation in creations[:3]:
+        if creation.get("item_type") != "HOMEWORK":
+            continue
+        child_id = str(creation.get("child_id") or "")
+        title = str(creation.get("title") or "").strip()
+        if not child_id or not title:
+            continue
+        raw_due_date = creation.get("due_date")
+        try:
+            due_date = date.fromisoformat(str(raw_due_date)) if raw_due_date else None
+        except ValueError:
+            continue
+        try:
+            from .main import HomeworkCreate, create_homework
+            item = create_homework(HomeworkCreate(child_id=child_id, title=title, due_date=due_date))
+        except (HTTPException, ValueError):
+            continue
+        applied.append({"item_type": "HOMEWORK", "item_id": item["id"], "child_id": child_id,
+                        "title": item["title"], "due_date": due_date.isoformat() if due_date else None})
+    return applied
+
+
 def _chat(message: str, input_type: str = "TEXT") -> dict:
     topics, app_help = _chat_topics(message)
     compact_message = message.replace(" ", "")
     wants_creation = any(term in compact_message for term in ("등록해", "추가해", "넣어줘", "일정잡아", "일정만들어", "기록해"))
+    wants_homework_creation = wants_creation and any(term in compact_message for term in (
+        "숙제", "과제", "문제집", "일기", "독서록", "보고서",
+    ))
+    wants_schedule_creation = wants_creation and not wants_homework_creation
     wants_change = any(term in compact_message for term in ("변경해", "바꿔", "옮겨", "수정해", "미뤄", "당겨"))
+    wants_emergency_help = (
+        "긴급" in compact_message and any(term in compact_message for term in ("도움", "요청", "연락", "돌봄"))
+    ) or any(term in compact_message for term in ("대안연락", "대체연락", "대체돌봄요청"))
     action_request = wants_creation or wants_change
     personal_schedule_limit = 4 if wants_creation else 8 if wants_change else 10
     child_schedule_limit = 4 if wants_creation else 8 if wants_change else 12
@@ -696,8 +737,10 @@ def _chat(message: str, input_type: str = "TEXT") -> dict:
     if tokens <= 0:
         raise HTTPException(502, detail={"code": "AI_USAGE_MISSING", "message": "AI 서비스 사용량을 확인하지 못했습니다"})
     if isinstance(structured, str):
-        structured = {"answer": structured, "cards": [], "schedule_changes": [], "schedule_creations": []}
-    if ((wants_creation and not structured.get("schedule_creations"))
+        structured = {"answer": structured, "cards": [], "schedule_changes": [],
+                      "schedule_creations": [], "care_item_creations": []}
+    if ((wants_schedule_creation and not structured.get("schedule_creations"))
+            or (wants_homework_creation and not structured.get("care_item_creations"))
             or (wants_change and not structured.get("schedule_changes"))):
         action_context = json.dumps({
             key: context_data[key] for key in (
@@ -705,9 +748,11 @@ def _chat(message: str, input_type: str = "TEXT") -> dict:
                 "personal_schedules", "child_schedules",
             ) if key in context_data
         }, ensure_ascii=False, separators=(",", ":"))
-        focused, focused_tokens = ai.schedule_actions(message, action_context)
-        if wants_creation and not structured.get("schedule_creations"):
+        focused, focused_tokens = ai.agent_actions(message, action_context)
+        if wants_schedule_creation and not structured.get("schedule_creations"):
             structured["schedule_creations"] = focused.get("schedule_creations", [])
+        if wants_homework_creation and not structured.get("care_item_creations"):
+            structured["care_item_creations"] = focused.get("care_item_creations", [])
         if wants_change and not structured.get("schedule_changes"):
             structured["schedule_changes"] = focused.get("schedule_changes", [])
         tokens += focused_tokens
@@ -715,6 +760,8 @@ def _chat(message: str, input_type: str = "TEXT") -> dict:
     cards = [card for card in structured.get("cards", []) if isinstance(card, dict)][:5]
     applied = _apply_schedule_changes(structured.get("schedule_changes", []), message)
     created = _apply_schedule_creations(structured.get("schedule_creations", []), message)
+    care_items_created = _apply_care_item_creations(structured.get("care_item_creations", []), message)
+    collisions = [collision for item in [*applied, *created] for collision in item.get("collisions", [])]
     if applied:
         answer += "\n\n변경한 일정\n" + "\n".join(
             f"- {item['title']} · {item['starts_at']} ~ {item['ends_at']}" for item in applied
@@ -730,12 +777,35 @@ def _chat(message: str, input_type: str = "TEXT") -> dict:
         if not any(card.get("screen") == "schedule" for card in cards):
             cards.append({"eyebrow": "일정 등록 완료", "title": created[0]["title"],
                           "description": "등록된 일정을 캘린더에서 확인해보세요.", "screen": "schedule"})
+    if care_items_created:
+        answer += "\n\n등록한 숙제\n" + "\n".join(
+            f"- {item['title']}" + (f" · {item['due_date']}" if item.get("due_date") else "")
+            for item in care_items_created
+        )
+        if not any(card.get("screen") == "homework" for card in cards):
+            cards.append({"eyebrow": "숙제 등록 완료", "title": care_items_created[0]["title"],
+                          "description": "숙제 목록에서 완료 여부를 확인해보세요.", "screen": "homework"})
+    if collisions:
+        answer += "\n\n일정 충돌이 감지됐어요. 대체 가능한 담당자를 확인해주세요."
+        cards.append({"eyebrow": "일정 충돌 감지", "title": collisions[0]["title"],
+                      "description": "겹친 돌봄 일정의 대체 담당자를 바로 확인할 수 있어요.",
+                      "screen": "suggestion", "action_type": "CARE_SUGGESTION",
+                      "action_id": collisions[0]["item_id"]})
+    if wants_emergency_help and not any(card.get("screen") == "emergency" for card in cards):
+        answer += "\n\n긴급 도움 요청 화면에서 돌봄과 받을 가족을 확인한 뒤 전송할 수 있어요."
+        cards.append({"eyebrow": "긴급 돌봄", "title": "가족에게 도움 요청하기",
+                      "description": "도움이 필요한 돌봄과 연락할 가족을 선택해주세요.",
+                      "screen": "emergency"})
     with database() as db:
         query_id = str(uuid4())
-        for role, content in [("user", message), ("assistant", answer)]:
-            db.execute("INSERT INTO assistant_message VALUES (?, ?, ?, ?, ?, ?)",
-                       (query_id if role == "user" else str(uuid4()), family_id(), member_id(), role,
-                        content, datetime.now(ZoneInfo("Asia/Seoul")).isoformat()))
+        for role, content, message_cards in [("user", message, []), ("assistant", answer, cards)]:
+            db.execute(
+                """INSERT INTO assistant_message(id, family_id, member_id, role, content, created_at, cards)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (query_id if role == "user" else str(uuid4()), family_id(), member_id(), role,
+                 content, datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
+                 json.dumps(message_cards, ensure_ascii=False)),
+            )
         _chat_add_usage(db, tokens)
         usage = _chat_usage(db, plan)
         record_event(
@@ -746,12 +816,14 @@ def _chat(message: str, input_type: str = "TEXT") -> dict:
             db, "chatbot_response_delivered", target_family_id=family_id(),
             target_member_id=member_id(), correlation_id=query_id,
             properties={"tokens": tokens, "card_count": len(cards),
-                        "schedule_changes": len(applied), "schedule_creations": len(created)},
+                        "schedule_changes": len(applied), "schedule_creations": len(created),
+                        "care_item_creations": len(care_items_created)},
         )
     links = [{"label": f"{card.get('title') or '관련 내용'} 보기", "screen": card.get("screen")}
              for card in cards if card.get("screen")]
     return {"message": message, "answer": answer, "cards": cards, "links": links,
             "schedule_changes": applied, "schedule_creations": created,
+            "care_item_creations": care_items_created,
             "usage": {"total_tokens": tokens, "used_today": usage["chat_tokens_today"],
                       "limit": usage["chat_tokens_limit"], "remaining": usage["chat_tokens_remaining"]},
             "plan": plan, "requires_confirmation_for_actions": False}
@@ -761,16 +833,21 @@ def _chat(message: str, input_type: str = "TEXT") -> dict:
 def assistant_history():
     with database() as db:
         messages = [dict(row) for row in reversed(db.execute(
-            """SELECT id, role, content, created_at FROM assistant_message
+            """SELECT id, role, content, created_at, cards FROM assistant_message
                WHERE family_id = ? AND member_id = ?
                ORDER BY created_at DESC, id DESC LIMIT 50""", (family_id(), member_id()),
         ).fetchall())]
+    for message in messages:
+        try:
+            message["cards"] = json.loads(message["cards"] or "[]")
+        except (TypeError, ValueError):
+            message["cards"] = []
     return {"messages": messages}
 
 
 @router.post("/assistant/chat")
 def assistant_chat(payload: ChatRequest):
-    return _chat(payload.message, "TEXT")
+    return _chat(payload.message, payload.input_type)
 
 
 @router.post("/assistant/voice")

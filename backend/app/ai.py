@@ -215,6 +215,12 @@ context_scope는 이번 질문에 맞춰 조회한 데이터 영역입니다. �
 - 외부 캘린더에서 가져온 일정은 앱에서 직접 변경할 수 없으므로 변경 명령을 만들지 않습니다.
 - 실제 반영 여부는 서버가 검증하므로 답변에서 미리 완료됐다고 단정하지 않습니다.
 
+숙제 등록 원칙:
+- '숙제', '과제', '문제집', '일기', '독서록', '보고서'처럼 아이가 해야 하는 학습 활동은 일정이 아니라 HOMEWORK입니다.
+- 사용자가 등록·추가를 명확히 요청한 경우에만 care_item_creations를 만들고, schedule_creations에는 넣지 않습니다.
+- context의 정확한 child_id를 사용합니다. 아이를 특정할 수 없으면 등록하지 말고 누구의 숙제인지 질문합니다.
+- 마감일이 있으면 due_date를 YYYY-MM-DD로, 없으면 null로 둡니다.
+
 아이의 건강·안전과 관련된 긴급 상황은 실제 보호자 또는 긴급기관에 바로 확인하도록 안내합니다.
 사진, 건강, 위치 같은 민감한 정보를 필요 이상으로 반복하지 마세요."""
 
@@ -240,7 +246,8 @@ def answer(message: str, context: str, history: list[dict], max_output_tokens: i
                             "description": {"type": "string"},
                             "screen": {"type": "string", "enum": [
                                 "", "home", "careHub", "schedule", "calendar", "familyHub", "members",
-                                "tasks", "assignments", "notifications", "album", "programs", "plan", "settings"
+                                "tasks", "assignments", "notifications", "homework", "album", "programs", "plan", "settings",
+                                "suggestion", "emergency"
                             ]},
                         },
                         "required": ["eyebrow", "title", "description", "screen"],
@@ -273,8 +280,19 @@ def answer(message: str, context: str, history: list[dict], max_output_tokens: i
                         "required": ["schedule_type", "child_id", "title", "starts_at", "ends_at", "kind", "category"],
                         "additionalProperties": False,
                     }},
+                    "care_item_creations": {"type": "array", "maxItems": 3, "items": {
+                        "type": "object",
+                        "properties": {
+                            "item_type": {"type": "string", "enum": ["HOMEWORK"]},
+                            "child_id": {"type": "string"},
+                            "title": {"type": "string"},
+                            "due_date": {"type": ["string", "null"]},
+                        },
+                        "required": ["item_type", "child_id", "title", "due_date"],
+                        "additionalProperties": False,
+                    }},
                 },
-                "required": ["answer", "cards", "schedule_changes", "schedule_creations"],
+                "required": ["answer", "cards", "schedule_changes", "schedule_creations", "care_item_creations"],
                 "additionalProperties": False,
             },
         }},
@@ -287,17 +305,19 @@ def answer(message: str, context: str, history: list[dict], max_output_tokens: i
     return structured, int(usage.get("total_tokens") or 0)
 
 
-def schedule_actions(message: str, context: str) -> tuple[dict, int]:
-    """Focused fallback for explicit schedule commands that a broad chat answer omitted."""
+def agent_actions(message: str, context: str) -> tuple[dict, int]:
+    """Focused fallback for explicit actions that a broad chat answer omitted."""
     result = _post("/responses", json={
         "model": setting("OPENAI_CHAT_MODEL", "gpt-4.1-mini"),
         "store": False,
         "max_output_tokens": 700,
         "instructions": (
-            "사용자의 한국어 일정 실행 명령만 구조화하세요. 현재 가족 데이터의 ID만 사용하세요. "
+            "사용자의 한국어 일정·숙제 실행 명령만 구조화하세요. 현재 가족 데이터의 ID만 사용하세요. "
             "등록해줘·추가해줘·일정에 넣어줘처럼 명시한 새 일정은 반드시 schedule_creations에 넣습니다. "
             "바꿔줘·변경해줘·수정해줘처럼 명시하고 기존 일정을 하나로 특정할 수 있을 때만 schedule_changes에 넣습니다. "
             "내 일정·퇴근·운동은 PERSONAL이며 current_member의 일정입니다. 아이 이름이 명시된 일정은 CHILD입니다. "
+            "숙제·과제·문제집·일기·독서록·보고서는 일정이 아닌 HOMEWORK이며 care_item_creations에 넣습니다. "
+            "HOMEWORK는 정확한 child_id와 제목이 필요하고, 마감일이 없으면 due_date는 null입니다. "
             "종료 시각이 없으면 ends_at은 null이고 has_end_time은 false입니다. 날짜·대상·시각이 불명확하면 빈 배열로 둡니다. "
             "설명문은 만들지 마세요.\n\n현재 가족 데이터:\n" + context
         ),
@@ -332,8 +352,18 @@ def schedule_actions(message: str, context: str) -> tuple[dict, int]:
                         "required": ["schedule_type", "child_id", "title", "starts_at", "ends_at", "kind", "category"],
                         "additionalProperties": False,
                     }},
+                    "care_item_creations": {"type": "array", "maxItems": 3, "items": {
+                        "type": "object", "properties": {
+                            "item_type": {"type": "string", "enum": ["HOMEWORK"]},
+                            "child_id": {"type": "string"},
+                            "title": {"type": "string"},
+                            "due_date": {"type": ["string", "null"]},
+                        },
+                        "required": ["item_type", "child_id", "title", "due_date"],
+                        "additionalProperties": False,
+                    }},
                 },
-                "required": ["schedule_changes", "schedule_creations"],
+                "required": ["schedule_changes", "schedule_creations", "care_item_creations"],
                 "additionalProperties": False,
             },
         }},

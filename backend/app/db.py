@@ -245,7 +245,8 @@ CREATE TABLE IF NOT EXISTS daily_usage (
 CREATE TABLE IF NOT EXISTS assistant_message (
   id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
   member_id TEXT REFERENCES family_member(id), role TEXT NOT NULL,
-  content TEXT NOT NULL, created_at TEXT NOT NULL
+  content TEXT NOT NULL, created_at TEXT NOT NULL,
+  cards TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS plan_preview (
   family_id TEXT PRIMARY KEY REFERENCES family_group(id), enabled INTEGER NOT NULL DEFAULT 0
@@ -397,6 +398,7 @@ def initialize() -> None:
                 ("calendar_oauth_state", "return_url", "TEXT"),
                 ("media_asset", "storage_path", "TEXT"),
                 ("media_asset", "date_folder", "TEXT"),
+                ("assistant_message", "cards", "TEXT NOT NULL DEFAULT '[]'"),
                 ("family_subscription", "cancel_at_period_end", "INTEGER NOT NULL DEFAULT 0"),
                 ("family_subscription", "canceled_at", "TEXT"),
                 ("family_subscription", "renewal_failure_count", "INTEGER NOT NULL DEFAULT 0"),
@@ -425,6 +427,7 @@ def initialize() -> None:
                 ("care_assignment", (("requested_by_member_id", "TEXT REFERENCES family_member(id)"), ("reminder_sent_at", "TEXT"))),
                 ("calendar_oauth_state", (("return_url", "TEXT"),)),
                 ("media_asset", (("storage_path", "TEXT"), ("date_folder", "TEXT"))),
+                ("assistant_message", (("cards", "TEXT NOT NULL DEFAULT '[]'"),)),
                 ("family_subscription", (("cancel_at_period_end", "INTEGER NOT NULL DEFAULT 0"), ("canceled_at", "TEXT"), ("renewal_failure_count", "INTEGER NOT NULL DEFAULT 0"), ("last_renewal_error", "TEXT"), ("billing_cycle", "TEXT NOT NULL DEFAULT 'MONTHLY'"))),
                 ("payment_transaction", (("billing_cycle", "TEXT NOT NULL DEFAULT 'MONTHLY'"),)),
                 ("family_member", (("created_at", "TEXT NOT NULL DEFAULT ''"),)),

@@ -43,11 +43,12 @@ export interface Bootstrap {
 export interface Suggestion { member_id: string; name: string; available: boolean; reason: string; priority: number }
 export interface FamilyMe { family: Family; member: Member; authenticated: boolean }
 export interface FamilySession { family_id: string; member_id: string; access_token: string; plan: string; invite_code?: string; invite_expires_at?: string }
-export interface ChatCard { eyebrow: string; title: string; description: string; screen: Screen | '' }
+export interface ChatCard { eyebrow: string; title: string; description: string; screen: Screen | ''; action_type?: string; action_id?: string }
 export interface ChatAnswer {
   message: string; answer: string; cards: ChatCard[]; links: { label: string; screen: Screen }[];
-  schedule_changes: { schedule_type: 'PERSONAL' | 'CHILD'; schedule_id: string; title: string; starts_at: string; ends_at: string | null }[];
-  schedule_creations: { schedule_type: 'PERSONAL' | 'CHILD'; schedule_id: string; title: string; starts_at: string; ends_at: string | null; care_item_id?: string }[];
+  schedule_changes: { schedule_type: 'PERSONAL' | 'CHILD'; schedule_id: string; title: string; starts_at: string; ends_at: string | null; collisions?: { item_id: string; title: string }[] }[];
+  schedule_creations: { schedule_type: 'PERSONAL' | 'CHILD'; schedule_id: string; title: string; starts_at: string; ends_at: string | null; care_item_id?: string; collisions?: { item_id: string; title: string }[] }[];
+  care_item_creations: { item_type: 'HOMEWORK'; item_id: string; child_id: string; title: string; due_date: string | null }[];
   usage: { total_tokens: number; used_today: number; limit: number; remaining: number }; plan: string
 }
 export interface EmergencyRequest { id: string; assignment_id: string; requested_by_member_id: string; claimed_by_member_id: string | null; reason: string; status: string; item_title: string }

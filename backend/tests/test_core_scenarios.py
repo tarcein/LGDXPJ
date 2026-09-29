@@ -64,6 +64,39 @@ class CoreScenarioTest(unittest.TestCase):
         schedules = self.client.get("/api/bootstrap").json()["schedules"]
         self.assertTrue(any(item["title"] == "퇴근" and item["has_end_time"] == 0 for item in schedules))
 
+    def test_chat_registers_homework_as_homework_not_a_schedule(self):
+        structured = {
+            "answer": "지우의 수학 숙제를 등록할게요.", "cards": [],
+            "schedule_changes": [], "schedule_creations": [],
+            "care_item_creations": [{
+                "item_type": "HOMEWORK", "child_id": "jiu",
+                "title": "수학 문제집 3단원", "due_date": "2026-09-21",
+            }],
+        }
+        with patch("app.extended.ai.answer", return_value=(structured, 30)):
+            response = self.client.post("/api/assistant/chat", json={
+                "message": "지우 수학 문제집 3단원을 9월 21일 숙제로 등록해줘",
+            })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["schedule_creations"], [])
+        self.assertEqual(response.json()["care_item_creations"][0]["title"], "수학 문제집 3단원")
+        snapshot = self.client.get("/api/bootstrap").json()
+        homework = next(item for item in snapshot["items"] if item["title"] == "수학 문제집 3단원")
+        self.assertEqual(homework["item_type"], "HOMEWORK")
+        self.assertEqual(homework["starts_at"], "2026-09-21T00:00:00+09:00")
+        self.assertFalse(any(item["title"] == "수학 문제집 3단원" for item in snapshot["child_schedules"]))
+
+    def test_chat_routes_emergency_help_to_the_confirmed_request_screen(self):
+        structured = {
+            "answer": "긴급 도움을 요청할 수 있어요.", "cards": [],
+            "schedule_changes": [], "schedule_creations": [], "care_item_creations": [],
+        }
+        with patch("app.extended.ai.answer", return_value=(structured, 20)):
+            response = self.client.post("/api/assistant/chat", json={"message": "긴급 도움 요청하고 싶어"})
+        self.assertEqual(response.status_code, 200)
+        card = next(card for card in response.json()["cards"] if card["screen"] == "emergency")
+        self.assertEqual(card["title"], "가족에게 도움 요청하기")
+
     def test_first_caregiver_to_accept_a_parallel_request_is_confirmed_immediately(self):
         child_schedule = self.client.post("/api/child-schedules", json={
             "child_id": "jiu", "title": "수영", "category": "ACADEMY",
