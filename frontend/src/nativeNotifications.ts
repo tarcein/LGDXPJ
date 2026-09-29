@@ -1,15 +1,12 @@
-import { Capacitor, registerPlugin } from '@capacitor/core'
+import { Capacitor } from '@capacitor/core'
 import { LocalNotifications } from '@capacitor/local-notifications'
 import { PushNotifications } from '@capacitor/push-notifications'
 import { api, hasFamilyToken } from './api'
 
 const channelId = 'family-care-live'
-const liveStatusChannelId = 'family-care-status'
+const legacyLiveStatusChannelId = 'family-care-status'
+const persistentCleanupKey = 'family-care-persistent-notifications-cleared-v1'
 const pushTokenKey = 'family-care-fcm-token'
-const LiveCareStatus = registerPlugin<{
-  update(options: { child: string; caregiver: string; status: string; detail: string; progress: number }): Promise<void>
-  clear(): Promise<void>
-}>('LiveCareStatus')
 export type NativeNoticeAction = { actionType?: string | null; actionId?: string | null }
 
 export const isNativeApp = () => Capacitor.isNativePlatform()
@@ -22,18 +19,17 @@ export async function setupNativeNotifications(onAction?: (action: NativeNoticeA
   const localPermission = await LocalNotifications.requestPermissions()
   if (localPermission.display === 'granted') {
     if (isAndroidApp()) {
+      if (!localStorage.getItem(persistentCleanupKey)) {
+        const delivered = await LocalNotifications.getDeliveredNotifications()
+        await LocalNotifications.removeDeliveredNotifications(delivered)
+        await LocalNotifications.deleteChannel({ id: legacyLiveStatusChannelId })
+        localStorage.setItem(persistentCleanupKey, '1')
+      }
       await LocalNotifications.createChannel({
         id: channelId,
         name: '가족 돌봄 실시간 알림',
         description: '이동·인수인계 상태를 잠금화면에 표시합니다.',
         importance: 4,
-        visibility: 1,
-      })
-      await LocalNotifications.createChannel({
-        id: liveStatusChannelId,
-        name: '돌봄 현황판',
-        description: '현재 돌봄 진행 상태를 표시합니다.',
-        importance: 2,
         visibility: 1,
       })
     }
@@ -107,22 +103,8 @@ export async function syncPushToken() {
 
 export async function showNativeNotice(id: string, title: string, body: string, actionType?: string | null, actionId?: string | null) {
   if (!isNativeApp()) return false
-  const androidOptions = isAndroidApp() ? { channelId, ongoing: true, autoCancel: false } : {}
+  const androidOptions = isAndroidApp() ? { channelId, autoCancel: true } : {}
   await LocalNotifications.schedule({ notifications: [{ id: Math.abs(hash(id)), title, body, ...androidOptions, extra: { actionType, actionId } }] })
-  return true
-}
-
-/** A separate, single ongoing notification for the current care status. */
-export async function updateLiveCareStatus(title: string, body: string, detail: string, route = '', progress = 1) {
-  if (!isAndroidApp()) return false
-  const [child, caregiver] = title.split(' · ')
-  await LiveCareStatus.update({ child: child || title, caregiver: caregiver || '담당자', status: body, detail: route || detail, progress })
-  return true
-}
-
-export async function clearLiveCareStatus() {
-  if (!isAndroidApp()) return false
-  await LiveCareStatus.clear()
   return true
 }
 

@@ -147,7 +147,8 @@ function TvDisplay() {
         } else {
           const incoming = nextSnapshot.notifications.find(notice => !seenNoticeIds.current.has(notice.id))
           nextSnapshot.notifications.forEach(notice => seenNoticeIds.current.add(notice.id))
-          if (incoming && !openEmergency) {
+          const routedElsewhere = incoming?.action_type === 'DEVICE_ALERT_TEST' && incoming.action_id && incoming.action_id !== 'tv_living'
+          if (incoming && !openEmergency && !routedElsewhere) {
             showAlert({
               key: `notice:${incoming.id}`,
               tier: tierForNotice(incoming),

@@ -54,7 +54,7 @@ import memberInactiveIcon from '../../asset/구성원프로필/활동중아님.p
 import { AppHeader, BottomNav, FloatingAssistant, MobileStatusBar } from './components/AppChrome'
 import { LockscreenPreview, ServiceLoading, ThinQEntry, ThinQHomeSelector } from './components/EntryScreens'
 import { BottomSheet, Card, Empty, Pro, Section } from './components/ui'
-import { setupNativeNotifications, showNativeNotice, syncPushToken, updateLiveCareStatus, clearLiveCareStatus } from './nativeNotifications'
+import { setupNativeNotifications, showNativeNotice, syncPushToken } from './nativeNotifications'
 
 const nativeCalendarReturnUrl = 'com.lgdx.family://calendar'
 const lastScreenKey = 'family-care-last-screen'
@@ -1222,42 +1222,6 @@ function App() {
   const preference = boot?.notification_preferences.find(p => p.member_id === notificationMemberId)
   const appNotices = !!(preference?.app_enabled ?? 1)
   const dailyDigest = !!(preference?.daily_digest_enabled ?? 1)
-  useEffect(() => {
-    if (!boot || !me?.authenticated) return
-    const now = Date.now()
-    const candidates = assignments
-      .filter(item => !['COMPLETED', 'CANCELED', 'CANCELLED', 'REJECTED'].includes(item.status))
-      .map(assignment => ({ assignment, item: visibleCareItems.find(item => item.id === assignment.item_id) }))
-      .filter(candidate => candidate.item)
-      .sort((left, right) => {
-        const statusRank = (status: string) => status === 'ACCEPTED' ? 0 : 1
-        const rankDiff = statusRank(left.assignment.status) - statusRank(right.assignment.status)
-        if (rankDiff) return rankDiff
-        const leftTime = left.item?.starts_at ? Math.abs(new Date(left.item.starts_at).getTime() - now) : Number.MAX_SAFE_INTEGER
-        const rightTime = right.item?.starts_at ? Math.abs(new Date(right.item.starts_at).getTime() - now) : Number.MAX_SAFE_INTEGER
-        return leftTime - rightTime
-      })
-    const active = candidates[0]?.assignment
-    if (!active) {
-      void clearLiveCareStatus()
-      return
-    }
-    const careItem = visibleCareItems.find(item => item.id === active.item_id)
-    const child = boot.children.find(item => item.id === careItem?.child_id)
-    const caregiver = boot.members.find(item => item.id === active.assignee_id)
-    const schedule = boot.child_schedules.find(item => item.id === careItem?.child_schedule_id)
-    const statusText = isLiveAssignment(active) ? '돌봄 진행 중' : '돌봄 담당 확인 중'
-    const currentPlace = schedule?.title ?? careItem?.title ?? '돌봄 시작'
-    const route = `${currentPlace} → ${caregiver?.name ?? '담당자'} → 집`
-    const progress = isLiveAssignment(active) ? 1 : 0
-    void updateLiveCareStatus(
-      `${child?.name ?? '아이'} · ${caregiver?.name ?? '담당자'}`,
-      statusText,
-      careItem?.title ?? '현재 돌봄 현황',
-      route,
-      progress,
-    )
-  }, [boot, me?.authenticated, timelineNow])
   useEffect(() => {
     void setupNativeNotifications(action => {
       window.dispatchEvent(new CustomEvent('family-care-notification-action', { detail: action }))

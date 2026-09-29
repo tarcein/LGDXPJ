@@ -4,6 +4,7 @@ const browser = await chromium.launch({ executablePath: 'C:\\Program Files (x86)
 const page = await browser.newPage()
 let alertSent = false
 let emergencyOpen = false
+let testTarget = 'tv_living'
 
 try {
   await page.addInitScript(() => {
@@ -22,11 +23,11 @@ try {
     const body = path === '/api/families/me'
       ? { family: { id: 'qa-family', name: 'QA 가족', plan: 'PRO' }, member: { id: 'qa-member', name: 'QA', role: 'PARENT', status: 'ACTIVE', is_owner: 1 }, authenticated: true }
       : path === '/api/bootstrap'
-        ? { family: {}, members: [], children: [], items: [], schedules: [], child_schedules: [], assignments: [], exceptions: [], handoffs: [], notifications: [...(alertSent ? [{ id: 'new-alert', level: 'IMPORTANT', action_type: 'DEVICE_ALERT_TEST', title: '테스트 알림', body: '자동으로 닫혀야 해요' }] : []), { id: 'old-alert', level: 'NORMAL', action_type: 'INFO', title: '기존 알림', body: '기준 알림' }], permissions: [], notification_preferences: [{ member_id: 'qa-member', device_enabled: true }] }
+        ? { family: {}, members: [], children: [], items: [], schedules: [], child_schedules: [], assignments: [], exceptions: [], handoffs: [], notifications: [...(alertSent ? [{ id: 'new-alert', level: 'IMPORTANT', action_type: 'DEVICE_ALERT_TEST', action_id: testTarget, title: '테스트 알림', body: '자동으로 닫혀야 해요' }] : []), { id: 'old-alert', level: 'NORMAL', action_type: 'INFO', title: '기존 알림', body: '기준 알림' }], permissions: [], notification_preferences: [{ member_id: 'qa-member', device_enabled: true }] }
         : path === '/api/emergency-requests'
           ? { requests: emergencyOpen ? [{ id: 'emergency-alert', status: 'OPEN', item_title: '긴급 테스트', reason: '즉시 확인이 필요해요' }] : [] }
           : path === '/api/device-alerts'
-            ? { settings: { emergency_tv_sound: true } }
+            ? { settings: { emergency_tv_sound: true, speech_volume: 100, quiet_start: '00:00', quiet_end: '00:00', devices: ['tv_living', 'water_purifier'], priority: ['tv_living', 'water_purifier'], content_matrix: { emergency_request: { tv: true, voice: true }, departure_reminder: { tv: true, voice: true }, supply_missing: { tv: true, voice: true } } }, catalog: [{ id: 'tv_living', name: '거실 TV', type: 'SCREEN', location: '거실' }, { id: 'water_purifier', name: '정수기', type: 'VOICE', location: '주방' }], tv_online: true }
             : { status: 'ok' }
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
   })
@@ -57,7 +58,14 @@ try {
   await page.getByRole('heading', { name: '테스트 알림' }).waitFor({ state: 'hidden', timeout: 15_000 })
   await page.waitForTimeout(2_500)
   if (await page.getByRole('heading', { name: '테스트 알림' }).count()) throw new Error('자동으로 닫힌 TV 알림이 다시 표시됩니다')
-  console.log('TV screen, emergency sound, regular sound, and auto-dismiss checks passed')
+  testTarget = 'water_purifier'
+  await page.goto((process.env.LGDX_TEST_URL ?? 'http://127.0.0.1:5173') + '?screen=voice', { waitUntil: 'domcontentloaded' })
+  await page.getByRole('heading', { name: '정수기' }).waitFor()
+  const voiceBeepCount = await page.evaluate(() => window.__beepCount)
+  await page.getByRole('button', { name: '시연 시작 (소리 재생 허용)' }).click()
+  await page.waitForFunction(count => window.__beepCount > count, voiceBeepCount)
+  await page.getByText('“테스트 알림”').waitFor()
+  console.log('TV and voice appliance alert checks passed')
 } finally {
   await browser.close()
 }

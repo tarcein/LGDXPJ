@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, trackPerformanceEvent, formatDate, formatTime, type Assignment, type Bootstrap, type DeviceAlertSettings, type DeviceAlertsResponse, type DeviceCatalogItem, type EmergencyRequest, type FamilyMe } from './api'
 import { beep, contentKeyForNotice, resolveDeviceAlertChannel, speak, speechMessageFor, tierForNotice, type DeviceAlert } from './deviceAlertShared'
 import './tv.css'
@@ -25,22 +25,32 @@ function VoiceDeviceDisplay() {
   const [lastSpoken, setLastSpoken] = useState<{ message: string; at: number } | null>(null)
   const [muted, setMuted] = useState(false)
   const seenNoticeIds = useRef(new Set<string>())
+  const noticesInitialized = useRef(false)
   const seenKeys = useRef(new Set<string>())
   const startedRef = useRef(false)
+  const pendingAnnouncement = useRef<{ alert: DeviceAlert, settings: DeviceAlertSettings, deviceId: string } | null>(null)
+
+  const playAnnouncement = useCallback((alert: DeviceAlert, settings: DeviceAlertSettings, deviceId: string) => {
+    beep(alert.tier === 4)
+    const message = speechMessageFor(alert)
+    speak(message, { volume: settings.speech_volume / 100 })
+    setLastSpoken({ message, at: Date.now() })
+    trackPerformanceEvent('device_alert_presented', {
+      channel: 'VOICE', device_id: deviceId, alert_kind: alert.kind, content_key: alert.contentKey,
+    }, alert.key)
+  }, [])
 
   useEffect(() => { startedRef.current = started }, [started])
 
   useEffect(() => {
     let cancelled = false
     const announce = (alert: DeviceAlert, settings: DeviceAlertSettings, deviceId: string) => {
-      if (!startedRef.current || muted) return
-      beep(alert.tier === 4)
-      const message = speechMessageFor(alert)
-      speak(message, { volume: settings.speech_volume / 100 })
-      setLastSpoken({ message, at: Date.now() })
-      trackPerformanceEvent('device_alert_presented', {
-        channel: 'VOICE', device_id: deviceId, alert_kind: alert.kind, content_key: alert.contentKey,
-      }, alert.key)
+      if (!startedRef.current || muted) {
+        pendingAnnouncement.current = { alert, settings, deviceId }
+        return
+      }
+      pendingAnnouncement.current = null
+      playAnnouncement(alert, settings, deviceId)
     }
 
     const load = async () => {
@@ -56,18 +66,24 @@ function VoiceDeviceDisplay() {
         setConnected(true)
         const { settings, catalog, tv_online: tvOnline } = deviceAlerts
         const winner = resolveDeviceAlertChannel(settings.priority, settings.devices, catalog, tvOnline)
+        const latestTest = nextSnapshot.notifications.find(notice => notice.action_type === 'DEVICE_ALERT_TEST' && !seenNoticeIds.current.has(notice.id))
+        const testDevice = catalog.find(item => item.id === latestTest?.action_id && item.type === 'VOICE') ?? null
+        const pendingDevice = catalog.find(item => item.id === pendingAnnouncement.current?.deviceId && item.type === 'VOICE') ?? null
         // Only take over as the active voice device when the winning entry is
         // actually a voice appliance — if it resolved to an online screen, that
         // screen is already showing the alert and this page should stay silent.
-        const device = winner?.type === 'VOICE' ? winner : null
+        // Explicit test alerts keep their simulated route even if the live TV
+        // status changes again before this polling cycle sees the notification.
+        const device = testDevice ?? pendingDevice ?? (winner?.type === 'VOICE' ? winner : null)
         setActiveDevice(device)
 
         const preferenceOn = nextSnapshot.notification_preferences.find(item => item.member_id === nextMe.member.id)?.device_enabled
         if (!preferenceOn || !device) {
           nextSnapshot.notifications.forEach(notice => seenNoticeIds.current.add(notice.id))
+          noticesInitialized.current = true
           return
         }
-        if (isWithinQuietHours(settings.quiet_start, settings.quiet_end)) return
+        if (!testDevice && isWithinQuietHours(settings.quiet_start, settings.quiet_end)) return
 
         const matrix = settings.content_matrix
 
@@ -83,8 +99,18 @@ function VoiceDeviceDisplay() {
           }
         }
 
-        if (!seenNoticeIds.current.size) {
+        if (!noticesInitialized.current) {
+          noticesInitialized.current = true
           nextSnapshot.notifications.forEach(notice => seenNoticeIds.current.add(notice.id))
+          if (latestTest) {
+            const contentKey = contentKeyForNotice(latestTest)
+            if (matrix[contentKey]?.voice) {
+              announce({
+                key: `notice:${latestTest.id}`, tier: tierForNotice(latestTest), kind: 'notice', contentKey,
+                title: latestTest.title, body: latestTest.body, meta: '',
+              }, settings, device.id)
+            }
+          }
         } else {
           const incoming = nextSnapshot.notifications.find(notice => !seenNoticeIds.current.has(notice.id))
           nextSnapshot.notifications.forEach(notice => seenNoticeIds.current.add(notice.id))
@@ -130,7 +156,16 @@ function VoiceDeviceDisplay() {
     void load()
     const timer = window.setInterval(load, 2_000)
     return () => { cancelled = true; window.clearInterval(timer) }
-  }, [muted])
+  }, [muted, playAnnouncement])
+
+  const startDisplay = () => {
+    startedRef.current = true
+    setStarted(true)
+    const pending = pendingAnnouncement.current
+    pendingAnnouncement.current = null
+    if (pending) playAnnouncement(pending.alert, pending.settings, pending.deviceId)
+    else beep()
+  }
 
   return <main className="tv-display voice-display">
     <div className="voice-status-card">
@@ -138,7 +173,7 @@ function VoiceDeviceDisplay() {
       <h1>{activeDevice ? activeDevice.name : '음성 알림 가전'}</h1>
       <p>{activeDevice ? `${activeDevice.location} · 지금 우선순위 차례라 이 가전이 음성으로 안내해요` : '지금은 화면 가전이 켜져 있거나, 우선순위에 등록된 음성 가전이 없어요'}</p>
       {lastSpoken && <div className="voice-last-spoken"><small>방금 말한 내용</small><strong>“{lastSpoken.message}”</strong></div>}
-      {!started && <button onClick={() => { setStarted(true); beep() }}>시연 시작 (소리 재생 허용)</button>}
+      {!started && <button onClick={startDisplay}>시연 시작 (소리 재생 허용)</button>}
       {started && <button className="voice-mute-toggle" onClick={() => setMuted(value => !value)}>{muted ? '🔇 음소거 중 · 해제' : '🔊 음성 켜짐 · 끄기'}</button>}
       <small className="voice-connection">{connected ? '가족 앱과 연결됨' : '가족 앱에서 먼저 로그인한 뒤 다시 열어주세요.'}</small>
     </div>

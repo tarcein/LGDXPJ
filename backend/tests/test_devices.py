@@ -98,11 +98,12 @@ class DeviceAlertsTest(unittest.TestCase):
         # TV and voice display pages only ever react to real notifications.
         headers = self._make_pro_family()
         before = self.client.get("/api/bootstrap", headers=headers).json()["notifications"]
-        self.client.post("/api/device-alerts/test", headers=headers, json={})
+        result = self.client.post("/api/device-alerts/test", headers=headers, json={}).json()
         after = self.client.get("/api/bootstrap", headers=headers).json()["notifications"]
         self.assertEqual(len(after), len(before) + 1)
         self.assertEqual(after[0]["action_type"], "DEVICE_ALERT_TEST")
         self.assertEqual(after[0]["title"], "민솔이 하원 30분 전")
+        self.assertEqual(after[0]["action_id"], result["device_id"])
 
     def test_free_plan_cannot_change_settings(self):
         response = self.client.patch("/api/device-alerts", json={"speech_volume": 80})

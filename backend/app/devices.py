@@ -216,13 +216,11 @@ def send_test_alert(payload: TestAlertRequest):
     with database() as db:
         row = _row(db)
         settings = _serialize(row)
-        # Actually push a real notification (not just a routing preview) so the
-        # live TV/voice display pages — which only poll real notifications and
-        # emergency requests — genuinely pick this up and react, instead of the
-        # test only ever affecting the response shown on this settings screen.
-        notify(db, None, sample_title, sample_body, "IMPORTANT", "DEVICE_ALERT_TEST", None)
         tv_online = False if payload.assume_tv_off else _is_tv_online(row)
         device_id, device = _resolve_channel(settings, tv_online)
+        # Store the resolved target so display pages honor the simulated TV-off
+        # route even if the real TV page reports itself online again meanwhile.
+        notify(db, None, sample_title, sample_body, "IMPORTANT", "DEVICE_ALERT_TEST", device_id)
         record_event(
             db, "device_alert_used", target_family_id=family_id(),
             target_member_id=member_id(), correlation_id=device_id,
