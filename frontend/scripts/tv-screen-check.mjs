@@ -6,6 +6,8 @@ const notices = [{ id: 'old-alert', level: 'NORMAL', action_type: 'INFO', title:
 let emergencies = [{ id: 'old-emergency', status: 'OPEN', item_title: '지난 긴급 요청', reason: '화면을 켜기 전 요청' }]
 let tvOnline = true
 let speechVolume = 100
+let webPushRegistration = null
+const webPushPublicKey = Buffer.from(Uint8Array.from({ length: 65 }, (_, index) => index === 0 ? 4 : 0)).toString('base64url')
 
 try {
   await page.addInitScript(() => {
@@ -30,6 +32,29 @@ try {
     }
     Object.defineProperty(window, 'SpeechSynthesisUtterance', { configurable: true, value: TestSpeechSynthesisUtterance })
     Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: testSpeechSynthesis })
+    let notificationPermission = 'default'
+    class TestNotification {
+      static get permission() { return notificationPermission }
+      static async requestPermission() { notificationPermission = 'granted'; return notificationPermission }
+      close() {}
+    }
+    const subscription = {
+      toJSON: () => ({ endpoint: 'https://push.example.test/zippy-device', keys: { p256dh: 'browser-public-key-value', auth: 'browser-auth-value' } }),
+    }
+    const registration = {
+      update: async () => {},
+      pushManager: {
+        getSubscription: async () => null,
+        subscribe: async options => { window.__pushKeyLength = options.applicationServerKey.byteLength; return subscription },
+      },
+    }
+    Object.defineProperty(window, 'Notification', { configurable: true, value: TestNotification })
+    Object.defineProperty(window, 'PushManager', { configurable: true, value: class TestPushManager {} })
+    Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: {
+      ready: Promise.resolve(registration),
+      getRegistration: async () => registration,
+      register: async () => registration,
+    } })
   })
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname
@@ -37,7 +62,10 @@ try {
       const payload = route.request().postDataJSON()
       if (typeof payload.speech_volume === 'number') speechVolume = payload.speech_volume
     }
-    const body = path === '/api/families/me'
+    if (path === '/api/push-tokens' && route.request().method() === 'POST') webPushRegistration = route.request().postDataJSON()
+    const body = path === '/api/public-config'
+      ? { kakao_javascript_key: '', web_push_public_key: webPushPublicKey }
+      : path === '/api/families/me'
       ? { family: { id: 'qa-family', name: 'QA 가족', plan: 'PRO' }, member: { id: 'qa-member', name: 'QA', role: 'PARENT', status: 'ACTIVE', is_owner: 1 }, authenticated: true }
       : path === '/api/bootstrap'
         ? { family: { id: 'qa-family', name: 'QA 가족', plan: 'PRO' }, members: [{ id: 'qa-member', name: 'QA', role: 'PARENT', status: 'ACTIVE', is_owner: 1 }], children: [], items: [], schedules: [], child_schedules: [], assignments: [], exceptions: [], handoffs: [], notifications: notices, permissions: [], notification_preferences: [{ member_id: 'qa-member', device_enabled: true }] }
@@ -116,7 +144,12 @@ try {
   await page.getByRole('button', { name: '테스트 음성 듣기' }).click()
   const preview = await page.evaluate(() => window.__spoken.at(-1))
   if (!preview?.text.includes('민솔이 하원') || Math.abs(preview.volume - Math.cbrt(0.36)) > 0.01) throw new Error('미리듣기 음성 또는 음량이 올바르지 않습니다: ' + JSON.stringify(preview))
-  console.log('TV and voice appliance alert checks passed')
+  await page.goto((process.env.LGDX_TEST_URL ?? 'http://127.0.0.1:5173') + '?screen=settings', { waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: '알림 연결' }).click()
+  await page.getByRole('button', { name: '연결됨' }).waitFor()
+  if (await page.evaluate(() => window.__pushKeyLength) !== 65) throw new Error('Web Push 공개키가 브라우저 구독에 전달되지 않았습니다')
+  if (webPushRegistration?.platform !== 'WEB' || !JSON.parse(webPushRegistration.token).endpoint) throw new Error('Web Push 구독 정보가 서버에 등록되지 않았습니다')
+  console.log('TV, voice appliance, and PWA Web Push checks passed')
 } finally {
   await browser.close()
 }

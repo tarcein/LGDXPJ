@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import re
 from contextlib import asynccontextmanager, suppress
 from datetime import date, datetime, timedelta, timezone
@@ -54,10 +55,14 @@ def notify(db, member_id: str | None, title: str, body: str, level: str = "NORMA
     )
     from .push import send_push
     token_rows = db.execute(
-        "SELECT token FROM push_device_token WHERE family_id = ?" + (" AND member_id = ?" if member_id else ""),
+        """SELECT t.token, t.platform FROM push_device_token t
+             LEFT JOIN notification_preference p ON p.member_id = t.member_id
+            WHERE t.family_id = ? AND COALESCE(p.app_enabled, 1) = 1""" + (" AND t.member_id = ?" if member_id else ""),
         (target_family, member_id) if member_id else (target_family,),
     ).fetchall()
-    send_push([row[0] for row in token_rows], title[:100], body[:200], action_type, action_id)
+    stale_tokens = send_push([dict(row) for row in token_rows], title[:100], body[:200], action_type, action_id)
+    for token in stale_tokens:
+        db.execute("DELETE FROM push_device_token WHERE token = ?", (token,))
 
 
 _CHILD_PHOTO_EXTENSIONS = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
@@ -431,7 +436,7 @@ class NotificationPreferenceUpdate(BaseModel):
 
 class PushTokenCreate(BaseModel):
     token: str = Field(min_length=20, max_length=4096)
-    platform: str = Field(default="ANDROID", pattern="^(ANDROID|IOS)$")
+    platform: str = Field(default="ANDROID", pattern="^(ANDROID|IOS|WEB)$")
 
 
 @app.get("/api/health")
@@ -442,11 +447,28 @@ def health():
 @app.get("/api/public-config")
 def public_config():
     """Return browser-safe integration keys sourced from the backend environment."""
-    return {"kakao_javascript_key": setting("KAKAO_JAVASCRIPT_KEY")}
+    from .push import web_push_public_key
+    return {"kakao_javascript_key": setting("KAKAO_JAVASCRIPT_KEY"), "web_push_public_key": web_push_public_key()}
 
 
 @app.post("/api/push-tokens")
 def register_push_token(payload: PushTokenCreate):
+    token = payload.token
+    if payload.platform == "WEB":
+        try:
+            subscription = json.loads(token)
+            endpoint = subscription["endpoint"]
+            p256dh = subscription["keys"]["p256dh"]
+            auth = subscription["keys"]["auth"]
+            if not isinstance(endpoint, str) or not endpoint.startswith("https://") or len(endpoint) > 2048:
+                raise ValueError
+            if not isinstance(p256dh, str) or not 16 <= len(p256dh) <= 512:
+                raise ValueError
+            if not isinstance(auth, str) or not 8 <= len(auth) <= 256:
+                raise ValueError
+            token = json.dumps({"endpoint": endpoint, "keys": {"p256dh": p256dh, "auth": auth}}, separators=(",", ":"), sort_keys=True)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            raise HTTPException(422, "올바른 Web Push 구독 정보가 아닙니다")
     with database() as db:
         member = one(db, "SELECT id FROM family_member WHERE id = ? AND family_id = ?", (current_member_id(), family_id()))
         timestamp = now()
@@ -455,7 +477,7 @@ def register_push_token(payload: PushTokenCreate):
                VALUES (?, ?, ?, ?, ?, ?)
                ON CONFLICT(token) DO UPDATE SET family_id = excluded.family_id,
                  member_id = excluded.member_id, platform = excluded.platform, updated_at = excluded.updated_at""",
-            (payload.token, family_id(), member["id"], payload.platform, timestamp, timestamp),
+            (token, family_id(), member["id"], payload.platform, timestamp, timestamp),
         )
         return {"registered": True}
 

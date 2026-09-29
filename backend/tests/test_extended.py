@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -19,6 +20,7 @@ from app import ai
 from app.db import database
 from app.main import app, recurring_occurrences
 from app.payment import process_due_renewals
+from app.push import send_push
 
 
 class ExtendedFlowTest(unittest.TestCase):
@@ -35,7 +37,7 @@ class ExtendedFlowTest(unittest.TestCase):
             "LGDX_DB_PATH", "LGDX_SEED_DEMO", "LGDX_DEV_MODE", "LGDX_DEV_TOKEN", "LGDX_REQUIRE_AUTH", "SUBSIDY24_SERVICE_KEY",
             "IDOL_CARE_INSTITUTION_SERVICE_KEY", "IDOL_CARE_HOUSEHOLD_INCOME_SERVICE_KEY",
             "IDOL_CARE_HEALTH_INSURANCE_SERVICE_KEY", "TOSS_BILLING_CLIENT_KEY",
-            "TOSS_BILLING_SECRET_KEY", "TOSS_BILLING_AMOUNT",
+            "TOSS_BILLING_SECRET_KEY", "TOSS_BILLING_AMOUNT", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT",
         ):
             os.environ.pop(key, None)
         self.temp.cleanup()
@@ -950,6 +952,32 @@ class ExtendedFlowTest(unittest.TestCase):
         with database() as db:
             saved = db.execute("SELECT platform FROM push_device_token WHERE token = ?", (token,)).fetchone()
         self.assertEqual(saved["platform"], "IOS")
+
+    def test_pwa_subscription_is_saved_and_sent_as_web_push(self):
+        subscription = {
+            "endpoint": "https://push.example.test/subscriptions/zippy-device",
+            "keys": {"p256dh": "p256dh-browser-public-key", "auth": "browser-auth-secret"},
+        }
+        response = self.client.post("/api/push-tokens", json={
+            "token": json.dumps(subscription), "platform": "WEB",
+        })
+        self.assertEqual(response.status_code, 200)
+        with database() as db:
+            saved = db.execute("SELECT token, platform FROM push_device_token WHERE platform = 'WEB'").fetchone()
+        self.assertEqual(saved["platform"], "WEB")
+        self.assertEqual(json.loads(saved["token"]), subscription)
+
+        with patch.dict(os.environ, {
+            "VAPID_PRIVATE_KEY": "test-private-key", "VAPID_SUBJECT": "https://zippy.dx6project.site",
+        }), patch("app.push._app", return_value=None), patch("app.push.webpush") as deliver:
+            stale = send_push([dict(saved)], "새 돌봄 요청", "확인이 필요해요", "ASSIGNMENT_REQUEST", "assignment-1")
+        self.assertEqual(stale, [])
+        payload = json.loads(deliver.call_args.kwargs["data"])
+        self.assertEqual(payload["action_id"], "assignment-1")
+        self.assertEqual(payload["url"], "/?screen=notifications")
+
+        invalid = self.client.post("/api/push-tokens", json={"token": "not-a-subscription-json-value", "platform": "WEB"})
+        self.assertEqual(invalid.status_code, 422)
 
     def test_free_voice_chat_and_handoff_note(self):
         with patch("app.extended.ai.transcribe_audio", return_value="오늘 하원 누가 맡아?"), patch("app.extended.ai.answer", return_value=("할머니가 담당입니다.", 23)) as answer:

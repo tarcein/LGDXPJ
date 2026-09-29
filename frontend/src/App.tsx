@@ -59,6 +59,11 @@ import { setupNativeNotifications, showNativeNotice, syncPushToken } from './nat
 const nativeCalendarReturnUrl = 'com.lgdx.family://calendar'
 const lastScreenKey = 'family-care-last-screen'
 const transientScreens: Screen[] = ['thinq', 'serviceLoading', 'lockscreen', 'onboarding']
+const webPushKeyBytes = (value: string) => {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+  const binary = atob(normalized + '='.repeat((4 - normalized.length % 4) % 4))
+  return Uint8Array.from(binary, character => character.charCodeAt(0))
+}
 
 const groups: { title: string; pages: [Screen, string][] }[] = [
   { title: 'ThinQ 진입 · 외부 화면', pages: [['thinq', 'ThinQ 홈'], ['lockscreen', '잠금화면 동선']] },
@@ -387,6 +392,7 @@ function App() {
   const [calendarPrivacyPromptOpen, setCalendarPrivacyPromptOpen] = useState(false)
   const [calendarPrivacyBusy, setCalendarPrivacyBusy] = useState(false)
   const [kakaoJavaScriptKey, setKakaoJavaScriptKey] = useState('')
+  const [browserPushReady, setBrowserPushReady] = useState(false)
   const [memberNameInput, setMemberNameInput] = useState('')
   const [familyNameInput, setFamilyNameInput] = useState('')
   const [memberRole, setMemberRole] = useState('GRANDPARENT')
@@ -908,19 +914,46 @@ function App() {
     }
   }
   useEffect(() => { openNoticeRef.current = openNotice })
-  const enableBrowserNotifications = async () => {
-    if (!('Notification' in window)) { setError('이 브라우저는 시스템 알림을 지원하지 않아요.'); return }
-    const permission = await Notification.requestPermission()
-    setToast(permission === 'granted' ? '이 기기에서 돌봄 요청 알림을 받을 수 있어요' : '브라우저 알림 권한이 허용되지 않았어요')
+  const enableBrowserNotifications = async (saveSubscription = true): Promise<string | null> => {
+    if (Capacitor.isNativePlatform()) {
+      const enabled = await setupNativeNotifications()
+      setToast(enabled ? '이 기기에서 돌봄 요청 알림을 받을 수 있어요' : '기기 알림 권한을 확인해주세요')
+      return null
+    }
+    if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      setError('iPhone에서는 iOS 16.4 이상에서 홈 화면에 추가한 뒤 알림을 설정해주세요.')
+      return null
+    }
+    try {
+      const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission()
+      if (permission !== 'granted') { setToast('브라우저 알림 권한이 허용되지 않았어요'); return null }
+      const [config, registration] = await Promise.all([
+        api<{ web_push_public_key: string }>('/public-config'),
+        navigator.serviceWorker.ready,
+      ])
+      if (!config.web_push_public_key) throw new Error('서버의 Web Push 키가 아직 설정되지 않았어요.')
+      const subscription = await registration.pushManager.getSubscription() ?? await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: webPushKeyBytes(config.web_push_public_key),
+      })
+      const token = JSON.stringify(subscription.toJSON())
+      if (saveSubscription && hasFamilyToken()) await send('/push-tokens', 'POST', { token, platform: 'WEB' })
+      setBrowserPushReady(true)
+      setToast('앱을 닫아도 돌봄 요청 알림을 받을 수 있어요')
+      return token
+    } catch (failure) {
+      reportError(failure)
+      return null
+    }
   }
   const finishInviteJoin = async (allowNotifications: boolean) => {
-    if (allowNotifications && 'Notification' in window) {
-      try { await Notification.requestPermission() } catch { /* Joining must still continue when device permission fails. */ }
+    const webPushToken = allowNotifications ? await enableBrowserNotifications(false) : null
+    if (await enterFamily() && webPushToken) {
+      try { await send('/push-tokens', 'POST', { token: webPushToken, platform: 'WEB' }) } catch { /* Joining must still succeed if push registration fails. */ }
     }
-    await enterFamily()
   }
   const enterFamily = async () => {
-    if (onboardBusy) return
+    if (onboardBusy) return false
     setOnboardBusy(true)
     try {
       setError('')
@@ -949,7 +982,8 @@ function App() {
         setOnboardStep('ROLE')
         setToast('가족방을 만들었어요. 가족 설정을 이어서 완료해주세요.')
       } else setToast('가족방에 참여했어요.')
-    } catch (e) { reportError(e) }
+      return true
+    } catch (e) { reportError(e); return false }
     finally { setOnboardBusy(false) }
   }
   const selectChildPhoto = (file: File | undefined) => {
@@ -1229,6 +1263,16 @@ function App() {
   }, [])
   useEffect(() => {
     if (me?.authenticated) void syncPushToken()
+  }, [me?.authenticated])
+  useEffect(() => {
+    if (!me?.authenticated || Capacitor.isNativePlatform() || !('serviceWorker' in navigator)) return
+    let cancelled = false
+    void navigator.serviceWorker.getRegistration().then(registration => registration?.pushManager.getSubscription()).then(subscription => {
+      if (!subscription || cancelled) return
+      setBrowserPushReady(true)
+      return send('/push-tokens', 'POST', { token: JSON.stringify(subscription.toJSON()), platform: 'WEB' })
+    }).catch(() => undefined)
+    return () => { cancelled = true }
   }, [me?.authenticated])
   useEffect(() => {
     const onNativeAction = (event: Event) => {
@@ -2474,7 +2518,7 @@ function App() {
     <button className="primary-button wide-button personal-routine-add" onClick={() => { setScheduleMember(personalRoutineOwnerId); openNewScheduleForm('PERSONAL', 'REPEAT') }}>개인 루틴 등록하기</button>
   </section>
   if (boot && screen === 'permissions') { const targetMember = me?.member.id ?? viewer; page = <><div className="eyebrow">내 정보 공개 범위</div><h2 className="hero-title">보여주고 싶은 정보만<br />직접 선택해요</h2><p className="hero-copy">각 구성원이 자신의 정보 공개 범위를 직접 관리해요. 다른 가족의 설정은 변경할 수 없어요.</p><Section>{member(targetMember)}님의 공개 범위</Section>{[['SCHEDULE_DETAIL', '개인 일정 내용', '켜면 제목까지, 끄면 시간과 바쁨 여부만 표시'], ['WORK_DETAIL', '업무 내용', '켜면 제목까지, 끄면 시간과 바쁨 여부만 표시'], ['LOCATION', '현황', '돌봄 이동 현황']].map(([scope, name, detail]) => { const allowed = !!boot.permissions.find(p => p.member_id === targetMember && p.scope === scope)?.is_allowed; return <Card key={scope} className="permission-row"><div><strong>{name}</strong><p>{detail}</p></div><button className={'switch ' + (allowed ? 'on' : '')} role="switch" aria-checked={allowed} aria-label={name + ' 공개'} onClick={() => run(() => send('/members/' + targetMember + '/permissions', 'PATCH', { scope, is_allowed: !allowed }), '내 공개 범위를 변경했어요')}><span /></button></Card> })}<Card className="info-note">개인 일정 내용은 기본 비공개예요. 꺼두면 다른 가족에게 일정 제목 대신 ‘바쁨’으로 보여요.</Card></> }
-  if (boot && screen === 'settings') page = <><div className="eyebrow">알림 설정</div><h2 className="hero-title one-line">조용하지만 놓치지 않게</h2><p className="hero-copy">돌봄 요청이 오면 앱 알림함과 허용된 브라우저 알림으로 알려드려요.</p><Section>앱 알림</Section><Card className="permission-row"><div><strong>돌봄 알림 받기</strong><p>등록, 배정, 인수인계, 완료</p></div><button className={'switch ' + (appNotices ? 'on' : '')} role="switch" aria-checked={appNotices} aria-label="돌봄 알림 받기" onClick={() => run(() => send('/members/' + notificationMemberId + '/notification-preferences', 'PATCH', { app_enabled: !appNotices }), '알림 설정을 변경했어요')}><span /></button></Card><Card className="permission-row"><div><strong>이 기기 시스템 알림</strong><p>앱이 열려 있을 때 새 요청을 브라우저 알림으로 표시</p></div><button className="text-link" onClick={() => void enableBrowserNotifications()}>{'Notification' in window && Notification.permission === 'granted' ? '허용됨' : '허용하기'}</button></Card><Card className="permission-row"><div><strong>하루 1회 모아보기</strong><p>21:00에 확인할 정보만 요약</p></div><button className={'switch ' + (dailyDigest ? 'on' : '')} role="switch" aria-checked={dailyDigest} aria-label="하루 1회 모아보기" onClick={() => run(() => send('/members/' + notificationMemberId + '/notification-preferences', 'PATCH', { daily_digest_enabled: !dailyDigest }), '모아보기 설정을 변경했어요')}><span /></button></Card><Section>가전 알림 <Pro /></Section><Card className="permission-row"><div><strong>가전으로 알림 받기</strong><p>{plan === 'PRO' ? '켜면 TV·정수기 등 연동된 가전으로 돌봄 알림을 받아요.' : 'Pro 구독 후 가전 알림을 켤 수 있어요.'}</p></div><button className={'switch ' + (deviceNoticeDemo ? 'on' : '')} role="switch" aria-checked={deviceNoticeDemo} aria-label="가전으로 알림 받기" onClick={() => { if (plan !== 'PRO') { go('plan'); return }; const next = !deviceNoticeDemo; setDeviceNoticeDemo(next); void run(() => send('/members/' + notificationMemberId + '/notification-preferences', 'PATCH', { device_enabled: next }), next ? '가전 알림을 켰어요' : '가전 알림을 껐어요') }}><span /></button></Card>{plan === 'PRO' && deviceNoticeDemo && <button className="text-link settings-device-alert-link" onClick={() => { setDeviceAlertStep('main'); go('deviceAlerts') }}>어떤 가전에 어떤 알림을 보낼지 세부 설정 ›</button>}</>
+  if (boot && screen === 'settings') page = <><div className="eyebrow">알림 설정</div><h2 className="hero-title one-line">조용하지만 놓치지 않게</h2><p className="hero-copy">돌봄 요청이 오면 앱 알림함과 허용된 브라우저 알림으로 알려드려요.</p><Section>앱 알림</Section><Card className="permission-row"><div><strong>돌봄 알림 받기</strong><p>등록, 배정, 인수인계, 완료</p></div><button className={'switch ' + (appNotices ? 'on' : '')} role="switch" aria-checked={appNotices} aria-label="돌봄 알림 받기" onClick={() => run(() => send('/members/' + notificationMemberId + '/notification-preferences', 'PATCH', { app_enabled: !appNotices }), '알림 설정을 변경했어요')}><span /></button></Card><Card className="permission-row"><div><strong>이 기기 시스템 알림</strong><p>홈 화면에 설치하면 앱을 닫아도 새 돌봄 요청을 알려드려요</p></div><button className="text-link" onClick={() => void enableBrowserNotifications()}>{browserPushReady ? '연결됨' : '알림 연결'}</button></Card><Card className="permission-row"><div><strong>하루 1회 모아보기</strong><p>21:00에 확인할 정보만 요약</p></div><button className={'switch ' + (dailyDigest ? 'on' : '')} role="switch" aria-checked={dailyDigest} aria-label="하루 1회 모아보기" onClick={() => run(() => send('/members/' + notificationMemberId + '/notification-preferences', 'PATCH', { daily_digest_enabled: !dailyDigest }), '모아보기 설정을 변경했어요')}><span /></button></Card><Section>가전 알림 <Pro /></Section><Card className="permission-row"><div><strong>가전으로 알림 받기</strong><p>{plan === 'PRO' ? '켜면 TV·정수기 등 연동된 가전으로 돌봄 알림을 받아요.' : 'Pro 구독 후 가전 알림을 켤 수 있어요.'}</p></div><button className={'switch ' + (deviceNoticeDemo ? 'on' : '')} role="switch" aria-checked={deviceNoticeDemo} aria-label="가전으로 알림 받기" onClick={() => { if (plan !== 'PRO') { go('plan'); return }; const next = !deviceNoticeDemo; setDeviceNoticeDemo(next); void run(() => send('/members/' + notificationMemberId + '/notification-preferences', 'PATCH', { device_enabled: next }), next ? '가전 알림을 켰어요' : '가전 알림을 껐어요') }}><span /></button></Card>{plan === 'PRO' && deviceNoticeDemo && <button className="text-link settings-device-alert-link" onClick={() => { setDeviceAlertStep('main'); go('deviceAlerts') }}>어떤 가전에 어떤 알림을 보낼지 세부 설정 ›</button>}</>
   if (boot && screen === 'deviceAlerts') {
     const settings = deviceAlertData?.settings
     const catalog = deviceAlertData?.catalog ?? []

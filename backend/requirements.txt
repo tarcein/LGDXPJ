@@ -6,3 +6,4 @@ python-dotenv>=1,<2
 psycopg[binary,pool]>=3.2,<4
 tzdata>=2025,<2030
 firebase-admin>=6.6,<8
+pywebpush>=2.5,<3

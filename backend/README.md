@@ -4,6 +4,8 @@ Run with `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload` 
 
 Copy `.env.example` to `.env` and enter `OPENAI_API_KEY` in `.env`. The same OpenAI project key is used for Whisper audio transcription, image text extraction through a vision model, and family-context AI chat. `SUBSIDY24_SERVICE_KEY` enables public care-benefit searches. `GOOGLE_CALENDAR_API_KEY` can accompany Calendar API requests, but private calendars still require Google OAuth Client ID/Secret. Toss checkout uses `TOSS_BILLING_CLIENT_KEY`, `TOSS_BILLING_SECRET_KEY`, and `TOSS_BILLING_AMOUNT=7900`. Restart the server after editing `.env`. Secret keys are read only by the backend and `.env` is Git-ignored.
 
+PWA background notifications use standard Web Push. Run `python scripts/generate_vapid_key.py` once, keep `VAPID_PRIVATE_KEY_FILE=.secrets/vapid_private.pem`, and set `VAPID_SUBJECT` to the deployed HTTPS origin or a monitored `mailto:` address. Keep the same private key across deployments; replacing it invalidates existing browser subscriptions.
+
 ## Database
 
 The backend uses PostgreSQL when `DATABASE_URL` is present in `backend/.env`; otherwise it falls back to `backend/lgdx.db` for local development and isolated tests. The current PostgreSQL schema is created automatically when the app starts. `LGDX_SEED_DEMO=0` keeps a cleared database empty so the first-run family-room onboarding can be tested; use `1` only when the demo family is explicitly needed. Keep the connection string in `.env`, never in committed source.
