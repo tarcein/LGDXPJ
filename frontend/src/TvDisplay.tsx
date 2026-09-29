@@ -8,17 +8,10 @@ const tvNewsVideo = '/YTDown.com_YouTube_Media_enRjBDUlWGo_001_720p.mp4'
 
 type TvAlert = DeviceAlert
 
-// Reports whether this screen is actually visible (not locked/minimized) so the
-// backend's "TV on/off" rule can decide whether to pop it up here or speak it
-// through the priority voice appliance instead. Windows screen lock (Win+L)
-// does NOT reliably fire visibilitychange on every Chromium build — the OS lock
-// screen is a separate secure desktop, so the browser tab can stay "visible" as
-// far as the Page Visibility API is concerned. Losing window focus is the more
-// reliable signal for that case, so a screen only counts as "on" when it is
-// both visible AND focused, and both the visibilitychange/blur/focus events and
-// the regular poll loop re-check and re-report this on every tick instead of
-// only ever reporting "on" and waiting for a one-shot event to report "off".
-const isTvScreenActive = () => document.visibilityState === 'visible' && document.hasFocus()
+// Focus can move to the controller app while a dedicated TV window remains
+// visible, so focus loss must not mute the TV. Visibility plus the manual screen
+// toggle below determines whether this display is on.
+const isTvScreenActive = () => document.visibilityState === 'visible'
 const reportTvStatus = (status: 'on' | 'off') => {
   void send('/device-alerts/tv-status', 'POST', { status, device_id: 'tv_living' }).catch(() => {})
 }
@@ -37,11 +30,10 @@ function TvDisplay() {
   const alertRef = useRef<TvAlert | null>(null)
   const startedRef = useRef(false)
   const videoRef = useRef<HTMLVideoElement>(null)
-  // TV is a visual channel now — it only makes sound for emergencies, and only
-  // when "긴급 알림은 TV 화면에도 소리로 함께" is on (see 가전 알림 우선순위 설정 · 우선순위)
-  // AND this screen currently counts as "on" — otherwise a locked/backgrounded
-  // TV would keep beeping out loud even though the alert should have moved to
-  // the priority voice appliance instead.
+  // Visible TV alerts use a short chime. Emergency alerts additionally use a
+  // stronger chime and speech when the emergency TV sound setting is enabled.
+  // A locked/backgrounded TV stays silent so the priority voice appliance can
+  // take over instead.
   const emergencyTvSoundRef = useRef(true)
   const tvActiveRef = useRef(true)
   // Real Windows session lock (Win+L) does not reliably fire visibilitychange or
@@ -51,6 +43,12 @@ function TvDisplay() {
   // presenter force the reported status directly instead of depending on it.
   const [manualForceOff, setManualForceOff] = useState(false)
   const manualForceOffRef = useRef(false)
+
+  const playAlertSound = (next: TvAlert) => {
+    if (!tvActiveRef.current || voiceMuted || (next.tier === 4 && !emergencyTvSoundRef.current)) return
+    beep(next.tier === 4)
+    if (next.tier === 4) speak(speechMessageFor(next))
+  }
 
   const showAlert = (next: TvAlert) => {
     if (activeAlertKey.current === next.key || dismissedAlertKeys.current.has(next.key)) return
@@ -62,13 +60,11 @@ function TvDisplay() {
         channel: 'TV', device_id: 'tv_living', alert_kind: next.kind, content_key: next.contentKey,
       }, next.key)
     }
-    if (startedRef.current && next.tier === 4 && emergencyTvSoundRef.current && tvActiveRef.current) {
-      if (!voiceMuted) beep(true)
-      if (!voiceMuted) speak(speechMessageFor(next))
-    }
-    const timeout = next.tier === 4 ? 0 : next.tier === 3 ? 25_000 : next.tier === 2 ? 12_000 : 5_000
-    if (timeout) window.setTimeout(() => {
+    if (startedRef.current) playAlertSound(next)
+    const timeout = next.tier === 4 ? 30_000 : next.tier === 3 ? 25_000 : next.tier === 2 ? 12_000 : 5_000
+    window.setTimeout(() => {
       if (activeAlertKey.current === next.key) {
+        dismissedAlertKeys.current.add(next.key)
         activeAlertKey.current = ''
         alertRef.current = null
         setAlert(null)
@@ -89,19 +85,17 @@ function TvDisplay() {
   useEffect(() => {
     manualForceOffRef.current = manualForceOff
     reportTvStatusNow()
+    if (manualForceOff) videoRef.current?.pause()
+    else if (startedRef.current) void videoRef.current?.play()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manualForceOff])
 
   useEffect(() => {
     reportTvStatusNow()
     document.addEventListener('visibilitychange', reportTvStatusNow)
-    window.addEventListener('blur', reportTvStatusNow)
-    window.addEventListener('focus', reportTvStatusNow)
     window.addEventListener('pagehide', () => { tvActiveRef.current = false; reportTvStatus('off') })
     return () => {
       document.removeEventListener('visibilitychange', reportTvStatusNow)
-      window.removeEventListener('blur', reportTvStatusNow)
-      window.removeEventListener('focus', reportTvStatusNow)
     }
   }, [])
 
@@ -200,15 +194,17 @@ function TvDisplay() {
 
   const startDisplay = () => {
     setStarted(true)
+    startedRef.current = true
     if (videoRef.current) {
       videoRef.current.muted = newsMuted
       void videoRef.current.play()
     }
     void document.documentElement.requestFullscreen?.()
-    beep()
+    if (alertRef.current) playAlertSound(alertRef.current)
+    else beep()
   }
 
-  return <main className="tv-display">
+  return <main className={`tv-display${manualForceOff ? ' tv-screen-off' : ''}`}>
     <section className="tv-broadcast" aria-label="실제 TV 방송 화면">
       <video
         className="tv-broadcast-video"
@@ -233,10 +229,10 @@ function TvDisplay() {
         }
       }}>{newsMuted ? '🔇 뉴스 소리 켜기' : '🔊 뉴스 소리 끄기'}</button>
       <button type="button" onClick={() => setVoiceMuted(value => !value)}>
-        {voiceMuted ? '🔇 안내 음성 켜기' : '🔊 안내 음성 끄기'}
+        {voiceMuted ? '🔇 알림 소리 켜기' : '🔊 알림 소리 끄기'}
       </button>
-      <button type="button" className={manualForceOff ? 'tv-force-off active' : 'tv-force-off'} onClick={() => setManualForceOff(value => !value)}>
-        {manualForceOff ? '🔒 TV 꺼짐으로 표시 중 · 되돌리기' : '시연용: TV 꺼짐으로 표시'}
+      <button type="button" className={manualForceOff ? 'tv-force-off active' : 'tv-force-off'} role="switch" aria-checked={!manualForceOff} aria-label="TV 화면" onClick={() => setManualForceOff(value => !value)}>
+        {manualForceOff ? 'TV 화면 켜기' : 'TV 화면 끄기'}
       </button>
     </div>
 

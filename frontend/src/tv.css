@@ -37,6 +37,9 @@
 
 .tv-sound-controls { position: absolute; top: 24px; left: 24px; z-index: 20; display: flex; gap: 8px; } .tv-sound-controls button { border: 1px solid #ffffff55; border-radius: 999px; padding: 9px 13px; color: #fff; background: #08111dcc; font-size: 12px; cursor: pointer; backdrop-filter: blur(8px); } .tv-sound-controls button:hover { background: #173052ee; }
 .tv-sound-controls button.tv-force-off.active { border-color: #ff5470aa; background: #c4123fcc; }
+.tv-display.tv-screen-off { background: #000; }
+.tv-screen-off > :not(.tv-sound-controls) { visibility: hidden; }
+.tv-screen-off .tv-sound-controls > :not(.tv-force-off) { display: none; }
 
 /* Voice-appliance stand-in display (정수기 등) — no real screen needed on the
    physical device, this is just a way to see/confirm what it's saying during setup. */

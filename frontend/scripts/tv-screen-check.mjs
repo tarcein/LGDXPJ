@@ -1,0 +1,63 @@
+import { chromium } from 'playwright'
+
+const browser = await chromium.launch({ executablePath: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', headless: true })
+const page = await browser.newPage()
+let alertSent = false
+let emergencyOpen = false
+
+try {
+  await page.addInitScript(() => {
+    window.__beepCount = 0
+    class TestAudioContext {
+      currentTime = 0
+      destination = {}
+      createOscillator() { return { type: 'sine', frequency: { value: 0 }, connect() { return this }, start() { window.__beepCount++ }, stop() {}, addEventListener(_name, callback) { callback() } } }
+      createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() { return this } } }
+      close() {}
+    }
+    window.AudioContext = TestAudioContext
+  })
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    const body = path === '/api/families/me'
+      ? { family: { id: 'qa-family', name: 'QA 가족', plan: 'PRO' }, member: { id: 'qa-member', name: 'QA', role: 'PARENT', status: 'ACTIVE', is_owner: 1 }, authenticated: true }
+      : path === '/api/bootstrap'
+        ? { family: {}, members: [], children: [], items: [], schedules: [], child_schedules: [], assignments: [], exceptions: [], handoffs: [], notifications: [...(alertSent ? [{ id: 'new-alert', level: 'IMPORTANT', action_type: 'DEVICE_ALERT_TEST', title: '테스트 알림', body: '자동으로 닫혀야 해요' }] : []), { id: 'old-alert', level: 'NORMAL', action_type: 'INFO', title: '기존 알림', body: '기준 알림' }], permissions: [], notification_preferences: [{ member_id: 'qa-member', device_enabled: true }] }
+        : path === '/api/emergency-requests'
+          ? { requests: emergencyOpen ? [{ id: 'emergency-alert', status: 'OPEN', item_title: '긴급 테스트', reason: '즉시 확인이 필요해요' }] : [] }
+          : path === '/api/device-alerts'
+            ? { settings: { emergency_tv_sound: true } }
+            : { status: 'ok' }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+  })
+
+  await page.goto((process.env.LGDX_TEST_URL ?? 'http://127.0.0.1:5173') + '?screen=tv', { waitUntil: 'domcontentloaded' })
+  const toggle = page.getByRole('switch', { name: 'TV 화면' })
+  await toggle.evaluate(button => button.click())
+  await page.locator('.tv-display.tv-screen-off').waitFor()
+  const off = await page.locator('.tv-display').evaluate(element => ({
+    background: getComputedStyle(element).backgroundColor,
+    videoHidden: getComputedStyle(element.querySelector('.tv-broadcast')).visibility === 'hidden',
+    videoPaused: element.querySelector('video').paused,
+  }))
+  if (off.background !== 'rgb(0, 0, 0)' || !off.videoHidden || !off.videoPaused) throw new Error('TV 꺼짐 상태가 검은 화면이 아닙니다: ' + JSON.stringify(off))
+  await toggle.evaluate(button => button.click())
+  await page.locator('.tv-display.tv-screen-off').waitFor({ state: 'detached' })
+  emergencyOpen = true
+  await page.getByRole('heading', { name: /긴급 테스트/ }).waitFor({ timeout: 5_000 })
+  const emergencyBeepCount = await page.evaluate(() => window.__beepCount)
+  await page.getByRole('button', { name: '시연 시작' }).click()
+  await page.waitForFunction(count => window.__beepCount > count, emergencyBeepCount)
+  emergencyOpen = false
+  await page.getByRole('heading', { name: /긴급 테스트/ }).waitFor({ state: 'hidden', timeout: 5_000 })
+  const beepCount = await page.evaluate(() => window.__beepCount)
+  alertSent = true
+  await page.getByRole('heading', { name: '테스트 알림' }).waitFor({ timeout: 5_000 })
+  await page.waitForFunction(count => window.__beepCount > count, beepCount)
+  await page.getByRole('heading', { name: '테스트 알림' }).waitFor({ state: 'hidden', timeout: 15_000 })
+  await page.waitForTimeout(2_500)
+  if (await page.getByRole('heading', { name: '테스트 알림' }).count()) throw new Error('자동으로 닫힌 TV 알림이 다시 표시됩니다')
+  console.log('TV screen, emergency sound, regular sound, and auto-dismiss checks passed')
+} finally {
+  await browser.close()
+}
