@@ -431,7 +431,7 @@ function App() {
   const [calendarConnections, setCalendarConnections] = useState<CalendarConnection[]>([])
   const [calendarPrivacyPromptOpen, setCalendarPrivacyPromptOpen] = useState(false)
   const [calendarPrivacyBusy, setCalendarPrivacyBusy] = useState(false)
-  const [kakaoJavaScriptKey, setKakaoJavaScriptKey] = useState('')
+  const [kakaoShareStatus, setKakaoShareStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading')
   const [browserPushReady, setBrowserPushReady] = useState(false)
   const [memberNameInput, setMemberNameInput] = useState('')
   const [familyNameInput, setFamilyNameInput] = useState('')
@@ -718,9 +718,18 @@ function App() {
     else if (!transientScreens.includes(screen)) localStorage.setItem(lastScreenKey, screen)
   }, [familySessionReady, screen])
   useEffect(() => {
+    let active = true
     api<{ kakao_javascript_key: string }>('/public-config')
-      .then(config => setKakaoJavaScriptKey(config.kakao_javascript_key.trim()))
-      .catch(() => setKakaoJavaScriptKey(''))
+      .then(async config => {
+        const key = config.kakao_javascript_key.trim()
+        if (!key) throw new Error('카카오 공유 설정이 없어요.')
+        await loadExternalScript('kakao-sdk', kakaoSdkUrl, true)
+        if (!window.Kakao) throw new Error('카카오 공유를 불러오지 못했어요.')
+        if (!window.Kakao.isInitialized()) window.Kakao.init(key)
+        if (active) setKakaoShareStatus('ready')
+      })
+      .catch(() => { if (active) setKakaoShareStatus('unavailable') })
+    return () => { active = false }
   }, [])
   useEffect(() => {
     if (invitationFromUrl) api<{ family_name: string; owner_name: string; expires_at: string }>('/families/invitations/' + encodeURIComponent(invitationFromUrl))
@@ -1159,7 +1168,7 @@ function App() {
     setToast('초대 링크를 복사했어요.')
   }
   const shareInvite = async (target: 'kakao' | 'sms' | 'system' = 'kakao') => {
-    if (!inviteLink) return
+    if (!inviteLink) { setToast('초대 링크를 준비하고 있어요. 잠시 후 다시 눌러주세요.'); return }
     const text = `${boot?.family.name ?? 'ZIPPY'} 가족방 초대 링크예요. 링크를 열고 이름을 입력해 참여해주세요.`
     try {
       if (target === 'sms') {
@@ -1167,17 +1176,12 @@ function App() {
         return
       }
       if (target === 'kakao') {
-        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
-        if (isMobile && navigator.share) {
-          await navigator.share({ title: boot?.family.name ?? 'ZIPPY 가족방', text, url: inviteLink })
-          setToast('공유할 앱에서 카카오톡을 선택해주세요.')
+        if (kakaoShareStatus === 'loading') {
+          setToast('카카오톡 공유를 준비하고 있어요. 잠시 후 다시 눌러주세요.')
           return
         }
-        if (kakaoJavaScriptKey) {
-          await loadExternalScript('kakao-sdk', kakaoSdkUrl, true)
-        }
-        if (kakaoJavaScriptKey && window.Kakao) {
-          if (!window.Kakao.isInitialized()) window.Kakao.init(kakaoJavaScriptKey)
+        if (kakaoShareStatus === 'ready' && window.Kakao) {
+          // Call inside the click gesture; loading the SDK here can trigger popup blocking.
           await window.Kakao.Share.sendDefault({
             objectType: 'text',
             text,
@@ -1205,10 +1209,7 @@ function App() {
     } catch (failure) {
       if (failure instanceof DOMException && failure.name === 'AbortError') return
       if (target === 'kakao') {
-        try {
-          await copyInvite()
-          setToast('공유창을 열 수 없어 초대 링크를 복사했어요.')
-        } catch { setError('초대 링크를 복사하지 못했어요. 브라우저의 클립보드 권한을 확인해주세요.') }
+        setToast('카카오톡 공유창을 열지 못했어요. 브라우저의 팝업 차단을 확인하거나 링크 복사를 이용해주세요.')
         return
       }
       setError('공유창을 열지 못했어요. 잠시 후 다시 시도해주세요.')
