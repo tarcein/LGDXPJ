@@ -103,7 +103,7 @@ def extract_image_text(image: bytes, mime: str) -> str:
         ]}],
     })
     text = output_text(result)
-    if text == "빈 글자 없음":
+    if re.fullmatch(r"빈\s*글자\s*없음(?:입니다)?[.!。]?", text):
         raise HTTPException(422, detail={"code": "OCR_NO_TEXT", "message": "읽을 글자가 없습니다. 텍스트로 입력해주세요"})
     return text
 

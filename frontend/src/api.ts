@@ -134,15 +134,24 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const token = localStorage.getItem(tokenKey)
   if (token) headers.set('Authorization', `Bearer ${token}`)
   const configuredApiBase = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
-  const apiBase = window.location.port === '5173'
+  const apiBase = import.meta.env.DEV
     ? ''
     : configuredApiBase || productionApiBase
-  const response = await fetch(`${apiBase}/api${path}`, {
-    ...init,
-    headers,
-  })
+  let response: Response
+  try {
+    response = await fetch(`${apiBase}/api${path}`, { ...init, headers })
+  } catch {
+    throw new ApiError('서버에 연결하지 못했어요. 네트워크를 확인하고 다시 시도해주세요.', 0)
+  }
   if (!response.ok) {
-    let message = `요청에 실패했어요 (${response.status})`
+    const fallbackMessages: Record<number, string> = {
+      413: '업로드 파일 용량이 너무 커요.',
+      500: '서버에서 요청을 처리하지 못했어요. 잠시 후 다시 시도해주세요.',
+      502: 'AI 서비스 연결이 원활하지 않아요. 잠시 후 다시 시도해주세요.',
+      503: 'AI 서비스를 잠시 사용할 수 없어요. 잠시 후 다시 시도해주세요.',
+      504: 'AI 응답이 늦어지고 있어요. 잠시 후 다시 시도해주세요.',
+    }
+    let message = fallbackMessages[response.status] ?? `요청에 실패했어요 (${response.status})`
     let code: string | undefined
     try {
       const body = await response.json()

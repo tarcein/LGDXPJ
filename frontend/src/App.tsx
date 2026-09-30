@@ -55,6 +55,7 @@ import { AppHeader, BottomNav, FloatingAssistant, MobileStatusBar } from './comp
 import { LockscreenPreview, ServiceLoading, ThinQEntry, ThinQHomeSelector } from './components/EntryScreens'
 import { BottomSheet, Card, Empty, Pro, Section } from './components/ui'
 import { setupNativeNotifications, syncPushToken } from './nativeNotifications'
+import { prepareOcrPhoto } from './photoUpload'
 
 const nativeCalendarReturnUrl = 'com.lgdx.family://calendar'
 const lastScreenKey = 'family-care-last-screen'
@@ -1839,13 +1840,19 @@ function App() {
     try { const result = await api<{ suggestions: Suggestion[] }>('/items/' + item.id + '/suggestions'); setItemId(item.id); setSuggestions(result.suggestions); go('suggestion') }
     catch (e) { reportError(e) }
   }
-  const selectCarePhoto = (file: File | undefined, source: 'CAMERA' | 'ALBUM') => {
+  const selectCarePhoto = async (file: File | undefined, source: 'CAMERA' | 'ALBUM') => {
     if (!file) return
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) { setError('10MB 이하 JPG, PNG, WebP 사진을 선택해주세요'); return }
-    setError(''); setCaptureFile(file); setCaptureSource(source)
-    const reader = new FileReader()
-    reader.onload = () => setCapturePreview(String(reader.result))
-    reader.readAsDataURL(file)
+    setError('')
+    try {
+      const prepared = await prepareOcrPhoto(file)
+      setCaptureFile(prepared); setCaptureSource(source)
+      const reader = new FileReader()
+      reader.onload = () => setCapturePreview(String(reader.result))
+      reader.readAsDataURL(prepared)
+    } catch (failure) {
+      setCaptureFile(null); setCapturePreview('')
+      setError(failure instanceof Error ? failure.message : '사진을 읽지 못했어요. 다른 사진을 선택해주세요.')
+    }
   }
   const capture = async () => {
     if (captureBusy) return
@@ -2457,7 +2464,7 @@ function App() {
     <div className="inbox-buttons"><button className="primary-button" onClick={() => go('capture')}>알림장 촬영</button><button className="outline-button" onClick={() => go('capture')}>직접 입력</button></div>
   </>
   if (boot && screen === 'capture') page = <><div className="eyebrow">FAMILY INBOX</div><h2 className="hero-title">흩어진 안내를<br />한 번에 정리해요</h2><p className="hero-copy">알림장, 문자, 가정통신문에 적힌 돌봄 정보를 모아주세요.</p>
-    <div className="capture-actions"><input ref={cameraInputRef} className="photo-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" aria-label="카메라로 알림장 촬영" onChange={e => { selectCarePhoto(e.currentTarget.files?.[0], 'CAMERA'); e.currentTarget.value = '' }} /><input ref={uploadInputRef} className="photo-input" type="file" accept="image/jpeg,image/png,image/webp" aria-label="앨범에서 알림장 사진 업로드" onChange={e => { selectCarePhoto(e.currentTarget.files?.[0], 'ALBUM'); e.currentTarget.value = '' }} /><button className="primary-button" onClick={() => cameraInputRef.current?.click()}>사진 촬영</button><button className="outline-button" onClick={() => uploadInputRef.current?.click()}>사진 업로드</button></div>
+    <div className="capture-actions"><input ref={cameraInputRef} className="photo-input" type="file" accept="image/*" capture="environment" aria-label="카메라로 알림장 촬영" onChange={e => { void selectCarePhoto(e.currentTarget.files?.[0], 'CAMERA'); e.currentTarget.value = '' }} /><input ref={uploadInputRef} className="photo-input" type="file" accept="image/*" aria-label="앨범에서 알림장 사진 업로드" onChange={e => { void selectCarePhoto(e.currentTarget.files?.[0], 'ALBUM'); e.currentTarget.value = '' }} /><button className="primary-button" onClick={() => cameraInputRef.current?.click()}>사진 촬영</button><button className="outline-button" onClick={() => uploadInputRef.current?.click()}>사진 업로드</button></div>
     <div className="capture-frame">{capturePreview ? <img className="capture-preview" src={capturePreview} alt="선택한 알림장" /> : <span className="camera-glyph">▣</span>}<strong>{captureFile?.name || '선택된 사진이 없어요'}</strong><small>{captureFile ? '사진의 글씨를 읽고 일정 관련 내용만 AI가 추려요. 다음 화면에서 확인해주세요.' : '사진 없이 입력하면 수기로 등록돼요. 무료 OCR은 하루 2회 사용할 수 있어요.'}</small></div>
     <Section>아이 선택</Section><div className="choice-row">{boot.children.map(c => <button key={c.id} className={'choice-chip ' + (captureChild === c.id ? 'active' : '')} onClick={() => setCaptureChild(c.id)}>{c.name}</button>)}</div>
     <label className="form-label">직접 입력 (사진 없이 등록할 때)</label><textarea className="text-area" rows={5} value={captureText} onChange={e => setCaptureText(e.target.value)} placeholder={'예: 금요일 하원 시간이 15시로 변경\n준비물: 도시락, 모자'} /><p className="helper-text">OCR 한도나 사진 오류가 있으면 사진을 다시 선택해 해제하고 수기로 입력할 수 있어요.</p>{captureFile && <button className="text-link centered" onClick={() => { setCaptureFile(null); setCapturePreview('') }}>사진 선택 취소 · 수기 입력</button>}<button className="primary-button wide-button" disabled={captureBusy || !captureChild || (!captureFile && !captureText.trim())} onClick={capture}>{captureBusy ? '분석 중…' : captureFile ? '사진 분석하기' : '내용 정리하기'}</button>

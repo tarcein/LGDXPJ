@@ -319,6 +319,13 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual([item["title"] for item in items], ["현장학습"])
         self.assertTrue(post.call_args.kwargs["json"]["text"]["format"]["strict"])
 
+    def test_image_ocr_rejects_polite_no_text_marker(self):
+        payload = {"output": [{"content": [{"type": "output_text", "text": "빈 글자 없음입니다."}]}]}
+        with patch("app.ai._post", return_value=payload), self.assertRaises(HTTPException) as caught:
+            ai.extract_image_text(b"image", "image/jpeg")
+        self.assertEqual(caught.exception.status_code, 422)
+        self.assertEqual(caught.exception.detail["code"], "OCR_NO_TEXT")
+
     def test_weekly_recurrence_uses_korea_weekday_for_utc_input(self):
         occurrences = recurring_occurrences(
             datetime.fromisoformat("2026-09-13T15:00:00+00:00"),
