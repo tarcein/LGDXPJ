@@ -147,9 +147,9 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const fallbackMessages: Record<number, string> = {
       413: '업로드 파일 용량이 너무 커요.',
       500: '서버에서 요청을 처리하지 못했어요. 잠시 후 다시 시도해주세요.',
-      502: 'AI 서비스 연결이 원활하지 않아요. 잠시 후 다시 시도해주세요.',
-      503: 'AI 서비스를 잠시 사용할 수 없어요. 잠시 후 다시 시도해주세요.',
-      504: 'AI 응답이 늦어지고 있어요. 잠시 후 다시 시도해주세요.',
+      502: '서버 연결이 원활하지 않아요. 잠시 후 다시 시도해주세요.',
+      503: '서비스를 잠시 사용할 수 없어요. 잠시 후 다시 시도해주세요.',
+      504: '서버 응답이 늦어지고 있어요. 잠시 후 다시 시도해주세요.',
     }
     let message = fallbackMessages[response.status] ?? `요청에 실패했어요 (${response.status})`
     let code: string | undefined

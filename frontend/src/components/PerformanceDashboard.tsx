@@ -140,8 +140,8 @@ export function PerformanceDashboard() {
 
     {error && <div className="performance-error"><strong>개발자 지표를 불러오지 못했어요</strong><span>{error}</span></div>}
     <div className="performance-overview">
-      <article><span>누적 이벤트</span><strong>{totalEvents.toLocaleString()}</strong><small>선택 기간 내</small></article>
-      <article><span>측정 지표</span><strong>{summary ? Object.values(summary.trackers).flat().length : 0}</strong><small>BX · CX · DX</small></article>
+      <article><span>누적 이벤트</span><strong>{summary ? totalEvents.toLocaleString() : '—'}</strong><small>선택 기간 내</small></article>
+      <article><span>측정 지표</span><strong>{summary ? Object.values(summary.trackers).flat().length : '—'}</strong><small>BX · CX · DX</small></article>
       <article><span>마지막 갱신</span><strong>{updatedAt}</strong><small>{autoRefresh ? '5초 자동 갱신' : '자동 갱신 중지'}</small></article>
     </div>
 
