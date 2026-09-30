@@ -348,7 +348,8 @@ def schedule_detail(category: str, starts_at: str, ends_at: str, has_end_time: b
     return detail + (f" · {location_name}" if location_name.strip() else "")
 
 
-def flag_schedule_collisions(db, schedule_title: str, collisions: list[dict]) -> None:
+def flag_schedule_collisions(db, schedule_member_id: str, schedule_title: str, collisions: list[dict]) -> None:
+    family_owner_id = owner_id(db)
     for collision in {item["assignment_id"]: item for item in collisions}.values():
         record_event(
             db, "conflict_detected", target_family_id=family_id(),
@@ -361,9 +362,13 @@ def flag_schedule_collisions(db, schedule_title: str, collisions: list[dict]) ->
             (collision["assignment_id"],),
         )
         db.execute("UPDATE care_item SET status = 'CONFIRMED' WHERE id = ?", (collision["item_id"],))
-        notify(db, owner_id(db), "일정 충돌 감지",
+        notify(db, schedule_member_id, "일정 충돌 감지",
                f"{schedule_title} 일정과 {collision['title']} 배정이 겹칩니다. 새 담당자를 선택해주세요.",
                "IMPORTANT", "CARE_SUGGESTION", collision["item_id"])
+        if family_owner_id != schedule_member_id:
+            notify(db, family_owner_id, "일정 충돌 감지",
+                   f"다른 돌봄자에게 겹치는 개인 일정이 있어 {collision['title']} 담당자를 다시 선택해야 해요.",
+                   "IMPORTANT", "CARE_SUGGESTION", collision["item_id"])
         pending = db.execute(
             "SELECT id FROM care_exception WHERE assignment_id = ? AND status = 'PENDING'",
             (collision["assignment_id"],),
@@ -379,7 +384,7 @@ def flag_schedule_collisions(db, schedule_title: str, collisions: list[dict]) ->
                    (id, family_id, assignment_id, reason, alternative_member_id, status, created_at)
                    VALUES (?, ?, ?, ?, ?, 'PENDING', ?)""",
                 (str(uuid4()), family_id(), collision["assignment_id"],
-                 f"{schedule_title} 일정과 {collision['title']} 돌봄이 겹쳐요.",
+                 f"다른 돌봄자에게 겹치는 개인 일정이 있어 {collision['title']} 담당자를 조정해야 해요.",
                  alternative["member_id"], now()),
             )
 
@@ -808,7 +813,7 @@ def create_schedule(payload: ScheduleCreate):
                             "recurring": bool(recurrence_id)},
             )
             collisions.extend(find_schedule_collisions(db, payload.member_id, starts_at, ends_at))
-        flag_schedule_collisions(db, payload.title, collisions)
+        flag_schedule_collisions(db, payload.member_id, payload.title, collisions)
         return {"schedule": created[0], "schedules": created, "scheduled_count": len(created), "collisions": collisions}
 
 
@@ -840,7 +845,7 @@ def update_schedule(schedule_id: str, payload: ScheduleUpdate):
                 (payload.title, starts_at, ends_at, int(has_end_time), payload.kind, target["id"], family_id()),
             )
             collisions.extend(find_schedule_collisions(db, schedule["member_id"], starts_at, ends_at))
-        flag_schedule_collisions(db, payload.title, collisions)
+        flag_schedule_collisions(db, schedule["member_id"], payload.title, collisions)
         return {"schedule": one(db, "SELECT * FROM personal_schedule WHERE id = ?", (schedule_id,)),
                 "collisions": collisions, "updated_count": len(targets),
                 "recurring_instance_only": bool(schedule.get("recurrence_id")) and payload.update_scope == "SINGLE"}

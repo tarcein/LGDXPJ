@@ -92,7 +92,14 @@ class CareFlowTest(unittest.TestCase):
         self.assertTrue(any(notice["level"] == "IMPORTANT" for notice in snapshot["notifications"]))
         self.assertEqual(len(snapshot["exceptions"]), 1)
         self.assertEqual(snapshot["exceptions"][0]["assignment_id"], "assignment-pickup")
-        self.assertIn("병원 방문", snapshot["exceptions"][0]["reason"])
+        self.assertNotIn("병원 방문", snapshot["exceptions"][0]["reason"])
+        self.assertIn("다른 돌봄자", snapshot["exceptions"][0]["reason"])
+        with database() as db:
+            notices = {row["member_id"]: row["body"] for row in db.execute(
+                "SELECT member_id, body FROM notification WHERE title = '일정 충돌 감지'"
+            ).fetchall()}
+        self.assertIn("병원 방문", notices["grandma"])
+        self.assertNotIn("병원 방문", notices["mom"])
 
 
 class EmptyDatabaseOnboardingTest(unittest.TestCase):

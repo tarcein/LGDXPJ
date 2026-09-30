@@ -54,13 +54,14 @@ export async function setupNativeNotifications(onAction?: (action: NativeNoticeA
     await localActionListenerSetup
   }
 
-  // FCM is opt-in until google-services.json and a sending server are configured.
-  if (import.meta.env.VITE_FCM_ENABLED === 'true') {
+  // Android loads the deployed web bundle too: a missing web-build flag must not
+  // disable FCM in an APK that already includes the native Firebase configuration.
+  if (isAndroidApp() || import.meta.env.VITE_FCM_ENABLED === 'true') {
     try {
       if (!pushListenerSetup) {
         pushListenerSetup = Promise.all([
           PushNotifications.addListener('registration', token => {
-            console.error('[FCM registration token]', token.value)
+            console.info('[FCM] device registered')
             localStorage.setItem(pushTokenKey, token.value)
             void syncPushToken()
           }),
@@ -68,32 +69,35 @@ export async function setupNativeNotifications(onAction?: (action: NativeNoticeA
             console.error('[FCM registration error]', error)
           }),
           PushNotifications.addListener('pushNotificationActionPerformed', event => {
-          const data = event.notification.data ?? {}
-          nativeActionHandler?.({
-            actionType: data.action_type ?? data.actionType,
-            actionId: data.action_id ?? data.actionId,
-          })
+            const data = event.notification.data ?? {}
+            nativeActionHandler?.({
+              actionType: data.action_type ?? data.actionType,
+              actionId: data.action_id ?? data.actionId,
+            })
           }),
-          PushNotifications.addListener('pushNotificationReceived', event => {
-          const data = event.notification.data ?? {}
-          void showNativeNotice(
-            `fcm-${Date.now()}`,
-            event.notification.title ?? '가족 돌봄 알림',
-            event.notification.body ?? '',
-            data.action_type ?? data.actionType,
-            data.action_id ?? data.actionId,
-          )
+          PushNotifications.addListener('pushNotificationReceived', notification => {
+            // Unlike the tap event, the receive event IS the notification.
+            const data = notification.data ?? {}
+            void showNativeNotice(
+              `fcm-${notification.id}`,
+              notification.title ?? '가족 돌봄 알림',
+              notification.body ?? '',
+              data.action_type ?? data.actionType,
+              data.action_id ?? data.actionId,
+            ).catch(error => console.warn('Foreground notification display failed.', error))
           }),
         ]).then(() => undefined)
       }
       await pushListenerSetup
       const pushPermission = await PushNotifications.requestPermissions()
-      if (pushPermission.receive === 'granted') await PushNotifications.register()
+      if (pushPermission.receive !== 'granted') return false
+      await PushNotifications.register()
     } catch (error) {
       console.warn('FCM registration failed.', error)
+      return false
     }
   }
-  return true
+  return localPermission.display === 'granted'
 }
 
 export async function syncPushToken() {
@@ -104,6 +108,7 @@ export async function syncPushToken() {
     await api('/push-tokens', { method: 'POST', body: JSON.stringify({ token, platform }) })
     return true
   } catch {
+    console.warn('FCM token registration could not be saved to the server.')
     return false
   }
 }

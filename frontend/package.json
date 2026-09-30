@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test:ios-webkit": "node scripts/ios-webkit-check.mjs"
+    "test:ios-webkit": "node scripts/ios-webkit-check.mjs",
+    "test:native-notifications": "node --test scripts/native-notifications-check.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",
