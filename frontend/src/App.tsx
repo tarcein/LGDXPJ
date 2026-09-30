@@ -5,6 +5,7 @@ import { Browser } from '@capacitor/browser'
 import { Capacitor } from '@capacitor/core'
 import { api, send, upload, setFamilyToken, hasFamilyToken, trackPerformanceEvent, ApiError, formatDate, formatTime, type Assignment, type Bootstrap, type CareItem, type Child, type Screen, type Suggestion, type FamilyMe, type FamilySession, type ChatAnswer, type EmergencyRequest, type CalendarConnection, type Notice, type Handoff, type AlbumPhoto, type Benefit, type BenefitLocation, type CareInstitution, type EligibilityCriteria, type BillingConfig, type BillingOrder, type ChatCard, type DeviceAlertsResponse, type DeviceAlertTestResult } from './api'
 import { conflictingSchedules } from './scheduleConflicts'
+import { careTimeState } from './careTimeline'
 import { beep, speak, speechMessageFor, speechVolumeFor } from './deviceAlertShared'
 import voiceIcon from '../../asset/assistant-main-logo-centered.png'
 import googleIcon from '../../asset/google.png'
@@ -1330,7 +1331,7 @@ function App() {
     if (!Number.isFinite(startsAt)) return false
     const careDate = new Date(careItem.starts_at).toLocaleDateString('sv-SE')
     if (careDate !== new Date(timelineNow).toLocaleDateString('sv-SE')) return false
-    return timelineNow >= startsAt
+    return careTimeState(careItem.starts_at, timelineNow) === 'active'
   }
   const caregiverForCareItem = (careItemId: string) => {
     const assignment = confirmedAssignmentForItem(careItemId)
@@ -1581,19 +1582,20 @@ function App() {
   const careRouteAssignment = (careItemId: string) => assignments.find(a => a.item_id === careItemId && a.status === 'COMPLETED')
     ?? assignments.find(a => a.item_id === careItemId && a.status === 'ACCEPTED')
     ?? assignments.find(a => a.item_id === careItemId)
-  const routeStatus = (careItem?: CareItem): 'done' | 'active' | 'future' => {
+  const routeStatus = (careItem?: CareItem): 'done' | 'active' | 'future' | 'elapsed' => {
     if (!careItem) return 'future'
     const assignment = careRouteAssignment(careItem.id)
     if (careItem.status === 'DONE' || assignment?.status === 'COMPLETED') return 'done'
-    const startsAt = careItem.starts_at ? new Date(careItem.starts_at).getTime() : Number.NaN
-    if (careItem.external_assignee_name?.trim() && careItem.starts_at && dateKey(careItem.starts_at) === todayKey && Number.isFinite(startsAt) && timelineNow >= startsAt) return 'active'
+    const timeState = careTimeState(careItem.starts_at, timelineNow)
+    if (timeState === 'elapsed') return 'elapsed'
+    if (careItem.external_assignee_name?.trim() && careItem.starts_at && dateKey(careItem.starts_at) === todayKey && timeState === 'active') return 'active'
     return isLiveAssignment(assignment) ? 'active' : 'future'
   }
   const careRouteSteps = [
     ...(boot?.child_schedules ?? []).filter(schedule => schedule.child_id === careRouteChildId && dateKey(schedule.starts_at) === careRouteDate).map(schedule => {
       const scheduleCareItems = visibleCareItems.filter(item => item.child_schedule_id === schedule.id)
       const statuses = scheduleCareItems.map(routeStatus)
-      const status = statuses.includes('active') ? 'active' : statuses.length && statuses.every(value => value === 'done') ? 'done' : 'future'
+      const status = statuses.includes('active') ? 'active' : statuses.length && statuses.every(value => value === 'done') ? 'done' : statuses.includes('elapsed') && !statuses.includes('future') ? 'elapsed' : 'future'
       return { id: `schedule-${schedule.id}`, label: schedule.title, startsAt: schedule.starts_at, status }
     }),
     ...visibleCareItems.filter(item => !item.child_schedule_id && item.child_id === careRouteChildId && item.starts_at && dateKey(item.starts_at) === careRouteDate && item.item_type !== 'SUPPLY').map(item => ({
@@ -1623,9 +1625,9 @@ function App() {
     }),
   ].sort((left, right) => left.time.localeCompare(right.time))
   const homeEvents = homeEventRows.map(event => {
-    const startsAt = new Date(event.time).getTime()
-    const active = !event.completed && event.hasConfirmedCaregiver && Number.isFinite(startsAt) && timelineNow >= startsAt
-    const elapsed = !event.completed && !active && Number.isFinite(startsAt) && timelineNow > startsAt
+    const timeState = careTimeState(event.time, timelineNow)
+    const active = !event.completed && event.hasConfirmedCaregiver && timeState === 'active'
+    const elapsed = !event.completed && timeState === 'elapsed'
     return { ...event, active, elapsed }
   })
   const visibleNotices = boot?.notifications.filter(notice => noticeScope === 'family' || !me?.member.id || !notice.member_id || notice.member_id === me.member.id) ?? []
