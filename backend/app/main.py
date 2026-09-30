@@ -46,10 +46,10 @@ def notify(db, member_id: str | None, title: str, body: str, level: str = "NORMA
     body = body[:200]
     if action_type and action_id and db.execute(
         """SELECT 1 FROM notification WHERE family_id = ?
-             AND ((member_id = ?) OR (member_id IS NULL AND ? IS NULL))
+             AND COALESCE(member_id, '') = COALESCE(?, '')
              AND title = ? AND body = ? AND level = ? AND action_type = ? AND action_id = ?
              AND is_read = 0 LIMIT 1""",
-        (target_family, member_id, member_id, title, body, level, action_type, action_id),
+        (target_family, member_id, title, body, level, action_type, action_id),
     ).fetchone():
         return
     notification_id = str(uuid4())
