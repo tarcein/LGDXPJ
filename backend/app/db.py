@@ -191,13 +191,15 @@ CREATE TABLE IF NOT EXISTS care_assignment (
   item_id TEXT NOT NULL REFERENCES care_item(id), assignee_id TEXT NOT NULL REFERENCES family_member(id),
   status TEXT NOT NULL DEFAULT 'PROPOSED', source TEXT NOT NULL,
   created_at TEXT NOT NULL, responded_at TEXT, completed_at TEXT, note TEXT NOT NULL DEFAULT '',
-  requested_by_member_id TEXT REFERENCES family_member(id), reminder_sent_at TEXT
+  requested_by_member_id TEXT REFERENCES family_member(id), reminder_sent_at TEXT,
+  conflict_previous_status TEXT
 );
 CREATE TABLE IF NOT EXISTS care_exception (
   id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
   assignment_id TEXT NOT NULL REFERENCES care_assignment(id),
   reason TEXT NOT NULL, alternative_member_id TEXT NOT NULL REFERENCES family_member(id),
-  status TEXT NOT NULL DEFAULT 'PENDING', created_at TEXT NOT NULL
+  status TEXT NOT NULL DEFAULT 'PENDING', created_at TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'MANUAL'
 );
 CREATE TABLE IF NOT EXISTS care_handoff (
   id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES family_group(id),
@@ -359,6 +361,11 @@ def initialize() -> None:
             # This session lock survives the commits below and is released on close.
             db.execute("SELECT pg_advisory_lock(?)", (914_202_609,))
             db.commit()
+        legacy_conflicts = (
+            db.execute("""SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'care_exception' AND column_name = 'source'""").fetchone() is None
+            if postgres else "source" not in {row[1] for row in db.execute("PRAGMA table_info(care_exception)")}
+        )
         db.executescript(SCHEMA)
         if postgres:
             db.commit()
@@ -395,6 +402,8 @@ def initialize() -> None:
                 ("notification_preference", "device_enabled", "INTEGER NOT NULL DEFAULT 0"),
                 ("care_assignment", "requested_by_member_id", "TEXT REFERENCES family_member(id)"),
                 ("care_assignment", "reminder_sent_at", "TEXT"),
+                ("care_assignment", "conflict_previous_status", "TEXT"),
+                ("care_exception", "source", "TEXT NOT NULL DEFAULT 'MANUAL'"),
                 ("calendar_oauth_state", "return_url", "TEXT"),
                 ("media_asset", "storage_path", "TEXT"),
                 ("media_asset", "date_folder", "TEXT"),
@@ -424,7 +433,8 @@ def initialize() -> None:
                 ("care_item", (("child_schedule_id", "TEXT REFERENCES child_schedule(id)"), ("boundary_type", "TEXT"), ("external_assignee_name", "TEXT NOT NULL DEFAULT ''"))),
                 ("notification", (("action_type", "TEXT"), ("action_id", "TEXT"))),
                 ("notification_preference", (("device_enabled", "INTEGER NOT NULL DEFAULT 0"),)),
-                ("care_assignment", (("requested_by_member_id", "TEXT REFERENCES family_member(id)"), ("reminder_sent_at", "TEXT"))),
+                ("care_assignment", (("requested_by_member_id", "TEXT REFERENCES family_member(id)"), ("reminder_sent_at", "TEXT"), ("conflict_previous_status", "TEXT"))),
+                ("care_exception", (("source", "TEXT NOT NULL DEFAULT 'MANUAL'"),)),
                 ("calendar_oauth_state", (("return_url", "TEXT"),)),
                 ("media_asset", (("storage_path", "TEXT"), ("date_folder", "TEXT"))),
                 ("assistant_message", (("cards", "TEXT NOT NULL DEFAULT '[]'"),)),
@@ -438,6 +448,20 @@ def initialize() -> None:
                 for name, definition in additions:
                     if name not in columns:
                         db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+        # Recover automatic conflicts created before their origin was recorded.
+        if legacy_conflicts:
+            db.execute("""UPDATE care_exception SET source = 'SCHEDULE_CONFLICT'
+            WHERE source = 'MANUAL' AND EXISTS (
+                SELECT 1 FROM care_assignment a JOIN care_item i ON i.id = a.item_id
+                WHERE a.id = care_exception.assignment_id AND care_exception.reason IN (
+                    '본인의 개인 일정과 겹쳐 ' || i.title || ' 담당자를 조정해야 해요.',
+                    '다른 돌봄자에게 겹치는 개인 일정이 있어 ' || i.title || ' 담당자를 조정해야 해요.'))""")
+            db.execute("""UPDATE care_assignment SET conflict_previous_status = 'ACCEPTED'
+            WHERE status = 'RECONFIRMATION_REQUIRED' AND conflict_previous_status IS NULL""")
+            db.execute("""UPDATE care_assignment SET conflict_previous_status = 'UNKNOWN'
+            WHERE status = 'CANCELED' AND conflict_previous_status IS NULL AND EXISTS (
+                SELECT 1 FROM care_exception e WHERE e.assignment_id = care_assignment.id
+                AND e.source = 'SCHEDULE_CONFLICT' AND e.status = 'PENDING')""")
         # Existing schedule-linked care items predate explicit start/end boundary
         # metadata. Backfill it once so later same-place merging can remove only
         # the internal pickup/drop-off point without disturbing the outer points.

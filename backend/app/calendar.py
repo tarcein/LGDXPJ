@@ -220,7 +220,7 @@ def _date_time(value: dict, *, end: bool = False) -> str:
 
 @router.post("/{provider}/sync")
 def sync(provider: str):
-    from .main import flag_schedule_collisions
+    from .main import flag_schedule_collisions, resolve_schedule_collisions
     from .services import find_schedule_collisions
 
     provider = _provider(provider)
@@ -268,6 +268,7 @@ def sync(provider: str):
         for _, title, starts_at, ends_at in events:
             collisions = find_schedule_collisions(db, member_id(), starts_at, ends_at)
             flag_schedule_collisions(db, member_id(), title, collisions)
+        resolve_schedule_collisions(db, family_id(), member_id())
         timestamp = _now().isoformat()
         db.execute("UPDATE calendar_connection SET synced_at = ? WHERE family_id = ? AND member_id = ? AND provider = ?",
                    (timestamp, family_id(), member_id(), provider))
@@ -276,10 +277,13 @@ def sync(provider: str):
 
 @router.post("/{provider}/disconnect")
 def disconnect(provider: str):
+    from .main import resolve_schedule_collisions
+
     provider = _provider(provider)
     with database() as db:
         db.execute("DELETE FROM personal_schedule WHERE family_id = ? AND member_id = ? AND external_source = ?",
                    (family_id(), member_id(), provider))
         db.execute("DELETE FROM calendar_connection WHERE family_id = ? AND member_id = ? AND provider = ?",
                    (family_id(), member_id(), provider))
+        resolve_schedule_collisions(db, family_id(), member_id())
     return {"provider": provider, "connected": False}

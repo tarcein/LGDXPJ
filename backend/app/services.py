@@ -130,7 +130,7 @@ def classify_lines(raw_content: str, reference: datetime | None = None) -> list[
     return split_checklist_items(result)
 
 
-def is_busy(db: Any, member_id: str, starts_at: str | None) -> bool:
+def is_busy(db: Any, member_id: str, starts_at: str | None, *, buffer_minutes: int = 0) -> bool:
     if not starts_at:
         return False
     try:
@@ -143,7 +143,7 @@ def is_busy(db: Any, member_id: str, starts_at: str | None) -> bool:
     for schedule in schedules:
         start = datetime.fromisoformat(schedule["starts_at"])
         end = datetime.fromisoformat(schedule["ends_at"])
-        if start <= care_time < end:
+        if start <= care_time < end + timedelta(minutes=buffer_minutes):
             return True
     return False
 

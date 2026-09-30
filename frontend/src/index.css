@@ -332,6 +332,13 @@ input[type="datetime-local"]::-webkit-date-and-time-value { min-width: 0; margin
 .exception-card strong, .handoff-card strong { display: block; }
 .exception-card .small-badge { margin: 10px 0; }
 .exception-card button { display: block; width: 100%; }
+.exception-schedules { display: grid; gap: 8px; margin: 12px 0; }
+.exception-schedule { display: grid; gap: 4px; padding: 12px; border-radius: 10px; background: #f0f2f6; overflow-wrap: anywhere; }
+.exception-schedule.personal { background: #fff3f3; }
+.exception-schedule > span { font-size: 11px; color: #727784; }
+.exception-schedule > b { font-size: 14px; }
+.exception-schedule > small { font-size: 12px; line-height: 1.5; color: #555d69; }
+.exception-schedule > em { font-size: 11px; font-style: normal; line-height: 1.5; color: #a43e48; }
 .handoff-avatars { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .handoff-avatars span:nth-child(odd) { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: #e9e3fb; font-size: 11px; }
 .handoff-voice-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; margin: 8px 0; }

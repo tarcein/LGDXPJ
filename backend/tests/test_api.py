@@ -109,7 +109,7 @@ class CareFlowTest(unittest.TestCase):
     def test_outlook_sync_flags_care_collision_once_and_allows_alternative_request(self):
         self._check_calendar_sync_collision("microsoft")
 
-    def _check_calendar_sync_collision(self, provider):
+    def _check_calendar_sync_collision(self, provider, *, approve=True):
         from datetime import timezone
         from unittest.mock import patch
 
@@ -154,14 +154,101 @@ class CareFlowTest(unittest.TestCase):
         exception = snapshot["exceptions"][0]
         self.assertEqual(exception["assignment_id"], original["id"])
         self.assertEqual(exception["status"], "PENDING")
+        self.assertIn("본인의 개인 일정과 겹쳐", exception["reason"])
+        self.assertNotIn("다른 돌봄자", exception["reason"])
         self.assertNotEqual(exception["alternative_member_id"], "grandma")
         notices = [n for n in snapshot["notifications"] if n["title"] == "일정 충돌 감지"]
         self.assertEqual(len(notices), 1)
         self.assertIn("친구 약속", notices[0]["body"])
+        if not approve:
+            return headers, exception, care_time
         approved = self.client.post(f"/api/exceptions/{exception['id']}/approve", headers=headers)
         self.assertEqual(approved.status_code, 200, approved.text)
         self.assertEqual(approved.json()["assignment"]["status"], "PROPOSED")
         self.assertEqual(approved.json()["assignment"]["assignee_id"], exception["alternative_member_id"])
+        return headers, approved.json(), care_time
+
+    def test_disconnect_resolves_conflict_restores_care_and_removes_warning(self):
+        headers, exception, _ = self._check_calendar_sync_collision("google", approve=False)
+        for _ in range(2):
+            response = self.client.post('/api/calendar-connections/google/disconnect', headers=headers)
+            self.assertEqual(response.status_code, 200, response.text)
+        snapshot = self.client.get('/api/bootstrap', headers=headers).json()
+        self.assertEqual(next(e for e in snapshot['exceptions'] if e['id'] == exception['id'])['status'], 'RESOLVED')
+        self.assertEqual(next(a for a in snapshot['assignments'] if a['id'] == 'assignment-pickup')['status'], 'ACCEPTED')
+        self.assertEqual(next(i for i in snapshot['items'] if i['id'] == 'pickup')['status'], 'ASSIGNED')
+        self.assertFalse(any(s.get('external_source') == 'google' for s in snapshot['schedules']))
+        with database() as db:
+            self.assertIsNone(db.execute("SELECT 1 FROM notification WHERE title = '일정 충돌 감지'").fetchone())
+
+    def test_disconnect_keeps_remaining_schedule_conflict_until_deleted(self):
+        headers, exception, care_time = self._check_calendar_sync_collision('google', approve=False)
+        # Even the existing 30-minute travel buffer must keep the warning active.
+        schedule = self.client.post('/api/schedules', headers=headers, json={
+            'member_id': 'grandma', 'title': '남아 있는 개인 일정',
+            'starts_at': (care_time - timedelta(hours=1)).isoformat(),
+            'ends_at': (care_time - timedelta(minutes=15)).isoformat(),
+        }).json()['schedule']
+        self.client.post('/api/calendar-connections/google/disconnect', headers=headers)
+        snapshot = self.client.get('/api/bootstrap', headers=headers).json()
+        self.assertEqual(next(e for e in snapshot['exceptions'] if e['id'] == exception['id'])['status'], 'PENDING')
+        self.assertEqual(next(a for a in snapshot['assignments'] if a['id'] == 'assignment-pickup')['status'], 'RECONFIRMATION_REQUIRED')
+        removed = self.client.delete('/api/schedules/' + schedule['id'], headers=headers)
+        self.assertEqual(removed.status_code, 200, removed.text)
+        snapshot = self.client.get('/api/bootstrap', headers=headers).json()
+        self.assertEqual(next(e for e in snapshot['exceptions'] if e['id'] == exception['id'])['status'], 'RESOLVED')
+        self.assertEqual(next(a for a in snapshot['assignments'] if a['id'] == 'assignment-pickup')['status'], 'ACCEPTED')
+
+    def test_disconnect_preserves_approved_reassignment(self):
+        headers, approved, _ = self._check_calendar_sync_collision('google')
+        response = self.client.post('/api/calendar-connections/google/disconnect', headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        snapshot = self.client.get('/api/bootstrap', headers=headers).json()
+        self.assertEqual(next(e for e in snapshot['exceptions'] if e['id'] == approved['exception']['id'])['status'], 'APPROVED')
+        self.assertEqual(next(a for a in snapshot['assignments'] if a['id'] == 'assignment-pickup')['status'], 'CANCELED')
+        self.assertEqual(next(a for a in snapshot['assignments'] if a['id'] == approved['assignment']['id'])['status'], 'PROPOSED')
+
+    def test_disconnect_preserves_manual_exception(self):
+        headers, automatic, _ = self._check_calendar_sync_collision('google', approve=False)
+        response = self.client.post('/api/exceptions', headers=headers, json={
+            'assignment_id': 'assignment-pickup', 'alternative_member_id': 'mom', 'reason': '개인 사정으로 변경 요청',
+        })
+        self.assertEqual(response.status_code, 201, response.text)
+        manual = response.json()
+        self.client.post('/api/calendar-connections/google/disconnect', headers=headers)
+        snapshot = self.client.get('/api/bootstrap', headers=headers).json()
+        self.assertEqual(next(e for e in snapshot['exceptions'] if e['id'] == automatic['id'])['status'], 'RESOLVED')
+        self.assertEqual(next(e for e in snapshot['exceptions'] if e['id'] == manual['id'])['status'], 'PENDING')
+
+    def test_sync_removing_google_events_resolves_existing_conflict(self):
+        from unittest.mock import patch
+        import httpx
+
+        headers, exception, _ = self._check_calendar_sync_collision('google', approve=False)
+        empty = httpx.Response(200, request=httpx.Request('GET', 'https://calendar.example/events'), json={'items': []})
+        with patch('app.calendar._refresh', return_value='test-access'), patch('app.calendar.httpx.get', return_value=empty):
+            result = self.client.post('/api/calendar-connections/google/sync', headers=headers)
+        self.assertEqual(result.status_code, 200, result.text)
+        snapshot = self.client.get('/api/bootstrap', headers=headers).json()
+        self.assertEqual(next(e for e in snapshot['exceptions'] if e['id'] == exception['id'])['status'], 'RESOLVED')
+        self.assertEqual(next(a for a in snapshot['assignments'] if a['id'] == 'assignment-pickup')['status'], 'ACCEPTED')
+
+    def test_startup_resolves_legacy_conflict_after_calendar_already_disconnected(self):
+        from app.db import initialize
+        from app.main import resolve_schedule_collisions
+
+        headers, exception, _ = self._check_calendar_sync_collision('google', approve=False)
+        with database() as db:
+            db.execute("DELETE FROM personal_schedule WHERE member_id = 'grandma'")
+            db.execute("UPDATE care_exception SET reason = '다른 돌봄자에게 겹치는 개인 일정이 있어 ' || (SELECT title FROM care_item WHERE id = 'pickup') || ' 담당자를 조정해야 해요.' WHERE id = ?", (exception['id'],))
+            db.execute('ALTER TABLE care_exception DROP COLUMN source')
+            db.execute('ALTER TABLE care_assignment DROP COLUMN conflict_previous_status')
+        initialize()
+        with database() as db:
+            resolve_schedule_collisions(db, 'demo-family', 'grandma')
+        snapshot = self.client.get('/api/bootstrap', headers=headers).json()
+        self.assertEqual(next(e for e in snapshot['exceptions'] if e['id'] == exception['id'])['status'], 'RESOLVED')
+        self.assertEqual(next(a for a in snapshot['assignments'] if a['id'] == 'assignment-pickup')['status'], 'ACCEPTED')
 
     def test_existing_exception_reason_is_only_returned_to_original_caregiver(self):
         original_reason = '회식 일정과 발레 돌봄이 겹쳐요.'
@@ -172,6 +259,10 @@ class CareFlowTest(unittest.TestCase):
                 (id, family_id, assignment_id, reason, alternative_member_id, status, created_at)
                 VALUES ('legacy-conflict', 'demo-family', 'assignment-pickup', ?, 'mom', 'PENDING', ?)""",
                 (original_reason, datetime.now().isoformat()))
+            db.execute("""INSERT INTO care_exception
+                (id, family_id, assignment_id, reason, alternative_member_id, status, created_at)
+                VALUES ('legacy-generic', 'demo-family', 'assignment-pickup', ?, 'mom', 'PENDING', ?)""",
+                ('다른 돌봄자에게 겹치는 개인 일정이 있어 발레 하원 담당자를 조정해야 해요.', datetime.now().isoformat()))
         for member, token in tokens.items():
             with self.subTest(member=member):
                 headers = {'Authorization': 'Bearer ' + token}
@@ -180,8 +271,12 @@ class CareFlowTest(unittest.TestCase):
                 reason = next(e['reason'] for e in result.json()['exceptions'] if e['id'] == 'legacy-conflict')
                 self.assertEqual(reason, original_reason if member == 'grandma'
                                  else '다른 돌봄자의 일정 조정이 필요해요.')
+                generic_reason = next(e['reason'] for e in result.json()['exceptions'] if e['id'] == 'legacy-generic')
+                self.assertEqual(generic_reason, '본인의 개인 일정과 겹쳐 발레 하원 담당자를 조정해야 해요.'
+                                 if member == 'grandma' else '다른 돌봄자의 일정 조정이 필요해요.')
                 shared = self.client.get('/api/bootstrap?tv=true', headers=headers).json()
                 self.assertNotIn('회식', str(shared['exceptions']))
+                self.assertNotIn('본인의', str(shared['exceptions']))
 
 
     def test_other_family_member_can_claim_pending_request_once(self):

@@ -22,7 +22,7 @@ from .config import setting
 from .family import authenticated, family_id, member_id as current_member_id, owner_id, require_owner, resolve_bearer, reset_context, router as family_router, set_context
 from .media import image_mime as _child_image_mime, media_root as _child_media_root, read_file as _read_child_file
 from .performance import record_event
-from .services import clean_intake_title, classify_lines, find_schedule_collisions, rank_members, split_checklist_items
+from .services import clean_intake_title, classify_lines, find_schedule_collisions, is_busy, rank_members, split_checklist_items
 
 def now() -> str:
     return datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
@@ -128,6 +128,9 @@ def _delete_child_photo_file(storage_path: str | None) -> None:
 async def lifespan(_app: FastAPI):
     initialize()
     open_pool()
+    with database() as db:
+        for member in rows(db, "SELECT DISTINCT family_id, assignee_id FROM care_assignment WHERE conflict_previous_status IS NOT NULL"):
+            resolve_schedule_collisions(db, member["family_id"], member["assignee_id"])
     renewal_task = None
     reminder_task = None
     if setting("LGDX_BILLING_RENEWAL_WORKER", "1").lower() in {"1", "true", "yes", "on"}:
@@ -357,7 +360,8 @@ def flag_schedule_collisions(db, schedule_member_id: str, schedule_title: str, c
             properties={"assignment_id": collision["assignment_id"]},
         )
         db.execute(
-            """UPDATE care_assignment SET status = CASE WHEN status = 'ACCEPTED'
+            """UPDATE care_assignment SET conflict_previous_status = status,
+               status = CASE WHEN status = 'ACCEPTED'
                THEN 'RECONFIRMATION_REQUIRED' ELSE 'CANCELED' END WHERE id = ?""",
             (collision["assignment_id"],),
         )
@@ -381,12 +385,48 @@ def flag_schedule_collisions(db, schedule_member_id: str, schedule_title: str, c
         if not pending and alternative:
             db.execute(
                 """INSERT INTO care_exception
-                   (id, family_id, assignment_id, reason, alternative_member_id, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, 'PENDING', ?)""",
+                   (id, family_id, assignment_id, reason, alternative_member_id, status, created_at, source)
+                   VALUES (?, ?, ?, ?, ?, 'PENDING', ?, 'SCHEDULE_CONFLICT')""",
                 (str(uuid4()), family_id(), collision["assignment_id"],
-                 f"다른 돌봄자에게 겹치는 개인 일정이 있어 {collision['title']} 담당자를 조정해야 해요.",
+                 f"본인의 개인 일정과 겹쳐 {collision['title']} 담당자를 조정해야 해요.",
                  alternative["member_id"], now()),
             )
+
+
+def resolve_schedule_collisions(db, target_family: str, schedule_member_id: str) -> None:
+    """Close automatic conflicts once all remaining personal schedules allow care."""
+    assignments = rows(db, """SELECT id, item_id FROM care_assignment
+        WHERE family_id = ? AND assignee_id = ? AND conflict_previous_status IS NOT NULL""",
+        (target_family, schedule_member_id))
+    for assignment in assignments:
+        db.execute("UPDATE care_item SET status = status WHERE id = ?", (assignment["item_id"],))
+        assignment = one(db, "SELECT * FROM care_assignment WHERE id = ?", (assignment["id"],))
+        item = one(db, "SELECT * FROM care_item WHERE id = ?", (assignment["item_id"],))
+        if not assignment["conflict_previous_status"] or is_busy(db, schedule_member_id, item["starts_at"], buffer_minutes=30):
+            continue
+        db.execute("""UPDATE care_exception SET status = 'RESOLVED'
+            WHERE assignment_id = ? AND source = 'SCHEDULE_CONFLICT' AND status = 'PENDING'""",
+            (assignment["id"],))
+        previous = assignment["conflict_previous_status"]
+        expected = "RECONFIRMATION_REQUIRED" if previous == "ACCEPTED" else "CANCELED"
+        if (previous in {"ACCEPTED", "PROPOSED", "CANDIDATE_ACCEPTED"}
+                and assignment["status"] == expected and item["status"] == "CONFIRMED"
+                and not db.execute("""SELECT 1 FROM care_exception WHERE assignment_id = ?
+                    AND status IN ('PENDING', 'APPROVED')""", (assignment["id"],)).fetchone()
+                and not db.execute("""SELECT 1 FROM care_assignment WHERE item_id = ? AND id != ?
+                    AND status IN ('PROPOSED', 'CANDIDATE_ACCEPTED', 'ACCEPTED', 'RECONFIRMATION_REQUIRED', 'COMPLETED')""",
+                    (item["id"], assignment["id"])).fetchone()):
+            db.execute("UPDATE care_assignment SET status = ? WHERE id = ?", (previous, assignment["id"]))
+            if previous == "ACCEPTED":
+                db.execute("UPDATE care_item SET status = 'ASSIGNED' WHERE id = ?", (item["id"],))
+        db.execute("UPDATE care_assignment SET conflict_previous_status = NULL WHERE id = ?", (assignment["id"],))
+        # Keep another caregiver's warning for the same item, if any.
+        remaining = db.execute("""SELECT 1 FROM care_assignment WHERE item_id = ?
+            AND conflict_previous_status IS NOT NULL""", (item["id"],)).fetchone()
+        db.execute("""DELETE FROM notification WHERE family_id = ? AND title = '일정 충돌 감지'
+            AND action_type = 'CARE_SUGGESTION' AND action_id = ?"""
+            + (" AND member_id = ?" if remaining else ""),
+            (target_family, item["id"], schedule_member_id) if remaining else (target_family, item["id"]))
 
 
 class IntakeCreate(BaseModel):
@@ -553,7 +593,8 @@ def bootstrap(tv: bool = False):
             "items": rows(db, "SELECT * FROM care_item WHERE family_id = ? ORDER BY starts_at, created_at", (family_id(),)),
             "assignments": rows(db, "SELECT * FROM care_assignment WHERE family_id = ? ORDER BY created_at", (family_id(),)),
             "exceptions": rows(db, """SELECT e.id, e.family_id, e.assignment_id,
-                CASE WHEN a.assignee_id = ? AND ? = 0 THEN e.reason
+                CASE WHEN a.assignee_id = ? AND ? = 0
+                     THEN REPLACE(e.reason, '다른 돌봄자에게 겹치는 개인 일정이 있어 ', '본인의 개인 일정과 겹쳐 ')
                      ELSE '다른 돌봄자의 일정 조정이 필요해요.' END AS reason,
                 e.alternative_member_id, e.status, e.created_at
                 FROM care_exception e
@@ -853,6 +894,7 @@ def update_schedule(schedule_id: str, payload: ScheduleUpdate):
             )
             collisions.extend(find_schedule_collisions(db, schedule["member_id"], starts_at, ends_at))
         flag_schedule_collisions(db, schedule["member_id"], payload.title, collisions)
+        resolve_schedule_collisions(db, family_id(), schedule["member_id"])
         return {"schedule": one(db, "SELECT * FROM personal_schedule WHERE id = ?", (schedule_id,)),
                 "collisions": collisions, "updated_count": len(targets),
                 "recurring_instance_only": bool(schedule.get("recurrence_id")) and payload.update_scope == "SINGLE"}
@@ -878,6 +920,7 @@ def delete_schedule(schedule_id: str, delete_scope: str = "SINGLE"):
                 raise HTTPException(409, "연동된 일정은 Google 또는 Outlook에서 삭제해주세요")
         for target in targets:
             db.execute("DELETE FROM personal_schedule WHERE id = ? AND family_id = ?", (target["id"], family_id()))
+        resolve_schedule_collisions(db, family_id(), schedule["member_id"])
         return {"deleted": True, "schedule_id": schedule_id,
                 "deleted_count": len(targets),
                 "recurring_instance_only": bool(schedule.get("recurrence_id")) and delete_scope == "SINGLE"}
@@ -1850,7 +1893,9 @@ def create_exception(payload: ExceptionCreate):
             raise HTTPException(422, "본인은 대체 담당자로 요청할 수 없습니다")
         exception_id = str(uuid4())
         db.execute(
-            "INSERT INTO care_exception VALUES (?, ?, ?, ?, ?, 'PENDING', ?)",
+            """INSERT INTO care_exception
+               (id, family_id, assignment_id, reason, alternative_member_id, status, created_at)
+               VALUES (?, ?, ?, ?, ?, 'PENDING', ?)""",
             (exception_id, family_id(), payload.assignment_id, payload.reason, payload.alternative_member_id, now()),
         )
         record_event(
