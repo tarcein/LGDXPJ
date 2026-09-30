@@ -64,7 +64,7 @@ function TvDisplay() {
       }, next.key)
     }
     if (startedRef.current) playAlertSound(next)
-    const timeout = next.tier === 4 ? 30_000 : next.tier === 3 ? 25_000 : next.tier === 2 ? 12_000 : 5_000
+    const timeout = next.tier >= 3 ? 15_000 : next.tier === 2 ? 12_000 : 5_000
     window.setTimeout(() => {
       if (activeAlertKey.current === next.key) {
         dismissedAlertKeys.current.add(next.key)
