@@ -64,6 +64,7 @@ const mockApi = async (route, track = true) => {
   else if (path === '/api/families/me') body = { family: bootstrap.family, member: members[0], authenticated: true }
   else if (path === '/api/bootstrap') body = bootstrap
   else if (path === '/api/assistant/history') body = { messages: [] }
+  else if (path === '/api/calendar-connections') body = { connections: [] }
   else if (path === '/api/assistant/chat') body = {
     message: request.postDataJSON().message, answer: '아이폰 입력 테스트 답변', cards: [], links: [],
     schedule_changes: [], schedule_creations: [], schedule_deletions: [], care_item_creations: [],
@@ -78,6 +79,12 @@ const mockApi = async (route, track = true) => {
 }
 
 await page.addInitScript(() => {
+  window.__iosQaTimelineTicks = 0
+  const originalSetInterval = window.setInterval.bind(window)
+  window.setInterval = (callback, delay, ...args) => originalSetInterval(() => {
+    if (delay === 30_000) window.__iosQaTimelineTicks += 1
+    callback(...args)
+  }, delay)
   localStorage.setItem('family-care-access-token', 'ios-qa-token')
   localStorage.setItem('family-care-last-screen', 'chat')
   sessionStorage.setItem('__iosQaLoads', String(Number(sessionStorage.getItem('__iosQaLoads') ?? 0) + 1))
@@ -108,6 +115,7 @@ try {
 
   const initialBootstrapCalls = requests.get('/api/bootstrap') ?? 0
   await page.waitForTimeout(31_000)
+  if (await page.evaluate(() => window.__iosQaTimelineTicks)) throw new Error('채팅 중 불필요한 타임라인 갱신 발생')
   const pollCalls = requests.get('/api/notifications') ?? 0
   if (pollCalls < 2) {
     const browserState = await page.evaluate(() => ({ visibility: document.visibilityState, online: navigator.onLine }))
@@ -127,6 +135,51 @@ try {
   await input.press('Enter')
   await page.getByText('아이폰 입력 테스트 답변').waitFor()
   if (await input.inputValue()) throw new Error('채팅 전송 뒤 입력창이 초기화되지 않음')
+
+  // Exercise the actual schedule forms, including saving without a blur event.
+  const scheduleTyping = []
+  for (const mode of ['personal', 'child', 'routine']) {
+    const formPage = await context.newPage()
+    formPage.on('pageerror', error => pageErrors.push(error.message))
+    formPage.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()) })
+    await formPage.route('**/api/**', route => mockApi(route, false))
+    await formPage.route(/\/api\/(child-schedules|schedules)$/, async route => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        collisions: [], care_item_id: null, care_item_ids: [], assigned_count: 0, suggestions: [],
+      }) })
+    })
+    await formPage.goto(`${baseUrl}/?screen=schedule`, { waitUntil: 'networkidle' })
+    await formPage.getByRole('button', { name: '등록 메뉴 열기' }).click()
+    if (mode === 'routine') {
+      await formPage.getByRole('button', { name: '루틴 설정하기 반복되는 일정을 등록해주세요' }).click()
+    } else {
+      await formPage.getByRole('button', { name: '일정 등록하기 새롭게 추가된 일정을 등록해주세요' }).click()
+      await formPage.getByRole('button', { name: mode === 'child' ? '아이 학원·학교·방과후 일정' : '본인 운동·업무·개인 일정' }).click()
+    }
+    const title = formPage.locator(mode === 'routine' ? '.routine-name input' : '.single-title input')
+    const text = '아이폰 일정 등록 한글 입력 테스트'
+    const startedAt = performance.now()
+    await title.pressSequentially(text)
+    const perCharacter = (performance.now() - startedAt) / text.length
+    scheduleTyping.push({ mode, millisecondsPerCharacter: Number(perCharacter.toFixed(2)) })
+    if (await title.inputValue() !== text) throw new Error(`${mode}: 일정 이름 입력 누락`)
+    if (mode !== 'personal') {
+      await formPage.getByRole('combobox', { name: '아이 일정 위치', exact: true }).selectOption('__new__')
+      await formPage.getByRole('textbox', { name: '새 아이 일정 위치' }).fill('테스트 교실')
+    }
+    if (mode === 'routine') {
+      await formPage.locator('.routine-boundary-assignee select').first().selectOption('__EXTERNAL__')
+      await formPage.locator('.routine-boundary-assignee input').fill('테스트 기사님')
+    }
+    const save = formPage.getByRole('button', { name: mode === 'routine' ? '고정 루틴 일괄 등록' : '이 일정 등록', exact: true })
+    const requestPromise = formPage.waitForRequest(request => request.method() === 'POST' && /\/api\/(child-schedules|schedules)$/.test(new URL(request.url()).pathname))
+    await save.evaluate(button => button.click())
+    const payload = (await requestPromise).postDataJSON()
+    if (payload.title !== text) throw new Error(`${mode}: 저장 시 일정 이름 누락`)
+    if (mode !== 'personal' && payload.location_name !== '테스트 교실') throw new Error(`${mode}: 저장 시 위치 누락`)
+    if (mode === 'routine' && payload.start_external_assignee_name !== '테스트 기사님') throw new Error('외부 담당자 이름 누락')
+    await formPage.close()
+  }
 
   const serviceWorkerContext = await browser.newContext({ ...devices['iPhone 13'], serviceWorkers: 'allow' })
   const serviceWorkerPage = await serviceWorkerContext.newPage()
@@ -153,6 +206,7 @@ try {
   console.log(JSON.stringify({
     result: 'PASS', engine: 'Playwright WebKit', device: 'iPhone 13', dataRows: schedules.length + childSchedules.length + items.length + assignments.length + notifications.length,
     typingMillisecondsPerCharacter: Number(millisecondsPerCharacter.toFixed(2)), notificationPolls: pollCalls,
+    scheduleTyping,
     bootstrapCalls: requests.get('/api/bootstrap') ?? 0, pageLoads: loads, serviceWorker,
   }, null, 2))
 } finally {

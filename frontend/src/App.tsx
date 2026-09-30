@@ -94,7 +94,7 @@ const ChatComposer = forwardRef<HTMLInputElement, {
     if (!voiceConfirming && input instanceof HTMLInputElement) onSubmit(input.value)
   }}>
     <button className={recording ? 'chat-mic recording' : 'chat-mic'} type="button" aria-label={recording ? '음성 인식 끝내기' : busy ? '음성 인식 중…' : '음성 인식'} disabled={busy || voiceConfirming} onClick={onRecord}><img src={chatMicIcon} alt="" /></button>
-    <label><input ref={ref} name="question" aria-label="케어 어시스턴트에게 질문" defaultValue={value} onBlur={event => onBlur(event.currentTarget.value)} placeholder="일정이나 숙제를 말해보세요" /><button type="submit" aria-label="질문 보내기" disabled={busy || voiceConfirming}><img src={chatSendIcon} alt="" /></button></label>
+    <label><input ref={ref} name="question" aria-label="케어 어시스턴트에게 질문" defaultValue={value} autoCorrect="off" autoCapitalize="off" spellCheck={false} onBlur={event => onBlur(event.currentTarget.value)} placeholder="일정이나 숙제를 말해보세요" /><button type="submit" aria-label="질문 보내기" disabled={busy || voiceConfirming}><img src={chatSendIcon} alt="" /></button></label>
   </form>
 })
 
@@ -383,6 +383,10 @@ function App() {
   const [editHomeworkTitle, setEditHomeworkTitle] = useState('')
   const [editHomeworkDate, setEditHomeworkDate] = useState('')
   const [scheduleTitle, setScheduleTitle] = useState('')
+  const scheduleTitleInputRef = useRef<HTMLInputElement>(null)
+  const scheduleLocationInputRef = useRef<HTMLInputElement>(null)
+  const scheduleStartNameInputRef = useRef<HTMLInputElement>(null)
+  const scheduleEndNameInputRef = useRef<HTMLInputElement>(null)
   const [scheduleMember, setScheduleMember] = useState('mom')
   const [scheduleKind, setScheduleKind] = useState<'WORK' | 'ROUTINE'>('ROUTINE')
   const [scheduleDate, setScheduleDate] = useState(() => new Date().toLocaleDateString('sv-SE'))
@@ -766,9 +770,12 @@ function App() {
   }, [screen, activeFamilyId, boot?.family.plan, benefitKeyword])
   useEffect(() => { if (toast) { const timer = setTimeout(() => setToast(''), 3200); return () => clearTimeout(timer) } }, [toast])
   useEffect(() => {
+    // The chat has no live timeline; do not rerender it for the clock.
+    if (screen === 'chat') return
+    setTimelineNow(Date.now())
     const timer = window.setInterval(() => setTimelineNow(Date.now()), 30_000)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [screen])
   useEffect(() => {
     if (!deviceAlertTestResult) return
     const timer = setTimeout(() => setDeviceAlertTestResult(null), 4200)
@@ -1649,9 +1656,10 @@ function App() {
   ]
   const calendarMonthEvents = useMemo(() => {
     const map: Record<string, ReturnType<typeof calendarEventsFor>> = {}
+    if (screen !== 'schedule') return map
     calendarDays.forEach(day => { map[dateKey(day)] = calendarEventsFor(dateKey(day)) })
     return map
-  }, [boot, scheduleScope, calendarMonth])
+  }, [boot, scheduleScope, calendarMonth, screen])
   const scheduleStartMinutes = normalizeClock(scheduleStartTime).split(':').reduce((total, value, index) => total + Number(value) * (index ? 1 : 60), 0)
   const scheduleEndMinutes = scheduleEndTime.trim() ? normalizeClock(scheduleEndTime).split(':').reduce((total, value, index) => total + Number(value) * (index ? 1 : 60), 0) : scheduleStartMinutes + 1
   const schedulePreviewCollision = calendarEventsFor(scheduleDate).find(event => {
@@ -1954,7 +1962,15 @@ function App() {
     }
     return dates
   }
+  // Read the DOM at save time as a tap need not blur an input on every browser.
+  const readScheduleText = () => ({
+    scheduleTitle: scheduleTitleInputRef.current?.value ?? scheduleTitle,
+    childScheduleLocation: scheduleLocationInputRef.current?.value ?? childScheduleLocation,
+    routineStartExternalName: scheduleStartNameInputRef.current?.value ?? routineStartExternalName,
+    routineEndExternalName: scheduleEndNameInputRef.current?.value ?? routineEndExternalName,
+  })
   const saveSchedule = (updateScope?: 'SINGLE' | 'FUTURE', mergeSameLocation?: boolean) => {
+    const { scheduleTitle, childScheduleLocation, routineStartExternalName, routineEndExternalName } = readScheduleText()
     const editingRecord = editingSchedule?.type === 'CHILD'
       ? boot?.child_schedules.find(item => item.id === editingSchedule.id)
       : boot?.schedules.find(item => item.id === editingSchedule?.id)
@@ -1995,7 +2011,7 @@ function App() {
     if (scheduleForm === 'CHILD' && !childScheduleLocation.trim()) throw new Error('아이 일정의 위치를 선택하거나 새로 입력해주세요')
     if (scheduleForm === 'CHILD' && routineStartAssignee === '__EXTERNAL__' && !routineStartExternalName.trim()) throw new Error('등원 외부 담당자의 이름을 입력해주세요')
     if (scheduleForm === 'CHILD' && scheduleEnd && routineEndAssignee === '__EXTERNAL__' && !routineEndExternalName.trim()) throw new Error('하원 외부 담당자의 이름을 입력해주세요')
-    const homeSchedule = scheduleForm === 'CHILD' && isHomeScheduleLocation()
+    const homeSchedule = scheduleForm === 'CHILD' && isHomeScheduleLocation(childScheduleLocation)
     const responsibility = {
       start_assignment_required: !homeSchedule && routineStartAssignee !== '__NONE__',
       start_assignee_id: !homeSchedule && routineStartAssignee && !routineStartAssignee.startsWith('__') ? routineStartAssignee : null,
@@ -2396,7 +2412,7 @@ function App() {
       if (event.target.value === '__new__') { setAddingChildScheduleLocation(true); setChildScheduleLocation('') }
       else { setAddingChildScheduleLocation(false); setChildScheduleLocation(event.target.value) }
     }}><option value="">위치를 선택해주세요</option>{scheduleLocationOptions.map(location => <option key={location} value={location}>{location}</option>)}<option value="__new__">＋ 새 위치 추가</option></select></label>
-    {addingChildScheduleLocation && <input aria-label="새 아이 일정 위치" value={childScheduleLocation} maxLength={100} onChange={event => setChildScheduleLocation(event.target.value)} placeholder="예: 한빛초등학교, 별빛유치원" />}
+    {addingChildScheduleLocation && <input aria-label="새 아이 일정 위치" ref={scheduleLocationInputRef} defaultValue={childScheduleLocation} maxLength={100} onBlur={event => setChildScheduleLocation(event.currentTarget.value)} placeholder="예: 한빛초등학교, 별빛유치원" />}
     <small>{isHomeScheduleLocation() ? '집에서 하는 일정은 돌봄 담당자를 배정하지 않아요.' : '같은 위치 이름을 선택하면 이어지는 일정의 중간 픽업을 자동으로 정리해요.'}</small>
   </div>
   const routineResponsibilityControl = (
@@ -2416,7 +2432,7 @@ function App() {
       {members.map(person => <option key={person.id} value={person.id}>{person.name}{person.id === me?.member.id ? ' (나)' : ''}</option>)}
       <option value="__EXTERNAL__">가족방에 없는 담당자</option>
     </select>
-    {selection === '__EXTERNAL__' && <input value={externalName} maxLength={100} onChange={event => setExternalName(event.target.value)} placeholder="예: 태권도 학원 차량, 이웃 김선생님" />}
+    {selection === '__EXTERNAL__' && <input ref={boundary === 'START' ? scheduleStartNameInputRef : scheduleEndNameInputRef} defaultValue={externalName} maxLength={100} onBlur={event => setExternalName(event.currentTarget.value)} placeholder="예: 태권도 학원 차량, 이웃 김선생님" />}
   </label>
 
   let page: ReactNode = <div className="loading">가족의 하루를 불러오고 있어요</div>
@@ -2956,7 +2972,7 @@ function App() {
       <div className="single-schedule-scroll">
         <div className="single-schedule-context">{scheduleForm === 'CHILD' ? <><label><span>대상</span><select value={childScheduleChild} onChange={event => setChildScheduleChild(event.target.value)}>{boot.children.map(childItem => <option key={childItem.id} value={childItem.id}>{childItem.name}</option>)}</select></label><label><span>종류</span><select value={childScheduleCategory} onChange={event => setChildScheduleCategory(event.target.value)}><option value="ACADEMY">학원</option><option value="AFTER_SCHOOL">방과후</option><option value="SCHOOL">학교</option><option value="ACTIVITY">활동</option><option value="OTHER">기타</option></select></label></> : <label><span>종류</span><select value={scheduleKind} onChange={event => setScheduleKind(event.target.value as 'WORK' | 'ROUTINE')}><option value="ROUTINE">개인 일정</option><option value="WORK">업무 일정</option></select></label>}</div>
         <div className="single-schedule-card">
-          <label className="single-title"><span>내용</span><input value={scheduleTitle} onChange={event => setScheduleTitle(event.target.value)} placeholder={scheduleForm === 'CHILD' ? '예: 현장학습, 치과 진료' : '예: 팀 워크숍'} /></label>
+          <label className="single-title"><span>내용</span><input ref={scheduleTitleInputRef} defaultValue={scheduleTitle} onBlur={event => setScheduleTitle(event.currentTarget.value)} placeholder={scheduleForm === 'CHILD' ? '예: 현장학습, 치과 진료' : '예: 팀 워크숍'} /></label>
           {scheduleForm === 'CHILD' && childLocationControl('single-location')}
           <label className="single-date"><span>날짜</span><input aria-label="일정 날짜" type="date" value={scheduleDate} onChange={event => setScheduleDate(event.target.value)} /></label>
           <div className="single-time direct-time"><label><span>시작</span><input aria-label="일정 시작 시간" type="time" step="60" value={scheduleStartTime} onChange={event => setScheduleStartTime(event.target.value)} /></label><label><span>종료</span><input aria-label="일정 종료 시간" type="time" step="60" value={scheduleEndTime} onChange={event => setScheduleEndTime(event.target.value)} /></label></div>
@@ -2969,7 +2985,7 @@ function App() {
     {scheduleSheet === 'FORM' && boot && !editingSchedule && scheduleEntryMode === 'REPEAT' && <div className="routine-screen-overlay"><section className="routine-screen" role="dialog" aria-modal="true" aria-label="루틴 등록" data-figma-node="557:1551">
       <header className="routine-header"><button className="routine-back" aria-label="이전 화면으로 돌아가기" onClick={() => { setScheduleSheet('NONE'); if (scheduleReturnToWeekly) setWeeklyTimetableOpen(true) }}>‹ 이전</button><strong>루틴 등록</strong><span aria-hidden="true" /></header>
       <div className="routine-form-card">
-        <label className="routine-name"><span>루틴 이름</span><input value={scheduleTitle} onChange={event => setScheduleTitle(event.target.value)} placeholder={scheduleForm === 'CHILD' ? '예: 태권도, 방과후 미술' : '예: 헬스, 오전 회의'} /></label>
+        <label className="routine-name"><span>루틴 이름</span><input ref={scheduleTitleInputRef} defaultValue={scheduleTitle} onBlur={event => setScheduleTitle(event.currentTarget.value)} placeholder={scheduleForm === 'CHILD' ? '예: 태권도, 방과후 미술' : '예: 헬스, 오전 회의'} /></label>
         <fieldset className="routine-target"><legend>대상 자녀</legend><div><button className={scheduleForm === 'PERSONAL' ? 'active' : ''} onClick={() => setScheduleForm('PERSONAL')}>본인</button>{boot.children.map(childItem => <button key={childItem.id} className={scheduleForm === 'CHILD' && childScheduleChild === childItem.id ? 'active' : ''} onClick={() => { setScheduleForm('CHILD'); setChildScheduleChild(childItem.id) }}>{childItem.name}</button>)}</div></fieldset>
         {scheduleForm === 'CHILD' && childLocationControl('routine-location')}
         <fieldset className="routine-repeat"><legend>반복 주기</legend><div className="routine-repeat-tabs"><button className={scheduleRepeatMode === 'WEEKLY' ? 'active' : ''} onClick={() => { setScheduleRepeat(true); setScheduleRepeatMode('WEEKLY') }}>요일</button><button className={scheduleRepeatMode === 'INTERVAL' ? 'active' : ''} onClick={() => { setScheduleRepeat(true); setScheduleRepeatMode('INTERVAL') }}>N일마다</button><button className={scheduleRepeatMode === 'MONTHLY' ? 'active' : ''} onClick={() => { setScheduleRepeat(true); setScheduleRepeatMode('MONTHLY') }}>월간</button><button className={scheduleRepeatMode === 'DATES' ? 'active' : ''} onClick={() => { setScheduleRepeat(true); setScheduleRepeatMode('DATES') }}>특정일</button></div>
@@ -2985,7 +3001,7 @@ function App() {
         <button className="routine-save" aria-label={scheduleRepeat ? '고정 루틴 일괄 등록' : '이 일정 등록'} onClick={() => saveSchedule()}>저장하기</button>
       </div>
     </section></div>}
-    {scheduleSheet === 'FORM' && boot && editingSchedule && <BottomSheet className="schedule-form-sheet" onDismiss={closeScheduleEdit}><h2>{scheduleForm === 'CHILD' ? '아이 일정 수정' : '내 일정 수정'}</h2><p className="schedule-edit-help">반복 일정은 저장할 때 이번 일정만 바꿀지 이후 일정도 함께 바꿀지 선택할 수 있어요.</p>{scheduleForm === 'CHILD' ? <><label className="form-label">아이 이름 (필수)</label><select className="form-control" value={childScheduleChild} onChange={event => setChildScheduleChild(event.target.value)}>{boot.children.map(childItem => <option key={childItem.id} value={childItem.id}>{childItem.name}</option>)}</select>{childLocationControl('edit-location')}</> : <><label className="form-label">일정 종류</label><select className="form-control" value={scheduleKind} onChange={event => setScheduleKind(event.target.value as 'WORK' | 'ROUTINE')}><option value="ROUTINE">개인 루틴·운동</option><option value="WORK">업무 일정</option></select></>}<label className="form-label">일정 이름</label><input className="form-control" value={scheduleTitle} onChange={event => setScheduleTitle(event.target.value)} placeholder={scheduleForm === 'CHILD' ? '예: 태권도, 방과후 미술' : '예: 헬스, 오전 회의'} /><ScheduleTimeFields date={scheduleDate} start={scheduleStartTime} end={scheduleEndTime} onDate={setScheduleDate} onStart={setScheduleStartTime} onEnd={setScheduleEndTime} />{scheduleForm === 'CHILD' && (isHomeScheduleLocation() ? <Card className="home-no-assignee"><strong>집 일정은 담당자 배정이 필요 없어요</strong><small>저장하면 기존 등·하원 배정도 함께 해제됩니다.</small></Card> : <div className="routine-responsibility edit-responsibility"><strong>돌봄 담당자</strong><small>등원·하원별로 가족 또는 외부 담당자를 설정하세요.</small><div>{routineResponsibilityControl('START', routineStartAssignee, setRoutineStartAssignee, routineStartExternalName, setRoutineStartExternalName)}{routineResponsibilityControl('END', routineEndAssignee, setRoutineEndAssignee, routineEndExternalName, setRoutineEndExternalName)}</div></div>)}<button className="primary-button wide-button" onClick={() => saveSchedule()}>수정 내용 저장</button><button className="schedule-delete-button wide-button" onClick={() => deleteSchedule()}>이 일정 삭제</button><button className="text-link centered" onClick={closeScheduleEdit}>이전</button></BottomSheet>}
+    {scheduleSheet === 'FORM' && boot && editingSchedule && <BottomSheet className="schedule-form-sheet" onDismiss={closeScheduleEdit}><h2>{scheduleForm === 'CHILD' ? '아이 일정 수정' : '내 일정 수정'}</h2><p className="schedule-edit-help">반복 일정은 저장할 때 이번 일정만 바꿀지 이후 일정도 함께 바꿀지 선택할 수 있어요.</p>{scheduleForm === 'CHILD' ? <><label className="form-label">아이 이름 (필수)</label><select className="form-control" value={childScheduleChild} onChange={event => setChildScheduleChild(event.target.value)}>{boot.children.map(childItem => <option key={childItem.id} value={childItem.id}>{childItem.name}</option>)}</select>{childLocationControl('edit-location')}</> : <><label className="form-label">일정 종류</label><select className="form-control" value={scheduleKind} onChange={event => setScheduleKind(event.target.value as 'WORK' | 'ROUTINE')}><option value="ROUTINE">개인 루틴·운동</option><option value="WORK">업무 일정</option></select></>}<label className="form-label">일정 이름</label><input className="form-control" ref={scheduleTitleInputRef} defaultValue={scheduleTitle} onBlur={event => setScheduleTitle(event.currentTarget.value)} placeholder={scheduleForm === 'CHILD' ? '예: 태권도, 방과후 미술' : '예: 헬스, 오전 회의'} /><ScheduleTimeFields date={scheduleDate} start={scheduleStartTime} end={scheduleEndTime} onDate={setScheduleDate} onStart={setScheduleStartTime} onEnd={setScheduleEndTime} />{scheduleForm === 'CHILD' && (isHomeScheduleLocation() ? <Card className="home-no-assignee"><strong>집 일정은 담당자 배정이 필요 없어요</strong><small>저장하면 기존 등·하원 배정도 함께 해제됩니다.</small></Card> : <div className="routine-responsibility edit-responsibility"><strong>돌봄 담당자</strong><small>등원·하원별로 가족 또는 외부 담당자를 설정하세요.</small><div>{routineResponsibilityControl('START', routineStartAssignee, setRoutineStartAssignee, routineStartExternalName, setRoutineStartExternalName)}{routineResponsibilityControl('END', routineEndAssignee, setRoutineEndAssignee, routineEndExternalName, setRoutineEndExternalName)}</div></div>)}<button className="primary-button wide-button" onClick={() => saveSchedule()}>수정 내용 저장</button><button className="schedule-delete-button wide-button" onClick={() => deleteSchedule()}>이 일정 삭제</button><button className="text-link centered" onClick={closeScheduleEdit}>이전</button></BottomSheet>}
     {weeklyTimetableOpen && boot && <div className="weekly-overlay" onClick={() => setWeeklyTimetableOpen(false)}><section className="weekly-timetable" role="dialog" aria-modal="true" aria-label="주간 시간표" onClick={event => event.stopPropagation()}>
       <header><button onClick={() => setWeeklyTimetableOpen(false)}>‹</button><strong>주간 시간표</strong><button onClick={() => setToast('주간 시간표 설정을 저장했어요')}>저장</button></header>
       <div className="weekly-child-tabs">{boot.children.map(childItem => <button key={childItem.id} className={activeWeeklyChild === childItem.id ? 'active' : ''} onClick={() => setWeeklyTimetableChild(childItem.id)}>{childItem.name}</button>)}</div>
