@@ -103,6 +103,66 @@ class CareFlowTest(unittest.TestCase):
         self.assertNotIn("병원 방문", notices["mom"])
 
 
+    def test_google_sync_flags_care_collision_once_and_allows_alternative_request(self):
+        self._check_calendar_sync_collision("google")
+
+    def test_outlook_sync_flags_care_collision_once_and_allows_alternative_request(self):
+        self._check_calendar_sync_collision("microsoft")
+
+    def _check_calendar_sync_collision(self, provider):
+        from datetime import timezone
+        from unittest.mock import patch
+
+        import httpx
+
+        pickup = next(item for item in self.client.get("/api/bootstrap").json()["items"] if item["id"] == "pickup")
+        care_time = datetime.fromisoformat(pickup["starts_at"])
+        with database() as db:
+            token = _new_session(db, "demo-family", "grandma")
+            db.execute("""INSERT INTO calendar_connection
+                (family_id, member_id, provider, access_token, connected_at)
+                VALUES ('demo-family', 'grandma', ?, 'test-access', ?)""", (provider, care_time.isoformat()))
+        headers = {"Authorization": "Bearer " + token}
+        events = [{
+            "id": "friends", "summary": "친구 약속",
+            "start": {"dateTime": care_time.astimezone(timezone.utc).isoformat()},
+            "end": {"dateTime": (care_time + timedelta(hours=1)).astimezone(timezone.utc).isoformat()},
+        }, {
+            "id": "overlapping", "summary": "겹치는 두 번째 약속",
+            "start": {"dateTime": care_time.isoformat()},
+            "end": {"dateTime": (care_time + timedelta(hours=2)).isoformat()},
+        }]
+        if provider == "microsoft":
+            for event in events:
+                event["subject"] = event.pop("summary")
+                for boundary in ("start", "end"):
+                    value = datetime.fromisoformat(event[boundary]["dateTime"]).astimezone(timezone.utc)
+                    event[boundary] = {"dateTime": value.replace(tzinfo=None).isoformat(), "timeZone": "UTC"}
+        response = httpx.Response(200, request=httpx.Request("GET", "https://calendar.example/events"),
+                                  json={"items" if provider == "google" else "value": events})
+        with patch("app.calendar._refresh", return_value="test-access"), patch("app.calendar.httpx.get", return_value=response):
+            for _ in range(2):
+                synced = self.client.post(f"/api/calendar-connections/{provider}/sync", headers=headers)
+                self.assertEqual(synced.status_code, 200, synced.text)
+                self.assertEqual(synced.json()["imported"], 2)
+
+        snapshot = self.client.get("/api/bootstrap", headers=headers).json()
+        self.assertEqual(len([s for s in snapshot["schedules"] if s.get("external_source") == provider]), 2)
+        original = next(a for a in snapshot["assignments"] if a["id"] == "assignment-pickup")
+        self.assertEqual(original["status"], "RECONFIRMATION_REQUIRED")
+        self.assertEqual(len(snapshot["exceptions"]), 1)
+        exception = snapshot["exceptions"][0]
+        self.assertEqual(exception["assignment_id"], original["id"])
+        self.assertEqual(exception["status"], "PENDING")
+        self.assertNotEqual(exception["alternative_member_id"], "grandma")
+        notices = [n for n in snapshot["notifications"] if n["title"] == "일정 충돌 감지"]
+        self.assertEqual(len(notices), 1)
+        self.assertIn("친구 약속", notices[0]["body"])
+        approved = self.client.post(f"/api/exceptions/{exception['id']}/approve", headers=headers)
+        self.assertEqual(approved.status_code, 200, approved.text)
+        self.assertEqual(approved.json()["assignment"]["status"], "PROPOSED")
+        self.assertEqual(approved.json()["assignment"]["assignee_id"], exception["alternative_member_id"])
+
     def test_existing_exception_reason_is_only_returned_to_original_caregiver(self):
         original_reason = '회식 일정과 발레 돌봄이 겹쳐요.'
         with database() as db:
@@ -122,6 +182,55 @@ class CareFlowTest(unittest.TestCase):
                                  else '다른 돌봄자의 일정 조정이 필요해요.')
                 shared = self.client.get('/api/bootstrap?tv=true', headers=headers).json()
                 self.assertNotIn('회식', str(shared['exceptions']))
+
+
+    def test_other_family_member_can_claim_pending_request_once(self):
+        with database() as db:
+            token = _new_session(db, 'demo-family', 'mom')
+            db.execute("UPDATE care_assignment SET status = 'PROPOSED' WHERE id = 'assignment-pickup'")
+        headers = {'Authorization': 'Bearer ' + token}
+        url = '/api/assignments/assignment-pickup/respond'
+        self.assertEqual(self.client.post(url, headers=headers, json={'decision': 'REJECTED'}).status_code, 403)
+        response = self.client.post(url, headers=headers, json={'decision': 'ACCEPTED'})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['assignee_id'], 'mom')
+        self.assertEqual(response.json()['status'], 'ACCEPTED')
+        self.assertNotEqual(response.json()['id'], 'assignment-pickup')
+        self.assertEqual(self.client.post(url, headers=headers, json={'decision': 'ACCEPTED'}).status_code, 409)
+        with database() as db:
+            self.assertEqual(db.execute("SELECT status FROM care_assignment WHERE id = 'assignment-pickup'").fetchone()['status'], 'CANCELED')
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM care_assignment WHERE item_id = 'pickup' AND status = 'ACCEPTED'").fetchone()[0], 1)
+
+    def test_simultaneous_claims_only_confirm_one_caregiver(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        with database() as db:
+            tokens = [_new_session(db, 'demo-family', member) for member in ('mom', 'dad')]
+            db.execute("UPDATE care_assignment SET status = 'PROPOSED' WHERE id = 'assignment-pickup'")
+            db.execute("UPDATE care_item SET starts_at = '2030-10-01T15:00:00+09:00' WHERE id = 'pickup'")
+        barrier = Barrier(2)
+        def claim(token):
+            barrier.wait()
+            return self.client.post('/api/assignments/assignment-pickup/respond',
+                headers={'Authorization': 'Bearer ' + token}, json={'decision': 'ACCEPTED'}).status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(sorted(pool.map(claim, tokens)), [200, 409])
+
+    def test_claim_rejects_busy_member_and_other_family(self):
+        with database() as db:
+            token = _new_session(db, 'demo-family', 'mom')
+            db.execute("UPDATE care_assignment SET status = 'PROPOSED' WHERE id = 'assignment-pickup'")
+            db.execute("UPDATE care_item SET starts_at = '2030-10-01T15:00:00+09:00' WHERE id = 'pickup'")
+            db.execute("""INSERT INTO personal_schedule
+                (id, family_id, member_id, title, starts_at, ends_at)
+                VALUES ('busy-claim', 'demo-family', 'mom', '개인 일정',
+                        '2030-10-01T14:00:00+09:00', '2030-10-01T16:00:00+09:00')""")
+        url = '/api/assignments/assignment-pickup/respond'
+        self.assertEqual(self.client.post(url, headers={'Authorization': 'Bearer ' + token},
+            json={'decision': 'ACCEPTED'}).status_code, 409)
+        outsider = self.client.post('/api/families', json={'name': '다른 가족', 'owner_name': '외부인'}).json()
+        self.assertEqual(self.client.post(url, headers={'Authorization': 'Bearer ' + outsider['access_token']},
+            json={'decision': 'ACCEPTED'}).status_code, 404)
 
 
 class EmptyDatabaseOnboardingTest(unittest.TestCase):

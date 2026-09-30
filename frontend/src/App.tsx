@@ -2519,6 +2519,15 @@ function App() {
     const detailStatus = activeAssignment?.status === 'COMPLETED' ? '완료' : activeAssignment?.status === 'PROPOSED' ? (activeAssignment.assignee_id === me?.member.id ? '응답 필요' : '답변 대기 중') : activeAssignment?.status === 'CANDIDATE_ACCEPTED' ? '최종 확인 대기' : activeAssignment?.status === 'REJECTED' ? '거절됨' : activeAssignment?.status === 'CANCELED' ? '취소됨' : activeAssignment?.status === 'RECONFIRMATION_REQUIRED' ? '재배정 필요' : '담당 확정'
     page = <section className="assignment-detail-page"><div className="care-subscreen-title"><strong>{coordinating ? '역할 조율 현황' : '배정 상세'}</strong><button onClick={() => go('assignments')}>전체 배정 ›</button></div>{activeAssignment && detailItem ? <><Card className="assignment-detail-card"><div className="assignment-detail-head"><time>{formatTime(detailItem.starts_at) || '시간 미정'}</time><span className={'small-badge ' + (['PROPOSED', 'CANDIDATE_ACCEPTED'].includes(activeAssignment.status) ? 'pending' : ['REJECTED', 'CANCELED', 'RECONFIRMATION_REQUIRED'].includes(activeAssignment.status) ? 'danger' : 'ok')}>{detailStatus}</span></div><h2>{detailItem.title}</h2><dl><div><dt>아이</dt><dd>{child(detailItem.child_id)}</dd></div><div><dt>{coordinating ? '요청한 가족' : '담당'}</dt><dd>{member(activeAssignment.assignee_id)}</dd></div><div><dt>일정</dt><dd>{detailItem.starts_at ? `${formatDate(detailItem.starts_at)} ${formatTime(detailItem.starts_at)}` : '시간 미정'}</dd></div></dl>{activeAssignment.status === 'PROPOSED' && <p>{activeAssignment.assignee_id === me?.member.id ? '요청 내용을 확인하고 맡을 수 있는지 알려주세요.' : `${member(activeAssignment.assignee_id)}님의 답변을 기다리고 있어요.`}</p>}{activeAssignment.note && <div className="assignment-detail-note"><strong>특이사항</strong><span>{activeAssignment.note}</span></div>}</Card>{activeAssignment.status === 'PROPOSED' && activeAssignment.assignee_id === me?.member.id && <div className="task-actions assignment-detail-actions"><button className="primary-button" onClick={() => run(() => send('/assignments/' + activeAssignment.id + '/respond', 'POST', { decision: 'ACCEPTED' }), '배정을 수락했어요')}>맡을게요</button><button className="outline-button" onClick={() => run(() => send('/assignments/' + activeAssignment.id + '/respond', 'POST', { decision: 'REJECTED' }), '다른 담당자를 찾을게요')}>어려워요</button></div>}{activeAssignment.status === 'ACCEPTED' && activeAssignment.assignee_id === me?.member.id && <button className="primary-button wide-button" onClick={() => { setNote(''); setCompletionPhoto(null); setCompletionPreview(''); setShowSheet(true) }}>완료 체크</button>}</> : <Empty title="배정 정보를 찾을 수 없어요" text="역할 배정에서 확인할 항목을 다시 선택해주세요" />}</section>
   }
+  if (boot && screen === 'assignmentDetail' && me?.authenticated && activeAssignment?.status === 'PROPOSED'
+    && activeAssignment.assignee_id !== me.member.id
+    && !boot.assignments.some(assignment => assignment.item_id === activeAssignment.item_id && ['ACCEPTED', 'COMPLETED'].includes(assignment.status))) {
+    page = <>{page}<button className="primary-button wide-button" onClick={() => run(async () => {
+      const accepted = await send<Assignment>('/assignments/' + activeAssignment.id + '/respond', 'POST', { decision: 'ACCEPTED' })
+      setAssignmentId(accepted.id)
+      setViewer(accepted.assignee_id)
+    }, '내 담당으로 확정됐어요')}>제가 맡을게요</button><p className="hero-copy">가능한 가족이 먼저 수락하면 담당으로 확정돼요.</p></>
+  }
   if (boot && screen === 'suggestion') {
     const preferredMemberId = activeItem?.child_id ? localStorage.getItem(`family-care-pattern:${boot.family.id}:${activeItem.child_id}`) : ''
     const visibleSuggestions = suggestions.filter(s => s.member_id !== me?.member.id || s.available).sort((left, right) => left.member_id === preferredMemberId ? -1 : right.member_id === preferredMemberId ? 1 : left.priority - right.priority)
@@ -2657,7 +2666,8 @@ function App() {
         </div>
         <div className="care-role-list">
           {visibleCoordinatingRows.map(row => {
-            const primary = row.responses[0]
+            const primary = row.responses.find(response => response.status === 'PROPOSED' && response.assignee_id === me?.member.id)
+              ?? row.responses.find(response => response.status === 'PROPOSED') ?? row.responses[0]
             return <button className="care-role-card" key={row.item.id} onClick={() => { if (row.emergency) go('emergency'); else if (primary) { setAssignmentId(primary.id); setViewer(primary.assignee_id); go('assignmentDetail') } }}>
               <span className="care-role-card-top"><em className={row.emergency ? 'emergency' : 'schedule'}>{row.emergency ? '긴급 도움' : '일정 조율'}</em><small>{row.emergency ? '응답 대기 중' : `${row.responses.length}명에게 요청`}</small></span>
               <span className="care-role-card-title"><i style={{ background: childColor(row.item.child_id) + '26', color: childColor(row.item.child_id) }}>{child(row.item.child_id)}</i><strong>{row.item.title}</strong></span>

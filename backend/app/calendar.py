@@ -210,7 +210,8 @@ def _date_time(value: dict, *, end: bool = False) -> str:
         raw = value["dateTime"]
         if raw.endswith("Z"):
             raw = raw[:-1] + "+00:00"
-        return datetime.fromisoformat(raw).isoformat()
+        parsed = datetime.fromisoformat(raw)
+        return (parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)).isoformat()
     day = datetime.fromisoformat(value["date"]).replace(tzinfo=timezone.utc)
     if end:
         return day.isoformat()
@@ -219,6 +220,9 @@ def _date_time(value: dict, *, end: bool = False) -> str:
 
 @router.post("/{provider}/sync")
 def sync(provider: str):
+    from .main import flag_schedule_collisions
+    from .services import find_schedule_collisions
+
     provider = _provider(provider)
     with database() as db:
         row = db.execute("SELECT * FROM calendar_connection WHERE family_id = ? AND member_id = ? AND provider = ?",
@@ -243,13 +247,14 @@ def sync(provider: str):
             events = [(event.get("id"), event.get("summary") or "바쁨", _date_time(event["start"]), _date_time(event["end"], end=True))
                       for event in source if event.get("id") and event.get("start") and event.get("end") and event.get("status") != "cancelled"]
         else:
-            response = httpx.get("https://graph.microsoft.com/v1.0/me/calendarView", headers=headers,
+            response = httpx.get("https://graph.microsoft.com/v1.0/me/calendarView",
+                                 headers={**headers, "Prefer": 'outlook.timezone="UTC"'},
                                  params={"startDateTime": start.isoformat(), "endDateTime": end.isoformat(),
                                          "$select": "id,subject,start,end", "$top": 250}, timeout=30)
             response.raise_for_status()
             source = response.json().get("value", [])
             events = [(event.get("id"), event.get("subject") or "바쁨",
-                       event["start"]["dateTime"], event["end"]["dateTime"])
+                       _date_time(event["start"]), _date_time(event["end"], end=True))
                       for event in source if event.get("id") and event.get("start") and event.get("end")]
     except (httpx.HTTPError, ValueError, KeyError) as exc:
         raise HTTPException(502, detail={"code": "CALENDAR_SYNC_FAILED", "message": "캘린더 일정을 가져오지 못했습니다"}) from exc
@@ -260,6 +265,9 @@ def sync(provider: str):
             db.execute("""INSERT INTO personal_schedule(id, family_id, member_id, title, starts_at, ends_at,
                           kind, external_source, external_id) VALUES (?, ?, ?, ?, ?, ?, 'WORK', ?, ?)""",
                        (secrets.token_urlsafe(18), family_id(), member_id(), title, starts_at, ends_at, provider, external_id))
+        for _, title, starts_at, ends_at in events:
+            collisions = find_schedule_collisions(db, member_id(), starts_at, ends_at)
+            flag_schedule_collisions(db, member_id(), title, collisions)
         timestamp = _now().isoformat()
         db.execute("UPDATE calendar_connection SET synced_at = ? WHERE family_id = ? AND member_id = ? AND provider = ?",
                    (timestamp, family_id(), member_id(), provider))

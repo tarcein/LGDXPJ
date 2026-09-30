@@ -1579,6 +1579,8 @@ def _propagate_routine_assignment(db, item: dict, assignee_id: str, requested_by
 @app.post("/api/assignments", status_code=201)
 def create_assignment(payload: AssignmentCreate):
     with database() as db:
+        # Serialize competing confirmations on the shared care item (SQLite/Postgres).
+        db.execute("UPDATE care_item SET status = status WHERE id = ? AND family_id = ?", (payload.item_id, family_id()))
         item = one(db, "SELECT * FROM care_item WHERE id = ? AND family_id = ?", (payload.item_id, family_id()))
         if item["status"] == "NEEDS_REVIEW":
             raise HTTPException(409, "미확인 항목은 배정할 수 없습니다")
@@ -1613,6 +1615,10 @@ def create_assignment(payload: AssignmentCreate):
                         "self_assignment": self_assignment},
         )
         if self_assignment:
+            db.execute("""UPDATE care_assignment SET status = 'CANCELED'
+                WHERE item_id = ? AND id <> ?
+                AND status IN ('PROPOSED', 'CANDIDATE_ACCEPTED', 'RECONFIRMATION_REQUIRED')""",
+                (payload.item_id, assignment_id))
             db.execute("UPDATE care_item SET status = 'ASSIGNED' WHERE id = ?", (payload.item_id,))
             _propagate_routine_assignment(db, item, payload.assignee_id, current_member_id())
             return one(db, "SELECT * FROM care_assignment WHERE id = ?", (assignment_id,))
@@ -1626,13 +1632,41 @@ def create_assignment(payload: AssignmentCreate):
 @app.post("/api/assignments/{assignment_id}/respond")
 def respond_assignment(assignment_id: str, payload: AssignmentResponse):
     with database() as db:
+        db.execute("""UPDATE care_item SET status = status WHERE family_id = ? AND id =
+            (SELECT item_id FROM care_assignment WHERE id = ? AND family_id = ?)""",
+            (family_id(), assignment_id, family_id()))
         assignment = one(db, "SELECT * FROM care_assignment WHERE id = ? AND family_id = ?", (assignment_id, family_id()))
-        if authenticated() and assignment["assignee_id"] != current_member_id():
+        volunteering = authenticated() and assignment["assignee_id"] != current_member_id()
+        if volunteering and payload.decision != "ACCEPTED":
             raise HTTPException(403, "배정 대상자만 응답할 수 있습니다")
         if assignment["status"] != "PROPOSED":
             raise HTTPException(409, "대기 중인 배정만 응답할 수 있습니다")
         item = one(db, "SELECT * FROM care_item WHERE id = ?", (assignment["item_id"],))
         if payload.decision == "ACCEPTED":
+            if item['status'] == 'DONE' or db.execute(
+                "SELECT 1 FROM care_assignment WHERE item_id = ? AND status IN ('ACCEPTED', 'COMPLETED')",
+                (item['id'],),
+            ).fetchone():
+                raise HTTPException(409, "이미 확정된 담당자가 있습니다")
+            if volunteering:
+                candidate = next((member for member in rank_members(
+                    db, family_id(), item['starts_at'], target_child_id=item['child_id']
+                ) if member['member_id'] == current_member_id()), None)
+                if not candidate or not candidate['available']:
+                    raise HTTPException(409, "본인의 일정 또는 돌봄과 겹쳐 맡을 수 없습니다")
+                own_request = db.execute("""SELECT * FROM care_assignment WHERE item_id = ?
+                    AND assignee_id = ? AND status = 'PROPOSED'""",
+                    (item['id'], current_member_id())).fetchone()
+                if own_request:
+                    assignment = dict(own_request)
+                    assignment_id = assignment['id']
+                else:
+                    assignment_id = str(uuid4())
+                    db.execute("""INSERT INTO care_assignment
+                        (id, family_id, item_id, assignee_id, status, source, created_at, requested_by_member_id)
+                        VALUES (?, ?, ?, ?, 'PROPOSED', 'MANUAL', ?, ?)""",
+                        (assignment_id, family_id(), item['id'], current_member_id(), now(), assignment.get('requested_by_member_id')))
+                    assignment = one(db, "SELECT * FROM care_assignment WHERE id = ?", (assignment_id,))
             # Whoever accepts first is confirmed immediately — no owner sign-off needed,
             # even when the request went out to several caregivers in parallel.
             db.execute(
@@ -1687,6 +1721,9 @@ def respond_assignment(assignment_id: str, payload: AssignmentResponse):
 def confirm_assignment(assignment_id: str):
     """Let the primary caregiver choose one responder after sending parallel requests."""
     with database() as db:
+        db.execute("""UPDATE care_item SET status = status WHERE family_id = ? AND id =
+            (SELECT item_id FROM care_assignment WHERE id = ? AND family_id = ?)""",
+            (family_id(), assignment_id, family_id()))
         require_owner(db)
         assignment = one(db, "SELECT * FROM care_assignment WHERE id = ? AND family_id = ?", (assignment_id, family_id()))
         if assignment["status"] != "CANDIDATE_ACCEPTED":
