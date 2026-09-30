@@ -102,6 +102,33 @@ class CareFlowTest(unittest.TestCase):
         self.assertIn("병원 방문", notices["grandma"])
         self.assertNotIn("병원 방문", notices["mom"])
 
+    def test_database_storage_full_returns_cors_error_and_rolls_back_acceptance(self):
+        from unittest.mock import patch
+        from psycopg.errors import DiskFull
+
+        with database() as db:
+            db.execute("UPDATE care_assignment SET status = 'PROPOSED' WHERE id = 'assignment-pickup'")
+            db.execute("UPDATE care_item SET status = 'CONFIRMED' WHERE id = 'pickup'")
+        origin = "http://localhost:5173"
+        for failure in ("app.main._propagate_routine_assignment", "app.main.resolve_bearer"):
+            with self.subTest(failure=failure), patch(failure, side_effect=DiskFull("No space left on device")), self.assertLogs("app.main", level="ERROR"):
+                response = self.client.post("/api/assignments/assignment-pickup/respond",
+                    headers={"Origin": origin}, json={"decision": "ACCEPTED"})
+            self.assertEqual(response.status_code, 503, response.text)
+            self.assertEqual(response.headers.get("access-control-allow-origin"), origin)
+            self.assertEqual(response.json(), {
+                "detail": {
+                    "message": "서버 저장 공간이 부족해 저장하지 못했어요. 잠시 후 다시 시도해주세요.",
+                    "code": "DATABASE_STORAGE_FULL",
+                },
+            })
+            with database() as db:
+                assignment = db.execute("SELECT status, responded_at FROM care_assignment WHERE id = 'assignment-pickup'").fetchone()
+                self.assertEqual(assignment["status"], "PROPOSED")
+                self.assertIsNone(assignment["responded_at"])
+                self.assertEqual(db.execute("SELECT status FROM care_item WHERE id = 'pickup'").fetchone()["status"], "CONFIRMED")
+                self.assertIsNone(db.execute("SELECT 1 FROM notification WHERE title = '배정이 확정됐어요'").fetchone())
+
 
     def test_google_sync_flags_care_collision_once_and_allows_alternative_request(self):
         self._check_calendar_sync_collision("google")

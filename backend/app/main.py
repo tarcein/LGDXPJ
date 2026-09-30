@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import re
 from contextlib import asynccontextmanager, suppress
 from datetime import date, datetime, timedelta, timezone
@@ -16,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from psycopg.errors import DiskFull
 
 from .db import close_pool, database, initialize, open_pool
 from .config import setting
@@ -182,7 +184,21 @@ async def family_context(request: Request, call_next):
         reset_context(tokens)
 
 
-# Register CORS last so it also decorates responses returned directly by family_context.
+@app.middleware("http")
+async def database_storage_error(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except DiskFull:
+        logging.getLogger(__name__).exception("Database storage exhausted")
+        return JSONResponse(status_code=503, content={
+            "detail": {
+                "message": "서버 저장 공간이 부족해 저장하지 못했어요. 잠시 후 다시 시도해주세요.",
+                "code": "DATABASE_STORAGE_FULL",
+            },
+        })
+
+
+# Register CORS last so it also decorates middleware error responses.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
