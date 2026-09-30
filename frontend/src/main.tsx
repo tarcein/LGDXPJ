@@ -24,7 +24,6 @@ createRoot(document.getElementById('root')!).render(
 if (import.meta.env.PROD && !Capacitor.isNativePlatform() && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     void navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
-      .then(registration => registration.update())
       .catch(error => console.warn('Service worker registration failed.', error))
   })
 }

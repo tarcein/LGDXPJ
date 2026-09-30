@@ -54,28 +54,14 @@ import memberInactiveIcon from '../../asset/구성원프로필/활동중아님.p
 import { AppHeader, BottomNav, FloatingAssistant, MobileStatusBar } from './components/AppChrome'
 import { LockscreenPreview, ServiceLoading, ThinQEntry, ThinQHomeSelector } from './components/EntryScreens'
 import { BottomSheet, Card, Empty, Pro, Section } from './components/ui'
-import { setupNativeNotifications, showNativeNotice, syncPushToken } from './nativeNotifications'
+import { setupNativeNotifications, syncPushToken } from './nativeNotifications'
 
 const nativeCalendarReturnUrl = 'com.lgdx.family://calendar'
 const lastScreenKey = 'family-care-last-screen'
-const sessionSnapshotKey = 'family-care-session-snapshot'
 const transientScreens: Screen[] = ['thinq', 'serviceLoading', 'lockscreen', 'onboarding']
 const kakaoSdkUrl = 'https://t1.kakaocdn.net/kakao_js_sdk/2.8.3/kakao.min.js'
 const tossPaymentsSdkUrl = 'https://js.tosspayments.com/v2/standard'
-type SessionSnapshot = { savedAt: number; boot: Bootstrap; me: FamilyMe }
-const readSessionSnapshot = (): SessionSnapshot | null => {
-  if (!hasFamilyToken()) return null
-  try {
-    const snapshot = JSON.parse(localStorage.getItem(sessionSnapshotKey) ?? 'null') as SessionSnapshot | null
-    if (!snapshot?.boot || !snapshot.me || Date.now() - snapshot.savedAt > 6 * 60 * 60_000) return null
-    return snapshot
-  } catch { return null }
-}
-const saveSessionSnapshot = (me: FamilyMe, boot: Bootstrap) => {
-  try { localStorage.setItem(sessionSnapshotKey, JSON.stringify({ savedAt: Date.now(), me, boot })) } catch { /* fresh API data still renders */ }
-}
-const clearSessionSnapshot = () => { try { localStorage.removeItem(sessionSnapshotKey) } catch { /* storage can be unavailable */ } }
-const initialSessionSnapshot = readSessionSnapshot()
+try { localStorage.removeItem('family-care-session-snapshot') } catch { /* storage can be unavailable */ }
 const loadExternalScript = (id: string, src: string, crossOrigin = false) => {
   const existing = document.getElementById(id) as HTMLScriptElement | null
   if (existing?.dataset.loaded === 'true') return Promise.resolve()
@@ -344,8 +330,8 @@ function App() {
   const invitedRole = ['PARENT', 'GRANDPARENT', 'CAREGIVER'].includes(roleFromUrl) ? roleFromUrl : 'CAREGIVER'
   const savedScreen = localStorage.getItem(lastScreenKey) as Screen | null
   const restoredScreen = hasFamilyToken() && savedScreen && groups.some(group => group.pages.some(([id]) => id === savedScreen)) && !transientScreens.includes(savedScreen) ? savedScreen : null
-  const [boot, setBoot] = useState<Bootstrap | null>(initialSessionSnapshot?.boot ?? null)
-  const [me, setMe] = useState<FamilyMe | null>(initialSessionSnapshot?.me ?? null)
+  const [boot, setBoot] = useState<Bootstrap | null>(null)
+  const [me, setMe] = useState<FamilyMe | null>(null)
   const [screen, setScreen] = useState<Screen>(() => invitationFromUrl ? 'onboarding' : debugScreen ?? (hasFamilyToken() && billingResultFromUrl ? 'plan' : hasFamilyToken() && initialQuery.has('calendar') ? 'calendar' : restoredScreen ?? 'thinq'))
   const [error, setError] = useState('')
   const [toast, setToast] = useState('')
@@ -537,7 +523,7 @@ function App() {
   const reportError = (failure: unknown) => {
     if (failure instanceof ApiError && failure.status === 401) {
       const hadToken = hasFamilyToken()
-      setFamilyToken(null); clearSessionSnapshot(); setFamilySessionReady(false); setBoot(null); setMe(null); setOnboardStep('ROOM'); setScreen('thinq')
+      setFamilyToken(null); setFamilySessionReady(false); setBoot(null); setMe(null); setOnboardStep('ROOM'); setScreen('thinq')
       history.replaceState({ ...history.state, lgdxScreen: 'thinq' }, '')
       setError(hadToken ? '가족방 세션이 만료됐어요. 다시 참가해주세요.' : '가족방을 만들거나 초대코드로 참가해주세요.')
     } else if (failure instanceof ApiError) {
@@ -564,7 +550,6 @@ function App() {
       if (failure instanceof ApiError && failure.status === 404 && !hasFamilyToken()) throw new ApiError('가족방을 만들거나 초대코드로 참가해주세요.', 401)
       if (!(failure instanceof ApiError) || failure.status !== 401 || !requestedWithToken) throw failure
       setFamilyToken(null)
-      clearSessionSnapshot()
       setFamilySessionReady(false)
       try {
         ;[nextMe, nextBoot] = await Promise.all([api<FamilyMe>('/families/me'), api<Bootstrap>('/bootstrap')])
@@ -575,7 +560,6 @@ function App() {
     }
     nextMe.member.is_owner = Boolean(nextMe.member.is_owner)
     nextBoot.members = nextBoot.members.map(item => ({ ...item, is_owner: Boolean(item.is_owner) }))
-    saveSessionSnapshot(nextMe, nextBoot)
     setMe(nextMe); setBoot(nextBoot); setFamilyNameInput(nextBoot.family.name)
     setDeviceNoticeDemo(Boolean(nextBoot.notification_preferences.find(item => item.member_id === nextMe.member.id)?.device_enabled))
     if (!seenNoticeIdsRef.current.size) nextBoot.notifications.forEach(notice => seenNoticeIdsRef.current.add(notice.id))
@@ -1029,7 +1013,6 @@ function App() {
       const result = onboardMode === 'create'
         ? await send<FamilySession>('/families', 'POST', { name: onboardFamilyName.trim(), owner_name: onboardName.trim() })
         : await send<FamilySession>('/families/join', 'POST', { invite_code: onboardInviteCode.trim(), name: onboardName.trim(), role: onboardRole })
-      clearSessionSnapshot()
       setFamilyToken(result.access_token)
       setFamilySessionReady(true)
       setInviteCode(result.invite_code ?? '')
@@ -1093,7 +1076,7 @@ function App() {
     finally { setOnboardBusy(false) }
   }
   const resetFamilySession = (targetScreen: Screen = 'thinq') => {
-    setFamilyToken(null); clearSessionSnapshot(); setFamilySessionReady(false); setBoot(null); setMe(null); setChatMessages([]); setChatDraft(''); setVoiceConfirming(false); setInviteCode(''); setSubscription(null); setFeatures([])
+    setFamilyToken(null); setFamilySessionReady(false); setBoot(null); setMe(null); setChatMessages([]); setChatDraft(''); setVoiceConfirming(false); setInviteCode(''); setSubscription(null); setFeatures([])
     setOnboardStep('ROOM'); setOnboardMode('create'); setOnboardFamilyName(''); setOnboardName(''); setOnboardInviteCode(''); setThinqSelector(false)
     history.replaceState({ ...history.state, lgdxScreen: targetScreen }, '')
     setScreen(targetScreen)
@@ -1104,7 +1087,6 @@ function App() {
     setOnboardBusy(true)
     try {
       const result = await send<FamilySession>('/families/dev-login', 'POST', { member_id: memberId })
-      clearSessionSnapshot()
       setFamilyToken(result.access_token)
       setFamilySessionReady(true)
       await load()
@@ -1222,14 +1204,16 @@ function App() {
       reportError(failure)
     }
   }
-  const members = boot?.members.filter(member => member.status === 'ACTIVE') ?? []
-  const profileColorForMember = (targetMemberId: string) => {
-    const index = (boot?.members.filter(item => item.status !== 'REMOVED').findIndex(item => item.id === targetMemberId) ?? 0)
-    return memberProfileColors[Math.max(0, index) % memberProfileColors.length]
-  }
-  const memberIsOnline = (targetMemberId: string) => targetMemberId === me?.member.id || !!boot?.members.find(item => item.id === targetMemberId)?.is_online
-  const member = (id: string) => boot?.members.find(m => m.id === id)?.name ?? '가족'
-  const child = (id: string | null) => boot?.children.find(c => c.id === id)?.name ?? '가족'
+  const members = useMemo(() => boot?.members.filter(member => member.status === 'ACTIVE') ?? [], [boot])
+  const memberById = useMemo(() => new Map((boot?.members ?? []).map(item => [item.id, item] as const)), [boot])
+  const childById = useMemo(() => new Map((boot?.children ?? []).map(item => [item.id, item] as const)), [boot])
+  const profileIndexByMemberId = useMemo(() => new Map((boot?.members ?? [])
+    .filter(item => item.status !== 'REMOVED')
+    .map((item, index) => [item.id, index] as const)), [boot])
+  const profileColorForMember = (targetMemberId: string) => memberProfileColors[(profileIndexByMemberId.get(targetMemberId) ?? 0) % memberProfileColors.length]
+  const memberIsOnline = (targetMemberId: string) => targetMemberId === me?.member.id || !!memberById.get(targetMemberId)?.is_online
+  const member = (id: string) => memberById.get(id)?.name ?? '가족'
+  const child = (id: string | null) => id ? childById.get(id)?.name ?? '가족' : '가족'
   const hiddenMergedCareItemIds = useMemo(() => {
     const schedules = boot?.child_schedules ?? []
     const groups = new Map<string, typeof schedules>()
@@ -1291,18 +1275,29 @@ function App() {
   // O(n) lookups (itemFor) used all over the render — memoized so typing in an unrelated
   // field elsewhere doesn't re-filter/re-scan them on every keystroke.
   const items = useMemo(() => visibleCareItems.filter(i => filter === 'all' || i.child_id === filter), [visibleCareItems, filter])
-  const pending = items.filter(i => i.status === 'NEEDS_REVIEW')
+  const pending = useMemo(() => items.filter(i => i.status === 'NEEDS_REVIEW'), [items])
   const assignments = useMemo(() => boot?.assignments.filter(a => !['CANCELED', 'REJECTED'].includes(a.status) && !hiddenMergedCareItemIds.has(a.item_id)) ?? [], [boot, hiddenMergedCareItemIds])
   const careViewerId = me?.authenticated ? me.member.id : viewer
   const viewerAssignments = useMemo(() => assignments.filter(a => a.assignee_id === careViewerId), [assignments, careViewerId])
-  const itemFor = (a: Assignment | undefined) => a ? visibleCareItems.find(i => i.id === a.item_id) : undefined
+  const itemById = useMemo(() => new Map(visibleCareItems.map(item => [item.id, item] as const)), [visibleCareItems])
+  const assignmentsByItemId = useMemo(() => assignments.reduce<Map<string, Assignment[]>>((groups, assignment) => {
+    const group = groups.get(assignment.item_id)
+    if (group) group.push(assignment)
+    else groups.set(assignment.item_id, [assignment])
+    return groups
+  }, new Map()), [assignments])
+  const itemFor = (a: Assignment | undefined) => a ? itemById.get(a.item_id) : undefined
   const activeAssignmentForItem = (careItemId: string) => {
     const priority: Record<string, number> = { COMPLETED: 4, ACCEPTED: 3, CANDIDATE_ACCEPTED: 2, PROPOSED: 1 }
-    return assignments.filter(a => a.item_id === careItemId && a.status in priority)
-      .sort((left, right) => priority[right.status] - priority[left.status])[0]
+    return (assignmentsByItemId.get(careItemId) ?? []).reduce<Assignment | undefined>((best, candidate) => (
+      candidate.status in priority && (!best || priority[candidate.status] > priority[best.status]) ? candidate : best
+    ), undefined)
   }
-  const confirmedAssignmentForItem = (careItemId: string) => assignments.find(a => a.item_id === careItemId && a.status === 'COMPLETED')
-    ?? assignments.find(a => a.item_id === careItemId && a.status === 'ACCEPTED')
+  const confirmedAssignmentForItem = (careItemId: string) => {
+    const itemAssignments = assignmentsByItemId.get(careItemId) ?? []
+    return itemAssignments.find(assignment => assignment.status === 'COMPLETED')
+      ?? itemAssignments.find(assignment => assignment.status === 'ACCEPTED')
+  }
   const isLiveAssignment = (assignment?: Assignment) => {
     if (assignment?.status !== 'ACCEPTED') return false
     const careItem = itemFor(assignment)
@@ -1316,7 +1311,7 @@ function App() {
   const caregiverForCareItem = (careItemId: string) => {
     const assignment = confirmedAssignmentForItem(careItemId)
     if (assignment) return { name: member(assignment.assignee_id), status: assignment.status }
-    const externalName = visibleCareItems.find(item => item.id === careItemId)?.external_assignee_name?.trim()
+    const externalName = itemById.get(careItemId)?.external_assignee_name?.trim()
     return externalName ? { name: externalName, status: 'EXTERNAL' } : null
   }
   const caregiverStatusLabel = (status: string) => status === 'EXTERNAL' ? '외부 담당' : status === 'COMPLETED' ? '완료' : status === 'ACCEPTED' ? '담당 확정' : status === 'PROPOSED' ? '수락 확인 중' : status === 'CANDIDATE_ACCEPTED' ? '최종 확인 중' : status === 'RECONFIRMATION_REQUIRED' ? '재배정 필요' : '요청 중'
@@ -1376,26 +1371,48 @@ function App() {
     let cancelled = false
     let running = false
     let timer: number | undefined
+    let lastFullSyncAt = Date.now()
+    let needsFullSync = false
     const schedulePoll = () => {
-      if (!cancelled && document.visibilityState === 'visible' && navigator.onLine) timer = window.setTimeout(() => void poll(), 10_000)
+      if (!cancelled && document.visibilityState === 'visible' && navigator.onLine) timer = window.setTimeout(() => void poll(), 15_000)
     }
     const poll = async () => {
       if (cancelled || running || document.visibilityState !== 'visible' || !navigator.onLine) return
       running = true
       try {
-        const [next, emergencyResult] = await Promise.all([
-          api<Bootstrap>('/bootstrap'),
+        const [noticeResult, emergencyResult] = await Promise.all([
+          api<{ notifications: Notice[] }>('/notifications'),
           api<{ requests: EmergencyRequest[] }>('/emergency-requests'),
         ])
         if (cancelled) return
-        const incoming = next.notifications.filter(notice => !notice.is_read && !seenNoticeIdsRef.current.has(notice.id))
-        next.notifications.forEach(notice => seenNoticeIdsRef.current.add(notice.id))
-        setBoot(next)
-        setEmergencyRequests(emergencyResult.requests)
+        const incoming = noticeResult.notifications.filter(notice => !notice.is_read && !seenNoticeIdsRef.current.has(notice.id))
+        noticeResult.notifications.forEach(notice => seenNoticeIdsRef.current.add(notice.id))
+        if (incoming.length) needsFullSync = true
+        const activeTag = document.activeElement?.tagName
+        const editing = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT'
+        if (!editing && (needsFullSync || Date.now() - lastFullSyncAt >= 5 * 60_000)) {
+          await load()
+          lastFullSyncAt = Date.now()
+          needsFullSync = false
+        } else {
+          setBoot(current => {
+            if (!current) return current
+            const unchanged = current.notifications.length === noticeResult.notifications.length
+              && current.notifications.every((notice, index) => notice.id === noticeResult.notifications[index]?.id && notice.is_read === noticeResult.notifications[index]?.is_read)
+            return unchanged ? current : { ...current, notifications: noticeResult.notifications }
+          })
+        }
+        setEmergencyRequests(current => {
+          const next = emergencyResult.requests
+          const unchanged = current.length === next.length && current.every((request, index) => (
+            request.id === next[index]?.id && request.status === next[index]?.status && request.claimed_by_member_id === next[index]?.claimed_by_member_id
+          ))
+          return unchanged ? current : next
+        })
         if (appNotices) {
           incoming.forEach(notice => {
-            void showNativeNotice(notice.id, notice.title, notice.body, notice.action_type, notice.action_id)
-            if ('Notification' in window && Notification.permission === 'granted') {
+            // Native delivery already comes through FCM. Polling only refreshes the in-app feed.
+            if (!Capacitor.isNativePlatform() && 'Notification' in window && Notification.permission === 'granted') {
               const systemNotice = new Notification(notice.title, { body: notice.body, tag: notice.id })
               systemNotice.onclick = () => { window.focus(); void openNoticeRef.current(notice); systemNotice.close() }
             }
@@ -1410,7 +1427,10 @@ function App() {
     }
     const handleConnectivity = () => {
       if (timer !== undefined) window.clearTimeout(timer)
-      if (!cancelled && !running && document.visibilityState === 'visible' && navigator.onLine) void poll()
+      if (!cancelled && document.visibilityState === 'visible' && navigator.onLine) {
+        needsFullSync = true
+        if (!running) void poll()
+      }
     }
     schedulePoll()
     document.addEventListener('visibilitychange', handleConnectivity)
@@ -1436,7 +1456,7 @@ function App() {
   const connectedCalendarCount = calendarConnections.filter(connection => connection.connected).length
   const todayKey = dateKey(new Date())
   const personalRoutineOwnerId = me?.authenticated ? me.member.id : scheduleMember
-  const personalRoutineGroups = [...(boot?.schedules ?? [])
+  const personalRoutineGroups = useMemo(() => [...(boot?.schedules ?? [])
     .filter(schedule => schedule.member_id === personalRoutineOwnerId && schedule.kind === 'ROUTINE' && !schedule.external_source)
     .reduce<Map<string, Bootstrap['schedules']>>((groups, schedule) => {
       const key = schedule.recurrence_id || schedule.id
@@ -1450,46 +1470,47 @@ function App() {
       const schedule = ordered.find(item => dateKey(item.starts_at) >= todayKey) ?? ordered[ordered.length - 1]!
       return { schedule, count: ordered.length }
     })
-    .sort((left, right) => left.schedule.starts_at.localeCompare(right.schedule.starts_at))
-  const todayCare = visibleCareItems.filter(i => !i.child_schedule_id && i.starts_at && dateKey(i.starts_at) === todayKey && i.item_type !== 'SUPPLY' && i.item_type !== 'HOMEWORK')
-  const todayChildSchedules = boot?.child_schedules.filter(s => dateKey(s.starts_at) === todayKey) ?? []
+    .sort((left, right) => left.schedule.starts_at.localeCompare(right.schedule.starts_at)), [boot, personalRoutineOwnerId, todayKey])
+  const todayCare = useMemo(() => visibleCareItems.filter(i => !i.child_schedule_id && i.starts_at && dateKey(i.starts_at) === todayKey && i.item_type !== 'SUPPLY' && i.item_type !== 'HOMEWORK'), [visibleCareItems, todayKey])
+  const todayChildSchedules = useMemo(() => boot?.child_schedules.filter(s => dateKey(s.starts_at) === todayKey) ?? [], [boot, todayKey])
   const dueDateOf = (item: CareItem) => {
     if (item.starts_at) return dateKey(item.starts_at)
     const nextDay = new Date(item.created_at); nextDay.setDate(nextDay.getDate() + 1)
     return dateKey(nextDay)
   }
-  const activeSupplies = visibleCareItems.filter(i => i.item_type === 'SUPPLY' && i.status !== 'DONE')
-  const allSupplies = visibleCareItems.filter(i => i.item_type === 'SUPPLY')
+  const activeSupplies = useMemo(() => visibleCareItems.filter(i => i.item_type === 'SUPPLY' && i.status !== 'DONE'), [visibleCareItems])
+  const allSupplies = useMemo(() => visibleCareItems.filter(i => i.item_type === 'SUPPLY'), [visibleCareItems])
   const supplyWindowEnd = new Date(); supplyWindowEnd.setDate(supplyWindowEnd.getDate() + 6)
-  const weekSupplies = activeSupplies.filter(item => {
+  const weekWindowEndKey = dateKey(supplyWindowEnd)
+  const weekSupplies = useMemo(() => activeSupplies.filter(item => {
     const due = dueDateOf(item)
-    return due >= todayKey && due <= dateKey(supplyWindowEnd)
-  }).sort((left, right) => dueDateOf(left).localeCompare(dueDateOf(right)))
-  const weekSuppliesAll = allSupplies.filter(item => {
+    return due >= todayKey && due <= weekWindowEndKey
+  }).sort((left, right) => dueDateOf(left).localeCompare(dueDateOf(right))), [activeSupplies, todayKey, weekWindowEndKey])
+  const weekSuppliesAll = useMemo(() => allSupplies.filter(item => {
     const due = dueDateOf(item)
-    return due >= todayKey && due <= dateKey(supplyWindowEnd)
-  }).sort((left, right) => dueDateOf(left).localeCompare(dueDateOf(right)))
-  const supplyGroups = Object.entries(weekSuppliesAll.reduce<Record<string, CareItem[]>>((groups, item) => {
+    return due >= todayKey && due <= weekWindowEndKey
+  }).sort((left, right) => dueDateOf(left).localeCompare(dueDateOf(right))), [allSupplies, todayKey, weekWindowEndKey])
+  const supplyGroups = useMemo(() => Object.entries(weekSuppliesAll.reduce<Record<string, CareItem[]>>((groups, item) => {
     ;(groups[dueDateOf(item)] ??= []).push(item)
     return groups
-  }, {})).sort(([left], [right]) => left.localeCompare(right))
-  const activeHomework = visibleCareItems.filter(i => i.item_type === 'HOMEWORK' && i.status !== 'DONE')
-  const allHomework = visibleCareItems.filter(i => i.item_type === 'HOMEWORK')
-  const weekHomework = activeHomework.filter(item => {
+  }, {})).sort(([left], [right]) => left.localeCompare(right)), [weekSuppliesAll])
+  const activeHomework = useMemo(() => visibleCareItems.filter(i => i.item_type === 'HOMEWORK' && i.status !== 'DONE'), [visibleCareItems])
+  const allHomework = useMemo(() => visibleCareItems.filter(i => i.item_type === 'HOMEWORK'), [visibleCareItems])
+  const weekHomework = useMemo(() => activeHomework.filter(item => {
     const due = dueDateOf(item)
-    return due >= todayKey && due <= dateKey(supplyWindowEnd)
-  }).sort((left, right) => dueDateOf(left).localeCompare(dueDateOf(right)))
-  const homeworkGroups = Object.entries(allHomework.reduce<Record<string, CareItem[]>>((groups, item) => {
+    return due >= todayKey && due <= weekWindowEndKey
+  }).sort((left, right) => dueDateOf(left).localeCompare(dueDateOf(right))), [activeHomework, todayKey, weekWindowEndKey])
+  const homeworkGroups = useMemo(() => Object.entries(allHomework.reduce<Record<string, CareItem[]>>((groups, item) => {
     ;(groups[dueDateOf(item)] ??= []).push(item)
     return groups
-  }, {})).sort(([left], [right]) => left.localeCompare(right))
+  }, {})).sort(([left], [right]) => left.localeCompare(right)), [allHomework])
   const tomorrowKey = dateKey(new Date(new Date().setDate(new Date().getDate() + 1)))
   // The home screen's "지금 해야 할 것" preview is meant for things due imminently —
   // supplies due today or tomorrow, homework due today — not the full week's worth
   // shown on the dedicated 준비물/숙제 확인 screens.
   const homeSupplyAlerts = weekSupplies.filter(item => dueDateOf(item) === todayKey || dueDateOf(item) === tomorrowKey)
   const homeHomeworkAlerts = weekHomework.filter(item => dueDateOf(item) === todayKey)
-  const pendingHandoffs = boot?.handoffs.filter(h => h.to_member_id === careViewerId && h.status === 'PENDING' && h.special_note?.trim()) ?? []
+  const pendingHandoffs = useMemo(() => boot?.handoffs.filter(h => h.to_member_id === careViewerId && h.status === 'PENDING' && h.special_note?.trim()) ?? [], [boot, careViewerId])
   const handoffSummary = (handoff: Handoff) => {
     const assignment = assignments.find(item => item.id === handoff.assignment_id)
     const careItem = assignment ? itemFor(assignment) : undefined
@@ -1505,7 +1526,6 @@ function App() {
   // keystroke elsewhere doesn't re-scan these (itemFor is an O(n) lookup per assignment).
   const todayAssignments = useMemo(() => assignments.filter(a => { const item = itemFor(a); return !!item?.starts_at && dateKey(item.starts_at) === todayKey }), [assignments, todayKey])
   const todayViewerAssignments = useMemo(() => todayAssignments.filter(a => a.assignee_id === careViewerId), [todayAssignments, careViewerId])
-  const weekWindowEndKey = dateKey(supplyWindowEnd)
   const weekViewerAssignments = useMemo(() => viewerAssignments.filter(a => { const item = itemFor(a); const due = item?.starts_at ? dateKey(item.starts_at) : ''; return !!due && due >= todayKey && due <= weekWindowEndKey }), [viewerAssignments, todayKey, weekWindowEndKey])
   const homeOpenEmergency = emergencyRequests.find(request => request.status === 'OPEN')
   const homeEmergencyAssignment = homeOpenEmergency ? assignments.find(assignment => assignment.id === homeOpenEmergency.assignment_id) : undefined
@@ -2645,7 +2665,7 @@ function App() {
       <button onClick={() => go('plan')}><i><img src={planPaymentUiIcon} alt="" /></i><span><strong>플랜·결제</strong><small>{plan === 'PRO' ? 'Pro 구독 중' : 'Free 이용 중'}</small></span><b>›</b></button>
       <button onClick={() => go('gap')}><i><img src={careGapUiIcon} alt="" /></i><span><strong>돌봄 공백 예측</strong><small>다음 주 공백 시간 미리 확인</small></span>{plan === 'PRO' ? <em className="small-badge ok">이용 가능</em> : <Pro />}<b>›</b></button>
       <button onClick={() => go('programs')}><i><img src={careProgramUiIcon} alt="" /></i><span><strong>돌봄 제도 안내</strong><small>정부 지원 제도 맞춤 안내</small></span>{plan === 'PRO' ? <em className="small-badge ok">이용 가능</em> : <Pro />}<b>›</b></button>
-      <button onClick={() => { setDeviceAlertStep('main'); go('deviceAlerts') }}><i><img src={deviceAlertPriorityUiIcon} alt="" /></i><span><strong>가전 알림 우선순위</strong><small>TV·정수기 등 어디로 먼저 보낼지 설정</small></span>{plan === 'PRO' ? <em className="small-badge ok">이용 가능</em> : <Pro />}<b>›</b></button>
+      <button onClick={() => { setDeviceAlertStep('main'); go('deviceAlerts') }}><i><img src={deviceAlertPriorityUiIcon} alt="" /></i><span><strong>가전 알림 설정</strong><small>TV·정수기 등 어디로 먼저 보낼지 설정</small></span>{plan === 'PRO' ? <em className="small-badge ok">이용 가능</em> : <Pro />}<b>›</b></button>
     </div>
     <div className="more-policy-list"><button onClick={() => setPolicyOpen('TERMS')}>🏳️ <span>서비스 이용 약관</span><b>›</b></button><button onClick={() => setPolicyOpen('PRIVACY')}><img src={lockIcon} alt="" /> <span>개인정보 처리방침</span><b>›</b></button><button className="logout" onClick={logout}>↩️ <span>로그아웃</span><b>›</b></button></div>
     <small className="app-version">ZIPPY v0.9.1 · 개발 중</small>

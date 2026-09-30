@@ -1,4 +1,4 @@
-const CACHE = 'zippy-pwa-v3'
+const CACHE = 'zippy-pwa-v4'
 const SHELL = ['/', '/manifest.webmanifest', '/app-icon.png']
 
 self.addEventListener('install', event => {
@@ -29,14 +29,8 @@ self.addEventListener('fetch', event => {
     return
   }
 
-  if (!['script', 'style', 'image', 'font'].includes(request.destination)) return
-
-  event.respondWith(
-    caches.match(request).then(cached => cached || fetch(request).then(response => {
-      if (response.ok) caches.open(CACHE).then(cache => cache.put(request, response.clone()))
-      return response
-    })),
-  )
+  // Hashed build assets are already handled by the browser HTTP cache. Keeping every
+  // deployed asset in Cache Storage made long-lived iPhone PWAs retain old bundles.
 })
 
 self.addEventListener('push', event => {

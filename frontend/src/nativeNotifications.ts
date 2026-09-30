@@ -8,6 +8,9 @@ const legacyLiveStatusChannelId = 'family-care-status'
 const persistentCleanupKey = 'family-care-persistent-notifications-cleared-v1'
 const pushTokenKey = 'family-care-fcm-token'
 export type NativeNoticeAction = { actionType?: string | null; actionId?: string | null }
+let nativeActionHandler: ((action: NativeNoticeAction) => void) | undefined
+let localActionListenerSetup: Promise<void> | null = null
+let pushListenerSetup: Promise<void> | null = null
 
 export const isNativeApp = () => Capacitor.isNativePlatform()
 export const isAndroidApp = () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'
@@ -15,6 +18,7 @@ export const isIosApp = () => Capacitor.isNativePlatform() && Capacitor.getPlatf
 
 export async function setupNativeNotifications(onAction?: (action: NativeNoticeAction) => void) {
   if (!isNativeApp()) return false
+  if (onAction) nativeActionHandler = onAction
 
   const localPermission = await LocalNotifications.requestPermissions()
   if (localPermission.display === 'granted') {
@@ -33,8 +37,8 @@ export async function setupNativeNotifications(onAction?: (action: NativeNoticeA
         visibility: 1,
       })
     }
-    if (onAction) {
-      await LocalNotifications.addListener('localNotificationActionPerformed', event => {
+    if (!localActionListenerSetup) {
+      localActionListenerSetup = LocalNotifications.addListener('localNotificationActionPerformed', event => {
         const notification = event.notification as typeof event.notification & { data?: { extra?: unknown } }
         const raw = notification.extra ?? notification.data?.extra
         let extra: NativeNoticeAction = {}
@@ -44,32 +48,33 @@ export async function setupNativeNotifications(onAction?: (action: NativeNoticeA
           extra = raw as NativeNoticeAction
         }
         console.info('[native notification action]', extra)
-        onAction(extra)
-      })
+        nativeActionHandler?.(extra)
+      }).then(() => undefined)
     }
+    await localActionListenerSetup
   }
 
   // FCM is opt-in until google-services.json and a sending server are configured.
   if (import.meta.env.VITE_FCM_ENABLED === 'true') {
     try {
-      console.error('[FCM] registration requested')
-      await PushNotifications.addListener('registration', token => {
-        console.error('[FCM registration token]', token.value)
-        localStorage.setItem(pushTokenKey, token.value)
-        void syncPushToken()
-      })
-      await PushNotifications.addListener('registrationError', error => {
-        console.error('[FCM registration error]', error)
-      })
-      if (onAction) {
-        await PushNotifications.addListener('pushNotificationActionPerformed', event => {
+      if (!pushListenerSetup) {
+        pushListenerSetup = Promise.all([
+          PushNotifications.addListener('registration', token => {
+            console.error('[FCM registration token]', token.value)
+            localStorage.setItem(pushTokenKey, token.value)
+            void syncPushToken()
+          }),
+          PushNotifications.addListener('registrationError', error => {
+            console.error('[FCM registration error]', error)
+          }),
+          PushNotifications.addListener('pushNotificationActionPerformed', event => {
           const data = event.notification.data ?? {}
-          onAction({
+          nativeActionHandler?.({
             actionType: data.action_type ?? data.actionType,
             actionId: data.action_id ?? data.actionId,
           })
-        })
-        await PushNotifications.addListener('pushNotificationReceived', event => {
+          }),
+          PushNotifications.addListener('pushNotificationReceived', event => {
           const data = event.notification.data ?? {}
           void showNativeNotice(
             `fcm-${Date.now()}`,
@@ -78,8 +83,10 @@ export async function setupNativeNotifications(onAction?: (action: NativeNoticeA
             data.action_type ?? data.actionType,
             data.action_id ?? data.actionId,
           )
-        })
+          }),
+        ]).then(() => undefined)
       }
+      await pushListenerSetup
       const pushPermission = await PushNotifications.requestPermissions()
       if (pushPermission.receive === 'granted') await PushNotifications.register()
     } catch (error) {

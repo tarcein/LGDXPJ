@@ -406,7 +406,7 @@ def _transcribe(file: UploadFile, purpose: str) -> str:
         if purpose in {"SCHEDULE", "EMERGENCY"}:
             _require_pro(db)
     audio = _read_file(file, 20 * 1024 * 1024)
-    return ai.transcribe_audio(audio, file.filename or "recording.webm", mime)
+    return ai.transcribe_audio(audio, file.filename or "recording.webm", mime, purpose)
 
 
 @router.post("/audio/transcribe")

@@ -128,6 +128,36 @@ class CoreScenarioTest(unittest.TestCase):
         notices = self.client.get("/api/bootstrap").json()["notifications"]
         self.assertTrue(any(item["title"] == "가능한 가족이 없어요" for item in notices))
 
+    def test_notification_feed_is_bounded_and_matches_bootstrap(self):
+        with database() as db:
+            base = datetime(2099, 9, 1, tzinfo=ZoneInfo("Asia/Seoul"))
+            for index in range(105):
+                db.execute(
+                    """INSERT INTO notification(id, family_id, member_id, title, body, created_at)
+                       VALUES (?, 'demo-family', 'mom', ?, '', ?)""",
+                    (f"feed-{index}", f"알림 {index}", (base + timedelta(minutes=index)).isoformat()),
+                )
+        feed = self.client.get("/api/notifications").json()["notifications"]
+        bootstrap_notices = self.client.get("/api/bootstrap").json()["notifications"]
+        self.assertEqual(len(feed), 100)
+        self.assertEqual(feed[0]["id"], "feed-104")
+        self.assertEqual([item["id"] for item in feed], [item["id"] for item in bootstrap_notices])
+
+    def test_repeated_schedule_update_keeps_one_unread_notification(self):
+        schedule = self.client.post("/api/child-schedules", json={
+            "child_id": "jiu", "title": "태권도", "category": "ACADEMY",
+            "starts_at": "2026-09-23T16:00:00+09:00", "ends_at": "2026-09-23T17:00:00+09:00",
+        }).json()
+        update = {
+            "child_id": "jiu", "title": "태권도", "category": "ACADEMY",
+            "starts_at": "2026-09-23T16:30:00+09:00", "ends_at": "2026-09-23T17:30:00+09:00",
+        }
+        self.assertEqual(self.client.patch(f"/api/child-schedules/{schedule['id']}", json=update).status_code, 200)
+        self.assertEqual(self.client.patch(f"/api/child-schedules/{schedule['id']}", json=update).status_code, 200)
+        notices = self.client.get("/api/notifications").json()["notifications"]
+        repeated = [notice for notice in notices if notice["title"] == "변경 일정의 담당자를 다시 확인해주세요"]
+        self.assertEqual(len(repeated), 1)
+
     def test_second_child_can_be_grouped_with_same_available_caregiver(self):
         first = self.client.post("/api/child-schedules", json={
             "child_id": "jiu", "title": "첫째 하원", "category": "SCHOOL",

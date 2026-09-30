@@ -42,11 +42,21 @@ def rows(db, sql: str, args: tuple = ()) -> list[dict]:
 def notify(db, member_id: str | None, title: str, body: str, level: str = "NORMAL",
            action_type: str | None = None, action_id: str | None = None) -> None:
     target_family = family_id()
+    title = title[:100]
+    body = body[:200]
+    if action_type and action_id and db.execute(
+        """SELECT 1 FROM notification WHERE family_id = ?
+             AND ((member_id = ?) OR (member_id IS NULL AND ? IS NULL))
+             AND title = ? AND body = ? AND level = ? AND action_type = ? AND action_id = ?
+             AND is_read = 0 LIMIT 1""",
+        (target_family, member_id, member_id, title, body, level, action_type, action_id),
+    ).fetchone():
+        return
     notification_id = str(uuid4())
     db.execute(
         """INSERT INTO notification(id, family_id, member_id, title, body, level, is_read,
            created_at, action_type, action_id) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)""",
-        (notification_id, target_family, member_id, title[:100], body[:200], level, now(), action_type, action_id),
+        (notification_id, target_family, member_id, title, body, level, now(), action_type, action_id),
     )
     record_event(
         db, "notification_sent", target_family_id=target_family,
@@ -60,7 +70,7 @@ def notify(db, member_id: str | None, title: str, body: str, level: str = "NORMA
             WHERE t.family_id = ? AND COALESCE(p.app_enabled, 1) = 1""" + (" AND t.member_id = ?" if member_id else ""),
         (target_family, member_id) if member_id else (target_family,),
     ).fetchall()
-    stale_tokens = send_push([dict(row) for row in token_rows], title[:100], body[:200], action_type, action_id)
+    stale_tokens = send_push([dict(row) for row in token_rows], title, body, action_type, action_id)
     for token in stale_tokens:
         db.execute("DELETE FROM push_device_token WHERE token = ?", (token,))
 
@@ -482,6 +492,23 @@ def register_push_token(payload: PushTokenCreate):
         return {"registered": True}
 
 
+def notification_feed(db, *, tv: bool = False, limit: int = 100) -> list[dict]:
+    query = (
+        """SELECT * FROM notification WHERE family_id = ?
+           AND (member_id IS NULL OR member_id = ?) ORDER BY created_at DESC LIMIT ?"""
+        if authenticated() and not tv else
+        "SELECT * FROM notification WHERE family_id = ? ORDER BY created_at DESC LIMIT ?"
+    )
+    args = (family_id(), current_member_id(), limit) if authenticated() and not tv else (family_id(), limit)
+    return rows(db, query, args)
+
+
+@app.get("/api/notifications")
+def notifications():
+    with database() as db:
+        return {"notifications": notification_feed(db)}
+
+
 @app.get("/api/bootstrap")
 def bootstrap(tv: bool = False):
     utc_now = datetime.now(timezone.utc)
@@ -522,14 +549,7 @@ def bootstrap(tv: bool = False):
             "assignments": rows(db, "SELECT * FROM care_assignment WHERE family_id = ? ORDER BY created_at", (family_id(),)),
             "exceptions": rows(db, "SELECT * FROM care_exception WHERE family_id = ? ORDER BY created_at DESC", (family_id(),)),
             "handoffs": rows(db, "SELECT * FROM care_handoff WHERE family_id = ? ORDER BY status DESC, id DESC", (family_id(),)),
-            "notifications": rows(
-                db,
-                """SELECT * FROM notification WHERE family_id = ?
-                   AND (member_id IS NULL OR member_id = ?) ORDER BY created_at DESC"""
-                if authenticated() and not tv else
-                "SELECT * FROM notification WHERE family_id = ? ORDER BY created_at DESC",
-                (family_id(), current_member_id()) if authenticated() and not tv else (family_id(),),
-            ),
+            "notifications": notification_feed(db, tv=tv),
             "permissions": rows(db, "SELECT p.* FROM family_data_permission p JOIN family_member m ON m.id = p.member_id WHERE m.family_id = ?", (family_id(),)),
             "notification_preferences": rows(db, "SELECT p.* FROM notification_preference p JOIN family_member m ON m.id = p.member_id WHERE m.family_id = ?", (family_id(),)),
         }
