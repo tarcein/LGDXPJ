@@ -132,7 +132,10 @@ a, a:link, a:visited, a:active { color: inherit; text-decoration: inherit; }
 .figma-month-control { display: flex; align-items: center; gap: 11px; }
 .figma-month-control h2 { min-width: 122px; margin: 0; color: #101828; font-size: 22px; line-height: 30px; }
 .figma-month-control button { width: 20px; height: 26px; padding: 0; color: #99a1af; background: transparent; font-size: 20px; }
-.figma-calendar-add { flex: none; width: 38px; height: 38px; border-radius: 50%; color: #fff; background: #fb2c36; box-shadow: 0 3px 5px #0002; font-size: 21px; font-weight: 300; }
+.figma-calendar-add { display: grid; flex: none; width: 38px; height: 38px; place-items: center; padding: 0; border-radius: 50%; color: #fff; background: #fb2c36; box-shadow: 0 3px 5px #0002; }
+.plus-icon { position: relative; display: block; width: 16px; height: 16px; }
+.plus-icon::before, .plus-icon::after { position: absolute; top: 50%; left: 50%; width: 16px; height: 2px; border-radius: 999px; background: currentColor; content: ''; transform: translate(-50%, -50%); }
+.plus-icon::after { transform: translate(-50%, -50%) rotate(90deg); }
 .figma-calendar-legend { display: flex; justify-content: flex-end; gap: 13px; min-height: 29px; padding: 2px 20px 9px; overflow-x: auto; scrollbar-width: none; }
 .figma-calendar-legend button { display: flex; align-items: center; gap: 4px; padding: 0; color: #6a7282; background: transparent; font-size: 10px; white-space: nowrap; opacity: .45; }
 .figma-calendar-legend button.active { opacity: 1; }.figma-calendar-legend i { width: 7px; height: 7px; border-radius: 50%; }.figma-calendar-legend .all-dot { background: conic-gradient(#c4123f 0 25%, #7c5cff 0 50%, #2f80ed 0 75%, #20a474 0); }
@@ -163,7 +166,7 @@ a, a:link, a:visited, a:active { color: inherit; text-decoration: inherit; }
 .schedule-day-sheet > header > button { color: #777c85; background: transparent; font-size: 25px; }
 .day-sheet-events { flex: 1; overflow-y: auto; }.day-sheet-events .calendar-event { margin-bottom: 9px; }
 .schedule-row-edit { flex: none; padding: 6px 7px; border-radius: 8px; color: #c4123f; background: #fff0f3; font-size: 9px; font-weight: 800; }
-.day-add-button { position: absolute; right: 22px; bottom: 20px; width: 57px; height: 57px; border-radius: 50%; color: #fff; background: #c4123f; box-shadow: 0 9px 22px #c4123f55; font-size: 31px; font-weight: 300; }
+.day-add-button { position: absolute; right: 22px; bottom: 20px; display: grid; width: 57px; height: 57px; place-items: center; padding: 0; border-radius: 50%; color: #fff; background: #c4123f; box-shadow: 0 9px 22px #c4123f55; }
 .schedule-chooser { padding-bottom: 24px; }.schedule-chooser > p { margin-bottom: 16px; }
 .schedule-owner-options { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .schedule-owner-options button { display: flex; flex-direction: column; align-items: center; gap: 5px; min-height: 135px; padding: 17px 9px; border-radius: 17px; color: #363942; background: #f5f6fa; }
