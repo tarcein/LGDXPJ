@@ -1,5 +1,6 @@
 /* oxlint-disable react/only-export-components -- this is the route-splitting entry point */
-import { lazy, StrictMode, Suspense } from 'react'
+import { Component, lazy, StrictMode, Suspense } from 'react'
+import type { ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Capacitor } from '@capacitor/core'
 import './index.css'
@@ -15,9 +16,19 @@ const pathname = window.location.pathname.replace(/\/+$/, '')
 const performanceDashboard = pathname === '/performance' || debugScreen === 'performance'
 const ActiveScreen = performanceDashboard ? PerformanceDashboard : debugScreen === 'tv' ? TvDisplay : debugScreen === 'voice' ? VoiceDeviceDisplay : App
 
+class RootErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() { return { failed: true } }
+  componentDidCatch(error: unknown) { console.error('ZIPPY 화면 오류', error) }
+  render() {
+    if (this.state.failed) return <div className="loading"><p>화면을 불러오지 못했어요.</p><button className="primary-button" onClick={() => location.reload()}>다시 불러오기</button></div>
+    return this.props.children
+  }
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <Suspense fallback={<div className="loading">ZIPPY를 불러오고 있어요</div>}><ActiveScreen /></Suspense>
+    <RootErrorBoundary><Suspense fallback={<div className="loading">ZIPPY를 불러오고 있어요</div>}><ActiveScreen /></Suspense></RootErrorBoundary>
   </StrictMode>,
 )
 

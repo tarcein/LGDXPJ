@@ -132,15 +132,19 @@ try {
   const serviceWorkerPage = await serviceWorkerContext.newPage()
   await serviceWorkerPage.route('**/api/**', route => mockApi(route, false))
   await serviceWorkerPage.goto(baseUrl, { waitUntil: 'networkidle' })
+  await serviceWorkerPage.reload({ waitUntil: 'networkidle' })
   const serviceWorker = await serviceWorkerPage.evaluate(async () => {
     const registration = await Promise.race([
       navigator.serviceWorker.ready,
       new Promise(resolve => setTimeout(() => resolve(null), 5_000)),
     ])
-    return { ready: !!registration, controlled: !!navigator.serviceWorker.controller, caches: await caches.keys() }
+    const entryScript = document.querySelector('script[type="module"]')?.getAttribute('src') ?? ''
+    const cacheNames = await caches.keys()
+    const cachedUrls = (await Promise.all(cacheNames.map(async name => (await caches.open(name)).keys()))).flat().map(request => new URL(request.url).pathname)
+    return { ready: !!registration, controlled: !!navigator.serviceWorker.controller, caches: cacheNames, entryScript, entryCached: !!entryScript && !!await caches.match(entryScript), cachedUrls }
   })
   await serviceWorkerContext.close()
-  if (!serviceWorker.ready || !serviceWorker.caches.includes('zippy-pwa-v4')) throw new Error(`PWA 서비스워커 준비 실패: ${JSON.stringify(serviceWorker)}`)
+  if (!serviceWorker.ready || !serviceWorker.controlled || !serviceWorker.caches.includes('zippy-pwa-v5') || !serviceWorker.entryCached || !serviceWorker.cachedUrls.some(url => /\/assets\/App-.*\.js$/.test(url))) throw new Error(`PWA 서비스워커 준비 실패: ${JSON.stringify(serviceWorker)}`)
 
   const loads = await page.evaluate(() => Number(sessionStorage.getItem('__iosQaLoads') ?? 0))
   if (loads !== 1 || crashed) throw new Error(`예기치 않은 페이지 재시작: loads=${loads}, crashed=${crashed}`)

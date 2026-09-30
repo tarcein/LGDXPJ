@@ -1,9 +1,22 @@
-const CACHE = 'zippy-pwa-v4'
-const SHELL = ['/', '/manifest.webmanifest', '/app-icon.png']
+const CACHE = 'zippy-pwa-v5'
+const SHELL = ['/manifest.webmanifest', '/app-icon.png']
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)))
-  self.skipWaiting()
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE)
+    const response = await fetch('/', { cache: 'reload' })
+    if (!response.ok) throw new Error('App shell request failed')
+    await cache.put('/', response.clone())
+    const html = await response.text()
+    const assets = [...html.matchAll(/(?:src|href)="(\/assets\/[^"?]+)"/g)].map(match => match[1])
+    await cache.addAll([...SHELL, ...assets])
+    const chunks = (await Promise.all(assets.filter(asset => asset.endsWith('.js')).map(async asset => {
+      const source = await (await cache.match(asset)).text()
+      return [...source.matchAll(/["'](assets\/[^"']+\.js)["']/g)].map(match => `/${match[1]}`)
+    }))).flat()
+    await cache.addAll([...new Set(chunks)])
+    await self.skipWaiting()
+  })())
 })
 
 self.addEventListener('activate', event => {
@@ -21,16 +34,20 @@ self.addEventListener('fetch', event => {
 
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).then(response => {
-        if (response.ok) caches.open(CACHE).then(cache => cache.put('/', response.clone()))
+      fetch(request).then(async response => {
+        if (response.ok) await caches.open(CACHE).then(cache => cache.put('/', response.clone()))
         return response
       }).catch(() => caches.match('/') ),
     )
     return
   }
 
-  // Hashed build assets are already handled by the browser HTTP cache. Keeping every
-  // deployed asset in Cache Storage made long-lived iPhone PWAs retain old bundles.
+  if (url.pathname.startsWith('/assets/') && (request.destination === 'script' || request.destination === 'style')) {
+    event.respondWith(caches.match(request).then(cached => cached ?? fetch(request).then(response => {
+      if (response.ok) caches.open(CACHE).then(cache => cache.put(request, response.clone()))
+      return response
+    })))
+  }
 })
 
 self.addEventListener('push', event => {
