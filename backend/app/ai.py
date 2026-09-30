@@ -189,23 +189,12 @@ TRANSCRIPTION_PROMPTS = {
     "EMERGENCY": "한국어 긴급 돌봄 요청 사유. 일정 변경, 하원, 보호자, 담당자, 도움이 필요한 상황.",
 }
 
-TRANSCRIPTION_KEYWORDS = {
-    "CHAT": ("가족", "아이", "일정", "등원", "하원", "준비물", "숙제", "담당자"),
-    "INTAKE": ("알림장", "가정통신문", "일정", "준비물", "숙제", "등원", "하원", "행사", "제출물"),
-    "SCHEDULE": ("날짜", "시간", "장소", "아이 이름", "기관명", "등원", "하원"),
-    "HANDOFF_NOTE": ("특이사항", "아이 상태", "식사", "수면", "투약", "다친 곳", "준비물", "선생님 전달사항", "인수인계"),
-    "EMERGENCY": ("긴급 돌봄", "일정 변경", "하원", "보호자", "담당자"),
-}
-
-
 def transcribe_audio(audio: bytes, filename: str, mime: str, purpose: str = "CHAT") -> str:
     prompt = TRANSCRIPTION_PROMPTS.get(purpose, TRANSCRIPTION_PROMPTS["CHAT"])
-    keywords = TRANSCRIPTION_KEYWORDS.get(purpose, TRANSCRIPTION_KEYWORDS["CHAT"])
     form = {
-        "model": setting("OPENAI_TRANSCRIPTION_MODEL", "gpt-transcribe"),
+        "model": setting("OPENAI_TRANSCRIPTION_MODEL", "whisper-1"),
         "prompt": prompt,
-        "languages[]": ["ko"],
-        "keywords[]": list(keywords),
+        "language": "ko",
     }
     result = _post("/audio/transcriptions", files={"file": (filename, audio, mime)}, data=form)
     text = result.get("text", "").strip()

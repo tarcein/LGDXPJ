@@ -1580,15 +1580,14 @@ class ExtendedFlowTest(unittest.TestCase):
 
 class TranscriptionPromptTest(unittest.TestCase):
     def test_handoff_transcription_uses_korean_and_handoff_context(self):
-        with patch("app.ai.setting", return_value="gpt-transcribe") as config, \
+        with patch("app.ai.setting", return_value="whisper-1") as config, \
              patch("app.ai._post", return_value={"text": "밥을 조금 남겼어요"}) as post:
             self.assertEqual(ai.transcribe_audio(b"voice", "handoff.webm", "audio/webm", "HANDOFF_NOTE"),
                              "밥을 조금 남겼어요")
         transcription = post.call_args.kwargs["data"]
-        config.assert_called_once_with("OPENAI_TRANSCRIPTION_MODEL", "gpt-transcribe")
-        self.assertEqual(transcription["model"], "gpt-transcribe")
-        self.assertEqual(transcription["languages[]"], ["ko"])
-        self.assertIn("인수인계", transcription["keywords[]"])
+        config.assert_called_once_with("OPENAI_TRANSCRIPTION_MODEL", "whisper-1")
+        self.assertEqual(transcription["model"], "whisper-1")
+        self.assertEqual(transcription["language"], "ko")
         self.assertIn("특이사항", transcription["prompt"])
 
 

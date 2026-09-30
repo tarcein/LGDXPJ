@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, forwardRef, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Browser } from '@capacitor/browser'
@@ -83,6 +83,16 @@ const webPushKeyBytes = (value: string) => {
   const binary = atob(normalized + '='.repeat((4 - normalized.length % 4) % 4))
   return Uint8Array.from(binary, character => character.charCodeAt(0))
 }
+const ChatComposer = forwardRef<HTMLInputElement, {
+  value: string; busy: boolean; voiceConfirming: boolean; recording: boolean
+  onRecord: () => void; onBlur: (value: string) => void; onSubmit: (value: string) => void
+}>(function ChatComposer({ value, busy, voiceConfirming, recording, onRecord, onBlur, onSubmit }, ref) {
+  const [draft, setDraft] = useState(value)
+  return <form className="chat-composer" onSubmit={event => { event.preventDefault(); if (!voiceConfirming) onSubmit(draft) }}>
+    <button className={recording ? 'chat-mic recording' : 'chat-mic'} type="button" aria-label={recording ? '음성 인식 끝내기' : busy ? '음성 인식 중…' : '음성 인식'} disabled={busy || voiceConfirming} onClick={onRecord}><img src={chatMicIcon} alt="" /></button>
+    <label><input ref={ref} aria-label="케어 어시스턴트에게 질문" value={draft} onChange={event => setDraft(event.target.value)} onBlur={() => onBlur(draft)} placeholder="일정이나 숙제를 말해보세요" /><button type="submit" aria-label="질문 보내기" disabled={busy || voiceConfirming || !draft.trim()}><img src={chatSendIcon} alt="" /></button></label>
+  </form>
+})
 
 const groups: { title: string; pages: [Screen, string][] }[] = [
   { title: 'ThinQ 진입 · 외부 화면', pages: [['thinq', 'ThinQ 홈'], ['lockscreen', '잠금화면 동선']] },
@@ -447,6 +457,7 @@ function App() {
   const [childPhotoPreview, setChildPhotoPreview] = useState('')
   const [onboardChildren, setOnboardChildren] = useState<OnboardChild[]>([])
   const [chatDraft, setChatDraft] = useState('')
+  const [chatComposerReset, setChatComposerReset] = useState(0)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatUsedToday, setChatUsedToday] = useState(0)
   const [chatTokenLimit, setChatTokenLimit] = useState(50_000)
@@ -1647,7 +1658,7 @@ function App() {
   const rootScreens: Screen[] = ['schedule', 'careHub', 'home', 'familyHub', 'more']
   const chatRemaining = Math.max(0, chatTokenLimit - chatUsedToday)
   const chatRemainingPercent = chatTokenLimit ? Math.max(0, Math.min(100, chatRemaining / chatTokenLimit * 100)) : 0
-  const sendChat = async (question = chatDraft, inputType: 'TEXT' | 'VOICE' = 'TEXT') => {
+  const sendChat = async (question = chatInputRef.current?.value ?? chatDraft, inputType: 'TEXT' | 'VOICE' = 'TEXT') => {
     const text = question.trim()
     if (!text || chatBusy) return
     setVoiceConfirming(false)
@@ -1657,6 +1668,7 @@ function App() {
       const sentAt = new Date().toISOString()
       setChatMessages(previous => [...previous, { from: 'me', text: compactChatTimes(result.message), sentAt }, { from: 'agent', text: compactChatTimes(result.answer), sentAt, cards: result.cards.map(card => ({ ...card, description: compactChatTimes(card.description) })) }])
       setChatUsedToday(result.usage.used_today); setChatTokenLimit(result.usage.limit); setChatDraft('')
+      setChatComposerReset(current => current + 1)
       if (result.schedule_changes.length || result.schedule_creations?.length || result.schedule_deletions?.length || result.care_item_creations?.length) await load()
     } catch (e) { reportError(e) }
     finally { setChatBusy(false) }
@@ -1671,7 +1683,9 @@ function App() {
       const form = new FormData(); form.append('file', file)
       form.append('purpose', 'CHAT')
       const result = await upload<{ text: string }>('/audio/transcribe', form, controller.signal)
-      setChatDraft(result.text); setVoiceConfirming(true)
+      setChatDraft(result.text)
+      setChatComposerReset(current => current + 1)
+      setVoiceConfirming(true)
       speak(`${result.text}. 이렇게 들었어요. 맞나요?`, { rate: .96, pitch: 1.05 })
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') setError('음성 인식 시간이 길어져 중단했어요. 다시 말씀해주세요.')
@@ -2855,8 +2869,8 @@ function App() {
       <div className="chat-prompts">{['확인할 알림 알려줘', '오늘 담당 배정은?', '등록된 일정은?', '일정 등록·수정·삭제'].map(text => <button key={text} disabled={chatBusy} onClick={() => sendChat(text)}>{text}</button>)}</div>
     </div>
     {chatBusy && <div className="assistant-chat-loading" role="status" aria-live="polite" aria-label="답변을 준비하고 있어요"><div>{[chatLoading1, chatLoading2, chatLoading3, chatLoading4].map((source, index) => <img key={source} src={source} alt="" style={{ animationDelay: `${index * .38}s` }} />)}</div><span>답변을 준비하고 있어요</span></div>}
-    {voiceConfirming && <section className="chat-voice-confirm" role="dialog" aria-label="음성 인식 결과 확인" aria-live="polite"><small>AI가 이렇게 들었어요</small><strong>“{chatDraft}”</strong><p>맞으면 실행하고, 다르면 다시 말하거나 직접 수정해주세요.</p><div><button className="outline-button" onClick={() => { setVoiceConfirming(false); setChatDraft(''); void toggleRecording() }}>다시 말하기</button><button className="outline-button" onClick={editVoiceText}>텍스트로 수정</button><button className="primary-button" onClick={() => void sendChat(chatDraft, 'VOICE')}>예, 맞아요</button></div></section>}
-    <form className="chat-composer" onSubmit={e => { e.preventDefault(); if (!voiceConfirming) void sendChat() }}><button className={recording ? 'chat-mic recording' : 'chat-mic'} type="button" aria-label={recording ? '음성 인식 끝내기' : chatBusy ? '음성 인식 중…' : '음성 인식'} disabled={chatBusy || voiceConfirming} onClick={() => void toggleRecording()}><img src={chatMicIcon} alt="" /></button><label><input ref={chatInputRef} aria-label="케어 어시스턴트에게 질문" value={chatDraft} onChange={e => setChatDraft(e.target.value)} placeholder="일정이나 숙제를 말해보세요" /><button type="submit" aria-label="질문 보내기" disabled={chatBusy || voiceConfirming || !chatDraft.trim()}><img src={chatSendIcon} alt="" /></button></label></form>
+    {voiceConfirming && <section className="chat-voice-confirm" role="dialog" aria-label="음성 인식 결과 확인" aria-live="polite"><small>AI가 이렇게 들었어요</small><strong>“{chatDraft}”</strong><p>맞으면 실행하고, 다르면 다시 말하거나 직접 수정해주세요.</p><div><button className="outline-button" onClick={() => { setVoiceConfirming(false); setChatDraft(''); setChatComposerReset(current => current + 1); void toggleRecording() }}>다시 말하기</button><button className="outline-button" onClick={editVoiceText}>텍스트로 수정</button><button className="primary-button" onClick={() => void sendChat(chatDraft, 'VOICE')}>예, 맞아요</button></div></section>}
+    <ChatComposer key={chatComposerReset} ref={chatInputRef} value={chatDraft} busy={chatBusy} voiceConfirming={voiceConfirming} recording={recording} onRecord={() => void toggleRecording()} onBlur={setChatDraft} onSubmit={value => void sendChat(value)} />
   </section>
   if (boot && screen === 'emergency') page = <section className="emergency-request-page">
     <div className="care-subscreen-title"><strong>긴급 도움 요청 <Pro /></strong></div>

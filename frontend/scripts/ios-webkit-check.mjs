@@ -44,7 +44,7 @@ const bootstrap = {
 }
 
 const browser = await webkit.launch({ headless: true })
-const context = await browser.newContext({ ...devices['iPhone 13'], serviceWorkers: 'allow' })
+const context = await browser.newContext({ ...devices['iPhone 13'], serviceWorkers: 'block' })
 const page = await context.newPage()
 const requests = new Map()
 const pageErrors = []
@@ -55,28 +55,35 @@ page.on('crash', () => { crashed = true })
 page.on('pageerror', error => pageErrors.push(error.message))
 page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()) })
 
-await page.addInitScript(() => {
-  localStorage.setItem('family-care-access-token', 'ios-qa-token')
-  localStorage.setItem('family-care-last-screen', 'chat')
-  sessionStorage.setItem('__iosQaLoads', String(Number(sessionStorage.getItem('__iosQaLoads') ?? 0) + 1))
-})
-
-await page.route('**/api/**', async route => {
+const mockApi = async (route, track = true) => {
   const request = route.request()
   const path = new URL(request.url()).pathname
-  requests.set(path, (requests.get(path) ?? 0) + 1)
+  if (track) requests.set(path, (requests.get(path) ?? 0) + 1)
   let body
   if (path === '/api/public-config') body = { kakao_javascript_key: '', web_push_public_key: '' }
   else if (path === '/api/families/me') body = { family: bootstrap.family, member: members[0], authenticated: true }
   else if (path === '/api/bootstrap') body = bootstrap
   else if (path === '/api/assistant/history') body = { messages: [] }
+  else if (path === '/api/assistant/chat') body = {
+    message: request.postDataJSON().message, answer: '아이폰 입력 테스트 답변', cards: [], links: [],
+    schedule_changes: [], schedule_creations: [], schedule_deletions: [], care_item_creations: [],
+    usage: { total_tokens: 20, used_today: 20, limit: 50_000, remaining: 49_980 }, plan: 'FREE',
+  }
   else if (path === '/api/features') body = { plan: 'FREE', features: [], usage: { chat_tokens_today: 0, chat_tokens_limit: 50_000, chat_tokens_remaining: 50_000, ocr_today: 0 } }
   else if (path === '/api/notifications') body = { notifications }
   else if (path === '/api/emergency-requests') body = { requests: [] }
   else if (path === '/api/performance/events') body = { status: 'recorded' }
   else body = {}
   await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+}
+
+await page.addInitScript(() => {
+  localStorage.setItem('family-care-access-token', 'ios-qa-token')
+  localStorage.setItem('family-care-last-screen', 'chat')
+  sessionStorage.setItem('__iosQaLoads', String(Number(sessionStorage.getItem('__iosQaLoads') ?? 0) + 1))
 })
+
+await page.route('**/api/**', route => mockApi(route))
 
 try {
   await page.goto(baseUrl, { waitUntil: 'networkidle' })
@@ -97,7 +104,7 @@ try {
   }
 
   const millisecondsPerCharacter = timings.reduce((sum, value) => sum + value, 0) / timings.length / (sample.length * 2)
-  if (millisecondsPerCharacter > 50) throw new Error(`입력 지연 과다: 글자당 ${millisecondsPerCharacter.toFixed(1)}ms`)
+  if (millisecondsPerCharacter > 15) throw new Error(`입력 지연 과다: 글자당 ${millisecondsPerCharacter.toFixed(1)}ms`)
 
   const initialBootstrapCalls = requests.get('/api/bootstrap') ?? 0
   await page.waitForTimeout(31_000)
@@ -108,13 +115,31 @@ try {
   }
   if ((requests.get('/api/bootstrap') ?? 0) !== initialBootstrapCalls) throw new Error('입력 중 전체 bootstrap 재조회 발생')
 
-  const serviceWorker = await page.evaluate(async () => {
+  await input.blur()
+  await page.evaluate(() => {
+    window.__iosQaRealDateNow = Date.now
+    Date.now = () => window.__iosQaRealDateNow() + 6 * 60_000
+  })
+  await page.waitForTimeout(16_000)
+  await page.evaluate(() => { Date.now = window.__iosQaRealDateNow })
+  if ((requests.get('/api/bootstrap') ?? 0) !== initialBootstrapCalls + 1) throw new Error('유휴 상태의 5분 전체 동기화가 정확히 한 번 실행되지 않음')
+  if (await input.inputValue() !== sample.repeat(2)) throw new Error('전체 동기화 뒤 작성 중인 채팅이 사라짐')
+  await input.press('Enter')
+  await page.getByText('아이폰 입력 테스트 답변').waitFor()
+  if (await input.inputValue()) throw new Error('채팅 전송 뒤 입력창이 초기화되지 않음')
+
+  const serviceWorkerContext = await browser.newContext({ ...devices['iPhone 13'], serviceWorkers: 'allow' })
+  const serviceWorkerPage = await serviceWorkerContext.newPage()
+  await serviceWorkerPage.route('**/api/**', route => mockApi(route, false))
+  await serviceWorkerPage.goto(baseUrl, { waitUntil: 'networkidle' })
+  const serviceWorker = await serviceWorkerPage.evaluate(async () => {
     const registration = await Promise.race([
       navigator.serviceWorker.ready,
       new Promise(resolve => setTimeout(() => resolve(null), 5_000)),
     ])
     return { ready: !!registration, controlled: !!navigator.serviceWorker.controller, caches: await caches.keys() }
   })
+  await serviceWorkerContext.close()
   if (!serviceWorker.ready || !serviceWorker.caches.includes('zippy-pwa-v4')) throw new Error(`PWA 서비스워커 준비 실패: ${JSON.stringify(serviceWorker)}`)
 
   const loads = await page.evaluate(() => Number(sessionStorage.getItem('__iosQaLoads') ?? 0))
