@@ -2359,7 +2359,11 @@ function App() {
     }, new Map())
     return <Card className="timeline-card">{[...currentByItem.values()].sort((a, b) => (itemFor(a)?.starts_at || '').localeCompare(itemFor(b)?.starts_at || '')).map(a => { const i = itemFor(a); const statusClass = a.status === 'COMPLETED' ? 'status-done' : ['PROPOSED', 'CANDIDATE_ACCEPTED'].includes(a.status) ? 'status-pending' : 'status-progress'; return i && <button key={a.id} className="timeline-row" onClick={() => { setAssignmentId(a.id); setViewer(a.assignee_id); go('assignmentDetail') }}><span className="time">{formatTime(i.starts_at) || '—'}</span><span className="timeline-content"><strong><em className="timeline-child-name">{child(i.child_id)}</em>{i.title} — {a.status === 'PROPOSED' ? `${member(a.assignee_id)}님에게 요청` : a.status === 'CANDIDATE_ACCEPTED' ? `${member(a.assignee_id)}님 수락` : `담당 ${member(a.assignee_id)}`}</strong><small className={statusClass}>{caregiverStatusLabel(a.status)}</small></span><span className="timeline-status">{a.status === 'COMPLETED' ? '✓' : '›'}</span></button> })}</Card>
   }
-  const activeExceptions = boot?.exceptions.filter(exception => exception.status === 'PENDING') ?? []
+  const activeExceptions = boot?.exceptions.filter(exception => exception.status === 'PENDING').map(exception => ({
+    ...exception,
+    reason: me?.member.id && boot.assignments.some(assignment => assignment.id === exception.assignment_id && assignment.assignee_id === me.member.id)
+      ? exception.reason : '다른 돌봄자의 일정 조정이 필요해요.',
+  })) ?? []
   const exceptionAssignmentOptions = assignments
     .filter(assignment => assignment.status === 'ACCEPTED')
     .filter(assignment => {

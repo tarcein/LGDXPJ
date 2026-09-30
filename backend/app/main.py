@@ -552,7 +552,14 @@ def bootstrap(tv: bool = False):
             ),
             "items": rows(db, "SELECT * FROM care_item WHERE family_id = ? ORDER BY starts_at, created_at", (family_id(),)),
             "assignments": rows(db, "SELECT * FROM care_assignment WHERE family_id = ? ORDER BY created_at", (family_id(),)),
-            "exceptions": rows(db, "SELECT * FROM care_exception WHERE family_id = ? ORDER BY created_at DESC", (family_id(),)),
+            "exceptions": rows(db, """SELECT e.id, e.family_id, e.assignment_id,
+                CASE WHEN a.assignee_id = ? AND ? = 0 THEN e.reason
+                     ELSE '다른 돌봄자의 일정 조정이 필요해요.' END AS reason,
+                e.alternative_member_id, e.status, e.created_at
+                FROM care_exception e
+                LEFT JOIN care_assignment a ON a.id = e.assignment_id AND a.family_id = e.family_id
+                WHERE e.family_id = ? ORDER BY e.created_at DESC""",
+                (current_member_id(), int(tv), family_id())),
             "handoffs": rows(db, "SELECT * FROM care_handoff WHERE family_id = ? ORDER BY status DESC, id DESC", (family_id(),)),
             "notifications": notification_feed(db, tv=tv),
             "permissions": rows(db, "SELECT p.* FROM family_data_permission p JOIN family_member m ON m.id = p.member_id WHERE m.family_id = ?", (family_id(),)),

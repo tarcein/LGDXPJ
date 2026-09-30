@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.db import database
+from app.family import _new_session
 from app.main import app
 
 
@@ -100,6 +101,27 @@ class CareFlowTest(unittest.TestCase):
             ).fetchall()}
         self.assertIn("병원 방문", notices["grandma"])
         self.assertNotIn("병원 방문", notices["mom"])
+
+
+    def test_existing_exception_reason_is_only_returned_to_original_caregiver(self):
+        original_reason = '회식 일정과 발레 돌봄이 겹쳐요.'
+        with database() as db:
+            tokens = {member: _new_session(db, 'demo-family', member)
+                      for member in ('mom', 'dad', 'grandma')}
+            db.execute("""INSERT INTO care_exception
+                (id, family_id, assignment_id, reason, alternative_member_id, status, created_at)
+                VALUES ('legacy-conflict', 'demo-family', 'assignment-pickup', ?, 'mom', 'PENDING', ?)""",
+                (original_reason, datetime.now().isoformat()))
+        for member, token in tokens.items():
+            with self.subTest(member=member):
+                headers = {'Authorization': 'Bearer ' + token}
+                result = self.client.get('/api/bootstrap', headers=headers)
+                self.assertEqual(result.status_code, 200)
+                reason = next(e['reason'] for e in result.json()['exceptions'] if e['id'] == 'legacy-conflict')
+                self.assertEqual(reason, original_reason if member == 'grandma'
+                                 else '다른 돌봄자의 일정 조정이 필요해요.')
+                shared = self.client.get('/api/bootstrap?tv=true', headers=headers).json()
+                self.assertNotIn('회식', str(shared['exceptions']))
 
 
 class EmptyDatabaseOnboardingTest(unittest.TestCase):
