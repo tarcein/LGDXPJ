@@ -87,10 +87,13 @@ const ChatComposer = forwardRef<HTMLInputElement, {
   value: string; busy: boolean; voiceConfirming: boolean; recording: boolean
   onRecord: () => void; onBlur: (value: string) => void; onSubmit: (value: string) => void
 }>(function ChatComposer({ value, busy, voiceConfirming, recording, onRecord, onBlur, onSubmit }, ref) {
-  const [draft, setDraft] = useState(value)
-  return <form className="chat-composer" onSubmit={event => { event.preventDefault(); if (!voiceConfirming) onSubmit(draft) }}>
+  return <form className="chat-composer" onSubmit={event => {
+    event.preventDefault()
+    const input = event.currentTarget.elements.namedItem('question')
+    if (!voiceConfirming && input instanceof HTMLInputElement) onSubmit(input.value)
+  }}>
     <button className={recording ? 'chat-mic recording' : 'chat-mic'} type="button" aria-label={recording ? '음성 인식 끝내기' : busy ? '음성 인식 중…' : '음성 인식'} disabled={busy || voiceConfirming} onClick={onRecord}><img src={chatMicIcon} alt="" /></button>
-    <label><input ref={ref} aria-label="케어 어시스턴트에게 질문" value={draft} onChange={event => setDraft(event.target.value)} onBlur={() => onBlur(draft)} placeholder="일정이나 숙제를 말해보세요" /><button type="submit" aria-label="질문 보내기" disabled={busy || voiceConfirming || !draft.trim()}><img src={chatSendIcon} alt="" /></button></label>
+    <label><input ref={ref} name="question" aria-label="케어 어시스턴트에게 질문" defaultValue={value} onBlur={event => onBlur(event.currentTarget.value)} placeholder="일정이나 숙제를 말해보세요" /><button type="submit" aria-label="질문 보내기" disabled={busy || voiceConfirming}><img src={chatSendIcon} alt="" /></button></label>
   </form>
 })
 
