@@ -56,7 +56,7 @@ import memberInactiveIcon from '../../asset/구성원프로필/활동중아님.p
 import { AppHeader, BottomNav, FloatingAssistant, MobileStatusBar } from './components/AppChrome'
 import { LockscreenPreview, ServiceLoading, ThinQEntry, ThinQHomeSelector } from './components/EntryScreens'
 import { BottomSheet, Card, Empty, Pro, Section } from './components/ui'
-import { setupNativeNotifications, syncPushToken } from './nativeNotifications'
+import { isAndroidApp, setupNativeNotifications, showAndroidPollingFallback, syncPushToken } from './nativeNotifications'
 import { prepareOcrPhoto } from './photoUpload'
 
 const nativeCalendarReturnUrl = 'com.lgdx.family://calendar'
@@ -1405,9 +1405,10 @@ function App() {
       if (cancelled || running || document.visibilityState !== 'visible' || !navigator.onLine) return
       running = true
       try {
-        const [noticeResult, emergencyResult] = await Promise.all([
+        const [noticeResult, emergencyResult, pushHealth] = await Promise.all([
           api<{ notifications: Notice[] }>('/notifications'),
           api<{ requests: EmergencyRequest[] }>('/emergency-requests'),
+          isAndroidApp() ? api<{ native_push_ready?: boolean }>('/health').catch(() => null) : Promise.resolve(null),
         ])
         if (cancelled) return
         const incoming = noticeResult.notifications.filter(notice => !notice.is_read && !seenNoticeIdsRef.current.has(notice.id))
@@ -1436,8 +1437,10 @@ function App() {
         })
         if (appNotices) {
           incoming.forEach(notice => {
-            // Native delivery already comes through FCM. Polling only refreshes the in-app feed.
-            if (!Capacitor.isNativePlatform() && 'Notification' in window && Notification.permission === 'granted') {
+            if (isAndroidApp()) {
+              void showAndroidPollingFallback(notice, pushHealth?.native_push_ready)
+                .catch(error => console.warn('Android polling notification failed.', error))
+            } else if (!Capacitor.isNativePlatform() && 'Notification' in window && Notification.permission === 'granted') {
               const systemNotice = new Notification(notice.title, { body: notice.body, tag: notice.id })
               systemNotice.onclick = () => { window.focus(); void openNoticeRef.current(notice); systemNotice.close() }
             }

@@ -101,6 +101,20 @@ test('foreground FCM payload displays once, repeated setup does not add duplicat
   assert.equal(action.actionId, 'assignment-1')
 })
 
+test('Android polling fallback only displays when server native push is unavailable', async () => {
+  const app = harness()
+  const notice = { id: 'notice-1', title: '긴급 돌봄 도움 요청', body: '도움이 필요해요',
+    action_type: 'EMERGENCY_REQUEST', action_id: 'request-1' }
+  assert.equal(await app.showAndroidPollingFallback(notice, true), false)
+  assert.equal(await app.showAndroidPollingFallback(notice, undefined), false)
+  assert.equal(app.notices.length, 0)
+  assert.equal(await app.showAndroidPollingFallback(notice, false), true)
+  assert.equal(app.notices.length, 1)
+  assert.equal(app.notices[0].title, notice.title)
+  assert.equal(app.notices[0].extra.actionId, 'request-1')
+  assert.equal(await harness({ platform: 'web' }).showAndroidPollingFallback(notice, false), false)
+})
+
 test('denied permission and registration failures are not reported as enabled', async () => {
   const denied = harness({ permission: 'denied' })
   assert.equal(await denied.setupNativeNotifications(), false)

@@ -120,6 +120,14 @@ export async function showNativeNotice(id: string, title: string, body: string, 
   return true
 }
 
+export async function showAndroidPollingFallback(
+  notice: { id: string; title: string; body: string; action_type?: string | null; action_id?: string | null },
+  nativePushReady?: boolean,
+) {
+  if (!isAndroidApp() || nativePushReady !== false) return false
+  return showNativeNotice(`poll-${notice.id}`, notice.title, notice.body, notice.action_type, notice.action_id)
+}
+
 function hash(value: string) {
   let result = 0
   for (let index = 0; index < value.length; index += 1) result = ((result << 5) - result + value.charCodeAt(index)) | 0
