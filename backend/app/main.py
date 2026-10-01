@@ -1596,8 +1596,11 @@ def _propagate_routine_assignment(db, item: dict, assignee_id: str, requested_by
         db,
         """SELECT i.id FROM care_item i JOIN child_schedule s ON s.id = i.child_schedule_id
            WHERE s.recurrence_id = ? AND i.id != ? AND i.starts_at > ?
+             AND COALESCE(i.boundary_type, 'START') = ?
+             AND TRIM(COALESCE(i.external_assignee_name, '')) = ''
+             AND i.status != 'DONE'
              AND NOT EXISTS (SELECT 1 FROM care_assignment a WHERE a.item_id = i.id AND a.status = 'ACCEPTED')""",
-        (schedule["recurrence_id"], item["id"], item["starts_at"]),
+        (schedule["recurrence_id"], item["id"], item["starts_at"], item.get("boundary_type") or "START"),
     )
     if not future_items:
         return

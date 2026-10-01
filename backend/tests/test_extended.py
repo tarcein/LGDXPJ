@@ -504,6 +504,45 @@ class ExtendedFlowTest(unittest.TestCase):
         self.assertEqual(start_assignment["assignee_id"], room["member_id"])
         self.assertEqual(boundaries["END"]["external_assignee_name"], "학원 선생님")
 
+    def test_routine_auto_assignment_preserves_boundaries_and_external_helpers(self):
+        room = self.client.post("/api/families", json={"name": "반복 배정 가족", "owner_name": "이지윤"}).json()
+        headers = {"Authorization": "Bearer " + room["access_token"]}
+        child_response = self.client.post("/api/children", headers=headers, json={"name": "지우", "age_label": "8세"})
+        self.assertEqual(child_response.status_code, 201)
+        child = child_response.json()
+        created = self.client.post("/api/child-schedules", headers=headers, json={
+            "child_id": child["id"], "title": "태권도", "category": "ACADEMY",
+            "starts_at": "2026-10-01T17:00:00+09:00", "ends_at": "2026-10-01T19:00:00+09:00",
+            "start_external_assignee_name": "태권도 차량",
+            "repeat_days": [3], "repeat_until": "2026-10-22",
+        })
+        self.assertEqual(created.status_code, 201)
+        schedules = created.json()["schedules"]
+        # A later departure already has an external helper, while the last arrival is unassigned.
+        for schedule, responsibility in [
+            (schedules[2], {"end_external_assignee_name": "학원 선생님"}),
+            (schedules[3], {"start_external_assignee_name": ""}),
+        ]:
+            response = self.client.patch(f"/api/child-schedules/{schedule['id']}", headers=headers, json={
+                "child_id": child["id"], "title": "태권도", "category": "ACADEMY",
+                "starts_at": schedule["starts_at"], "ends_at": schedule["ends_at"], **responsibility,
+            })
+            self.assertEqual(response.status_code, 200)
+        before = self.client.get("/api/bootstrap", headers=headers).json()
+        departure = next(item for item in before["items"]
+                         if item.get("child_schedule_id") == schedules[0]["id"] and item["boundary_type"] == "END")
+        assigned = self.client.post("/api/assignments", headers=headers, json={
+            "item_id": departure["id"], "assignee_id": room["member_id"],
+        })
+        self.assertEqual(assigned.status_code, 201)
+        after = self.client.get("/api/bootstrap", headers=headers).json()
+        assigned_ids = {assignment["item_id"] for assignment in after["assignments"]
+                        if assignment["status"] == "ACCEPTED"}
+        expected_ids = {item["id"] for item in after["items"]
+                        if item.get("child_schedule_id") in {schedules[index]["id"] for index in (0, 1, 3)}
+                        and item["boundary_type"] == "END"}
+        self.assertEqual(assigned_ids, expected_ids)
+
     def test_routine_can_mark_one_boundary_as_not_requiring_a_caregiver(self):
         created = self.client.post("/api/child-schedules", json={
             "child_id": "jiu", "title": "태권도", "category": "ACADEMY",
