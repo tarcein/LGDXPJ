@@ -5,12 +5,14 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 from pathlib import Path
 from urllib.parse import urlencode
 
 from cryptography.hazmat.primitives import serialization
 from py_vapid import Vapid
 from pywebpush import WebPushException, webpush
+from dotenv import dotenv_values
 
 from .config import setting
 
@@ -82,6 +84,22 @@ def _app():
 def native_push_status() -> str:
     _app()
     return _firebase_status
+
+
+def native_push_config_sources() -> dict[str, str | bool]:
+    """Report only where credentials could come from, never their contents."""
+    backend_env = Path(__file__).resolve().parents[1] / ".env"
+    file_values = dotenv_values(backend_env) if backend_env.is_file() else None
+    key = "FIREBASE_SERVICE_ACCOUNT_JSON"
+    process_value = os.environ.get(key)
+    file_value = file_values.get(key) if file_values is not None else None
+    return {
+        "process_env": "absent" if process_value is None else "set" if process_value else "empty",
+        "backend_dotenv": "absent" if file_values is None else "set" if file_value else "empty" if key in file_values else "no_key",
+        "google_adc_env": bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")),
+        "database_env": bool(os.environ.get("DATABASE_URL")),
+        "container": Path("/.dockerenv").exists(),
+    }
 
 
 def send_push(devices: list[dict], title: str, body: str,
