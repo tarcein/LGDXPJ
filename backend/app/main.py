@@ -496,7 +496,7 @@ class PushTokenCreate(BaseModel):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "mode": "local-demo"}
+    return {"status": "ok", "mode": "local-demo", "push_diagnostics_revision": "fdd1e31"}
 
 
 @app.get("/api/public-config")
