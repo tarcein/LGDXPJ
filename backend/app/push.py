@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -14,6 +15,7 @@ from pywebpush import WebPushException, webpush
 from .config import setting
 
 _firebase_app = None
+logger = logging.getLogger(__name__)
 
 
 def _vapid_private_key() -> str:
@@ -46,16 +48,29 @@ def _app():
     global _firebase_app
     if _firebase_app is not None:
         return _firebase_app
-    credentials_path = setting("FIREBASE_SERVICE_ACCOUNT_JSON")
-    if not credentials_path or not Path(credentials_path).is_file():
+    credential_source = setting("FIREBASE_SERVICE_ACCOUNT_JSON")
+    if not credential_source:
+        logger.warning("Native push skipped: FIREBASE_SERVICE_ACCOUNT_JSON is unset.")
         return None
     try:
         import firebase_admin
         from firebase_admin import credentials
+        if credential_source.startswith("{"):
+            certificate = json.loads(credential_source)
+        else:
+            path = Path(credential_source)
+            # Preserve existing working-directory paths; also accept backend-relative paths.
+            if not path.is_absolute() and not path.is_file():
+                path = Path(__file__).resolve().parents[1] / path
+            if not path.is_file():
+                logger.warning("Native push skipped: FIREBASE_SERVICE_ACCOUNT_JSON file is unavailable.")
+                return None
+            certificate = str(path)
         options = {"projectId": setting("FIREBASE_PROJECT_ID")} if setting("FIREBASE_PROJECT_ID") else None
-        _firebase_app = firebase_admin.initialize_app(credentials.Certificate(credentials_path), options=options)
+        _firebase_app = firebase_admin.initialize_app(credentials.Certificate(certificate), options=options)
         return _firebase_app
-    except Exception:
+    except Exception as error:
+        logger.warning("Firebase initialization failed (%s).", type(error).__name__)
         return None
 
 
@@ -75,8 +90,9 @@ def send_push(devices: list[dict], title: str, body: str,
                     notification=messaging.Notification(title=title, body=body),
                     data=data,
                 ), app=app)
-            except Exception:
+            except Exception as error:
                 # A stale device token must not break the family action that created the notice.
+                logger.warning("FCM delivery failed (%s, code=%s).", type(error).__name__, getattr(error, "code", "unknown"))
                 continue
 
     private_key = _vapid_private_key()
@@ -103,3 +119,30 @@ def send_push(devices: list[dict], title: str, body: str,
         except Exception:
             continue
     return stale
+
+
+def check_fcm() -> bool:
+    """Validate this process's Firebase credentials without delivering a notification."""
+    app = _app()
+    if app is None:
+        return False
+    from firebase_admin import messaging
+    try:
+        messaging.send(messaging.Message(
+            topic="zippy-push-diagnostics", data={"diagnostic": "true"},
+        ), dry_run=True, app=app)
+    except Exception as error:
+        logger.warning("FCM validation failed (%s, code=%s).", type(error).__name__, getattr(error, "code", "unknown"))
+        return False
+    return True
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Check FCM configuration without sending a notification.")
+    parser.add_argument("--check", action="store_true", required=True)
+    parser.parse_args()
+    success = check_fcm()
+    print("FCM validation accepted (no notification sent)." if success else "FCM validation failed; see warning above.")
+    raise SystemExit(0 if success else 1)
