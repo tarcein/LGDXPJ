@@ -2648,7 +2648,7 @@ function App() {
         return [{ id: 'conflict-' + exception.id, kind: 'conflict' as const, title: item.title, childName: child(item.child_id), date: `${formatDate(item.starts_at)} ${formatTime(item.starts_at)}`.trim(), due: dayDistance(item.starts_at), reason: exception.reason, recommendation: member(exception.alternative_member_id), onOpen: () => { setAssignmentId(assignment.id); go('exception') } }]
       }),
       ...visibleCareItems
-        .filter(item => item.starts_at && dateKey(item.starts_at) >= todayKey && item.status !== 'NEEDS_REVIEW' && !assignedItemIds.has(item.id))
+        .filter(item => item.starts_at && dateKey(item.starts_at) >= todayKey && !['NEEDS_REVIEW', 'DONE'].includes(item.status) && !caregiverForCareItem(item.id) && !assignedItemIds.has(item.id))
         .sort((left, right) => (left.starts_at ?? '').localeCompare(right.starts_at ?? ''))
         .slice(0, 12)
         .map(item => ({ id: 'preview-' + item.id, kind: 'preview' as const, title: item.title, childName: child(item.child_id), date: `${formatDate(item.starts_at)} ${formatTime(item.starts_at)}`.trim(), due: dayDistance(item.starts_at), reason: '담당자가 아직 정해지지 않았어요', onOpen: () => void openSuggestion(item) })),
@@ -2951,7 +2951,7 @@ function App() {
     const gapItems = boot.items.filter(item => {
       if (!item.starts_at || new Date(item.starts_at) < new Date() || new Date(item.starts_at) > predictionEnd) return false
       const related = assignments.filter(assignment => assignment.item_id === item.id)
-      const hasConfirmedCaregiver = related.some(assignment => ['ACCEPTED', 'COMPLETED'].includes(assignment.status))
+      const hasConfirmedCaregiver = !!caregiverForCareItem(item.id)
       const changedRoutineNeedsCheck = (item.item_type === 'CHANGE' || riskKeywords.test(`${item.title} ${item.detail}`)) && related.some(assignment => assignment.status === 'RECONFIRMATION_REQUIRED')
       return !hasConfirmedCaregiver || changedRoutineNeedsCheck
     }).sort((left, right) => (left.starts_at ?? '').localeCompare(right.starts_at ?? ''))
