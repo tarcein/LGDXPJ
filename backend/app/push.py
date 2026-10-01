@@ -15,6 +15,7 @@ from pywebpush import WebPushException, webpush
 from .config import setting
 
 _firebase_app = None
+_firebase_status = "not_checked"
 logger = logging.getLogger(__name__)
 
 
@@ -45,11 +46,12 @@ def web_push_public_key() -> str:
 
 
 def _app():
-    global _firebase_app
+    global _firebase_app, _firebase_status
     if _firebase_app is not None:
         return _firebase_app
     credential_source = setting("FIREBASE_SERVICE_ACCOUNT_JSON")
     if not credential_source:
+        _firebase_status = "credential_unset"
         logger.warning("Native push skipped: FIREBASE_SERVICE_ACCOUNT_JSON is unset.")
         return None
     try:
@@ -63,15 +65,23 @@ def _app():
             if not path.is_absolute() and not path.is_file():
                 path = Path(__file__).resolve().parents[1] / path
             if not path.is_file():
+                _firebase_status = "credential_file_unavailable"
                 logger.warning("Native push skipped: FIREBASE_SERVICE_ACCOUNT_JSON file is unavailable.")
                 return None
             certificate = str(path)
         options = {"projectId": setting("FIREBASE_PROJECT_ID")} if setting("FIREBASE_PROJECT_ID") else None
         _firebase_app = firebase_admin.initialize_app(credentials.Certificate(certificate), options=options)
+        _firebase_status = "ready"
         return _firebase_app
     except Exception as error:
+        _firebase_status = "initialization_" + type(error).__name__
         logger.warning("Firebase initialization failed (%s).", type(error).__name__)
         return None
+
+
+def native_push_status() -> str:
+    _app()
+    return _firebase_status
 
 
 def send_push(devices: list[dict], title: str, body: str,

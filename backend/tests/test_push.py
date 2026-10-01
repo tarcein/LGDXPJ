@@ -32,6 +32,7 @@ class PushDiagnosticsTest(unittest.TestCase):
             with self.assertLogs("app.push", level="WARNING") as logs:
                 self.assertIsNone(push._app())
         self.assertIn("FIREBASE_SERVICE_ACCOUNT_JSON", logs.output[0])
+        self.assertEqual(push._firebase_status, "credential_unset")
 
     def test_bad_credentials_are_nonfatal_and_do_not_leak(self):
         for source in ("missing-secret-file.json", '{"private_key":"secret-key",invalid}'):
@@ -42,6 +43,7 @@ class PushDiagnosticsTest(unittest.TestCase):
                 self.assertIsNone(push._app())
             self.assertNotIn(source, str(logs.output))
             self.assertNotIn("secret-key", str(logs.output))
+            self.assertEqual(push._firebase_status, "credential_file_unavailable" if not source.startswith("{") else "initialization_JSONDecodeError")
 
     def test_check_only_validates_and_reports_failure(self):
         app = object()

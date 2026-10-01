@@ -496,9 +496,10 @@ class PushTokenCreate(BaseModel):
 
 @app.get("/api/health")
 def health():
-    from .push import _app as firebase_app
+    from .push import native_push_status
+    push_status = native_push_status()
     return {"status": "ok", "mode": "local-demo", "push_diagnostics_revision": "fdd1e31",
-            "native_push_ready": firebase_app() is not None}
+            "native_push_ready": push_status == "ready", "native_push_status": push_status}
 
 
 @app.get("/api/public-config")
