@@ -23,3 +23,11 @@ tmp/
 .DS_Store
 hs_err_pid*.log
 replay_pid*.log
+outputs/tezblanc/browser-profile/
+outputs/tezblanc/.deps/
+outputs/tezblanc/node_modules/
+
+# Independent site repo and generated research/export artifacts
+/cyber-squishy-recovered/
+/outputs/
+/reference-media/
